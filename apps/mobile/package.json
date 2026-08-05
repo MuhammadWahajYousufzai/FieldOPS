@@ -1,0 +1,29 @@
+{
+  "name": "@fieldops/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "typecheck": "tsc --noEmit",
+    "ios:asc:upload": "bash ./scripts/ios-app-store-connect.sh upload",
+    "ios:asc:export": "bash ./scripts/ios-app-store-connect.sh export",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "@fieldops/domain": "workspace:*",
+    "@react-native-async-storage/async-storage": "2.1.2",
+    "expo": "~53.0.20",
+    "expo-location": "~18.1.6",
+    "expo-router": "~5.1.4",
+    "react": "19.0.0",
+    "react-native": "0.79.5",
+    "react-native-safe-area-context": "5.4.0",
+    "react-native-screens": "~4.11.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.0.10",
+    "typescript": "^5.9.2"
+  }
+}

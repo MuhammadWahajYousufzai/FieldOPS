@@ -1,0 +1,11 @@
+"use client";
+import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+export function BootstrapForm(){
+  const router=useRouter();const [required,setRequired]=useState<boolean|null>(null);const[error,setError]=useState("");const[busy,setBusy]=useState(false);
+  useEffect(()=>{fetch("/api/bootstrap").then(r=>r.json()).then(x=>setRequired(x.required)).catch(()=>setError("Could not reach the FieldOps server."))},[]);
+  async function submit(event:FormEvent<HTMLFormElement>){event.preventDefault();setBusy(true);setError("");const data=new FormData(event.currentTarget);const response=await fetch("/api/bootstrap",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(Object.fromEntries(data))});const body=await response.json();setBusy(false);if(!response.ok){setError(body.error);return}router.replace("/login")}
+  if(required===null)return <main className="center-state">Checking secure setup…</main>;
+  if(!required)return <main className="center-state"><div><h2>FieldOps is already initialized.</h2><a className="button-link" href="/login">Go to sign in</a></div></main>;
+  return <main className="auth-page"><section className="auth-story"><div className="brand"><span className="grain">YR</span><div><strong>Yousuf Rice FieldOps</strong><small>Secure initialization</small></div></div><div><p className="eyebrow">First administrator</p><h1>Open the control room.</h1><p>This one-time step creates the Yousuf Rice organization, your Appwrite account and an audited super-admin assignment.</p></div></section><section className="auth-form"><form onSubmit={submit}><p className="eyebrow">One-time setup</p><h2>Create administrator</h2><label>Your name<input name="name" autoComplete="name" required/></label><label>Work email<input name="email" type="email" autoComplete="email" required/></label><label>Password<input name="password" type="password" minLength={12} autoComplete="new-password" required/><small>At least 12 characters</small></label><label>Bootstrap key<input name="bootstrapToken" type="password" required/></label>{error&&<p className="form-error" role="alert">{error}</p>}<button disabled={busy}>{busy?"Creating workspace…":"Create secure workspace"}</button></form></section></main>
+}

@@ -1,0 +1,13 @@
+{
+  "name": "yousuf-rice-fieldops",
+  "private": true,
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "dev": "pnpm --filter @fieldops/web dev",
+    "dev:mobile": "pnpm --filter @fieldops/mobile start",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm --filter @fieldops/domain test"
+  },
+  "engines": { "node": ">=22" }
+}

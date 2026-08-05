@@ -1,0 +1,9 @@
+{
+  "name": "@fieldops/appwrite",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": { "./server": "./src/server.ts", "./web": "./src/web.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": { "appwrite": "^19.0.0", "node-appwrite": "^19.1.0", "server-only": "^0.0.1" },
+  "devDependencies": { "@types/node": "^22.17.2", "typescript": "^5.9.2" }
+}

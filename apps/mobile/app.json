@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Yousuf Rice FieldOps",
+    "slug": "yousuf-rice-fieldops",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "fieldops",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "FieldOPS uses your location during an authorized shift to record attendance and outlet visit evidence."
+        }
+      ]
+    ],
+    "ios": {
+      "bundleIdentifier": "pk.yousufrice.fieldops",
+      "buildNumber": "1",
+      "icon": "./assets/icon.png",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "FieldOPS uses your location during an authorized shift to record attendance and outlet visit evidence."
+      }
+    },
+    "android": {
+      "package": "pk.yousufrice.fieldops",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#17233B"
+      },
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "experiments": { "typedRoutes": true }
+  }
+}
