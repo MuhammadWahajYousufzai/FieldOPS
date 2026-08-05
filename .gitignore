@@ -7,6 +7,7 @@ coverage/
 .env
 .env.local
 *.log
+*.tsbuildinfo
 apps/mobile/.env.appstoreconnect.local
 apps/mobile/AuthKey_*.p8
 apps/mobile/build/
