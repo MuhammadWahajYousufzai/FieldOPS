@@ -59,6 +59,7 @@ target 'YousufRiceFieldOps' do
       next unless ['fmt', 'RCT-Folly'].include?(target.name)
 
       target.build_configurations.each do |build_configuration|
+        build_configuration.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
         definitions = build_configuration.build_settings['GCC_PREPROCESSOR_DEFINITIONS']
         definitions = ['$(inherited)'] if definitions.nil?
         definitions = definitions.split if definitions.is_a?(String)
