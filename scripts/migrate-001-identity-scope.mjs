@@ -1,4 +1,4 @@
-import { Client, IndexType, TablesDB } from "../packages/appwrite/node_modules/node-appwrite/dist/index.mjs";
+import { Client, TablesDB } from "../packages/appwrite/node_modules/node-appwrite/dist/index.mjs";
 
 const value = (name) => {
   const result = process.env[name];
@@ -105,7 +105,7 @@ for (const table of tables) {
   }
   for (const [key, type, columns] of table.indexes) {
     if (await exists(() => db.getIndex({ databaseId, tableId: table.id, key }))) continue;
-    await db.createIndex({ databaseId, tableId: table.id, key, type: type === "unique" ? IndexType.Unique : IndexType.Key, columns });
+    await db.createIndex({ databaseId, tableId: table.id, key, type: type === "unique" ? "unique" : "key", columns });
     console.log(`created index ${table.id}.${key}`);
   }
 }

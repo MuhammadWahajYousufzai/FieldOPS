@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createAdminAccount } from "@fieldops/appwrite/server";
-import { SESSION_COOKIE } from "../../../../lib/auth";
+import { createAdminAccount, createSessionAccount } from "@fieldops/appwrite/server";
+import { managerForUser, SESSION_COOKIE } from "../../../../lib/auth";
 
 export async function POST(request: Request) {
   try {
@@ -9,6 +9,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
     }
     const session = await createAdminAccount().createEmailPasswordSession({ email: body.email.trim(), password: body.password });
+    const account = createSessionAccount(session.secret);
+    const user = await account.get();
+    const actor = await managerForUser(user);
+    if (!actor) {
+      await account.deleteSession({ sessionId: "current" });
+      return NextResponse.json({ error: "Management access is required." }, { status: 403 });
+    }
     const response = NextResponse.json({ ok: true });
     response.cookies.set(SESSION_COOKIE, session.secret, {
       httpOnly: true,

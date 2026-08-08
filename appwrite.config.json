@@ -1,0 +1,67 @@
+{
+    "organizationId": "69b548e1000b4915db9c",
+    "projectId": "6a771dd900066ce5c125",
+    "projectName": "FieldOPS",
+    "endpoint": "https://yousufricemill.com/v1",
+    "sites": [
+        {
+            "$id": "fieldops-dashboard",
+            "name": "FieldOPS Management Dashboard",
+            "logging": true,
+            "timeout": 30,
+            "framework": "nextjs",
+            "buildRuntime": "node-22",
+            "adapter": "ssr",
+            "installCommand": "npm install -g pnpm@11.18.0 && pnpm install --frozen-lockfile",
+            "buildCommand": "pnpm --filter @fieldops/web build",
+            "startCommand": "",
+            "outputDirectory": "apps/web/.next",
+            "buildSpecification": "s-1vcpu-1gb",
+            "runtimeSpecification": "s-1vcpu-1gb",
+            "deploymentRetention": 5,
+            "path": "."
+        }
+    ],
+    "settings": {
+        "services": {
+            "account": true,
+            "avatars": true,
+            "databases": true,
+            "locale": true,
+            "health": true,
+            "storage": true,
+            "teams": true,
+            "users": true,
+            "sites": true,
+            "functions": true,
+            "graphql": true,
+            "messaging": true
+        },
+        "protocols": {
+            "rest": true,
+            "graphql": true,
+            "websocket": true
+        },
+        "auth": {
+            "methods": {
+                "jwt": true,
+                "phone": true,
+                "invites": true,
+                "anonymous": true,
+                "email-otp": true,
+                "magic-url": true,
+                "email-password": true
+            },
+            "security": {
+                "duration": 31536000,
+                "limit": null,
+                "sessionsLimit": null,
+                "passwordHistory": null,
+                "passwordDictionary": false,
+                "personalDataCheck": false,
+                "sessionAlerts": false,
+                "mockNumbers": []
+            }
+        }
+    }
+}

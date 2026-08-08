@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "maplibre-gl/dist/maplibre-gl.css";
 import "./styles.css";
 
 export const metadata: Metadata = { title: "Yousuf Rice FieldOps", description: "Karachi field operations control room" };

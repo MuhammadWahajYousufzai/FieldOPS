@@ -18,8 +18,16 @@ export async function currentUser() {
 }
 
 export async function requireSuperAdmin() {
+  return requireManager();
+}
+
+export async function requireManager() {
   const user = await currentUser();
   if (!user) return null;
+  return managerForUser(user);
+}
+
+export async function managerForUser(user: { $id: string; name: string }) {
   const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
   const db = createAdminTablesDb();
   const employeeResult = await db.listRows({ databaseId, tableId: "employees", queries: [Query.equal("user_id", user.$id), Query.limit(1)] });
@@ -28,7 +36,7 @@ export async function requireSuperAdmin() {
   const assignmentResult = await db.listRows({ databaseId, tableId: "employee_assignments", queries: [Query.equal("employee_id", employee.$id), Query.limit(25)] });
   for (const assignment of assignmentResult.rows) {
     const role = await db.getRow({ databaseId, tableId: "roles", rowId: String(assignment.role_id) });
-    if (role.code === "super_admin" && !assignment.effective_to) return { user, employee };
+    if (["super_admin", "executive", "manager"].includes(String(role.code)) && !assignment.effective_to) return { user, employee, role };
   }
   return null;
 }

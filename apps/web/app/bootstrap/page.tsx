@@ -1,2 +1,5 @@
-import { BootstrapForm } from "./bootstrap-form";
-export default function BootstrapPage(){return <BootstrapForm/>}
+import { redirect } from "next/navigation";
+
+export default function BootstrapPage() {
+  redirect("/login");
+}

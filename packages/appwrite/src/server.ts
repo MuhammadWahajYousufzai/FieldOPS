@@ -1,5 +1,5 @@
 import "server-only";
-import { Account, Client, TablesDB, Users } from "node-appwrite";
+import { Account, Client, Storage, TablesDB, Users } from "node-appwrite";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -17,6 +17,7 @@ export function createAdminClient(): Client {
 export const createAdminTablesDb = (): TablesDB => new TablesDB(createAdminClient());
 export const createAdminUsers = (): Users => new Users(createAdminClient());
 export const createAdminAccount = (): Account => new Account(createAdminClient());
+export const createAdminStorage = (): Storage => new Storage(createAdminClient());
 
 export function createSessionTablesDb(session: string): TablesDB {
   return new TablesDB(createSessionClient(session));

@@ -51,8 +51,14 @@
     <string>Allow $(PRODUCT_NAME) to access your location</string>
     <key>NSLocationAlwaysUsageDescription</key>
     <string>Allow $(PRODUCT_NAME) to access your location</string>
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>FieldOPS uses your location during an authorized shift to record attendance and outlet visit evidence.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>FieldOPS uses your location during an authorized shift to record attendance and outlet visit evidence.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>FieldOPS uses the camera to capture timestamped outlet visit evidence.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>FieldOPS uses the photo library only when a salesperson attaches visit evidence.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>FieldOPS uses the microphone to record optional visit audio notes.</string>
     <key>NSUserActivityTypes</key>
     <array>
       <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>

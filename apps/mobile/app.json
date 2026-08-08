@@ -10,6 +10,14 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "FieldOPS uses the photo library only when a salesperson attaches visit evidence.",
+          "cameraPermission": "FieldOPS uses the camera to capture timestamped outlet visit evidence.",
+          "microphonePermission": "FieldOPS uses the microphone to record optional visit audio notes."
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "FieldOPS uses your location during an authorized shift to record attendance and outlet visit evidence."
@@ -23,7 +31,10 @@
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSLocationWhenInUseUsageDescription": "FieldOPS uses your location during an authorized shift to record attendance and outlet visit evidence."
+        "NSLocationWhenInUseUsageDescription": "FieldOPS uses your location during an authorized shift to record attendance and outlet visit evidence.",
+        "NSCameraUsageDescription": "FieldOPS uses the camera to capture timestamped outlet visit evidence.",
+        "NSPhotoLibraryUsageDescription": "FieldOPS uses the photo library only when a salesperson attaches visit evidence.",
+        "NSMicrophoneUsageDescription": "FieldOPS uses the microphone to record optional visit audio notes."
       }
     },
     "android": {
@@ -33,7 +44,7 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#17233B"
       },
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA", "RECORD_AUDIO"]
     },
     "experiments": { "typedRoutes": true }
   }

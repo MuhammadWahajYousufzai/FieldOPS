@@ -9,5 +9,10 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm --filter @fieldops/domain test"
   },
+  "dependencies": {
+    "next": "^15.5.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
   "engines": { "node": ">=22" }
 }
