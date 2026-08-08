@@ -50,6 +50,23 @@ target 'YousufRiceFieldOps' do
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
 
+    # Apple Clang 21 (Xcode 26.4+) cannot compile the consteval checks in the
+    # fmt 11.0.2 version bundled with React Native 0.79. Keep the workaround
+    # scoped to pods that compile/include fmt, and remove it after upgrading
+    # React Native to a release that uses fmt 12.1 or newer.
+    # https://github.com/facebook/react-native/issues/55601
+    installer.pods_project.targets.each do |target|
+      next unless ['fmt', 'RCT-Folly'].include?(target.name)
+
+      target.build_configurations.each do |build_configuration|
+        definitions = build_configuration.build_settings['GCC_PREPROCESSOR_DEFINITIONS']
+        definitions = ['$(inherited)'] if definitions.nil?
+        definitions = definitions.split if definitions.is_a?(String)
+        definitions << 'FMT_USE_CONSTEVAL=0' unless definitions.include?('FMT_USE_CONSTEVAL=0')
+        build_configuration.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = definitions
+      end
+    end
+
     # This is necessary for Xcode 14, because it signs resource bundles by default
     # when building for devices.
     installer.target_installation_results.pod_target_installation_results
