@@ -27,6 +27,8 @@ public class AppDelegate: ExpoAppDelegate {
       withModuleName: "main",
       in: window,
       launchOptions: launchOptions)
+    window?.backgroundColor = UIColor(red: 247.0 / 255.0, green: 248.0 / 255.0, blue: 244.0 / 255.0, alpha: 1.0)
+    window?.makeKeyAndVisible()
 #endif
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)

@@ -24,13 +24,41 @@ type Outlet = {
   status: VisitStatus;
 };
 
-const STORAGE_KEY = "fieldops-pilot-state-v1";
+export const STORAGE_KEY = "fieldops-pilot-state-v2";
 const initialOutlets: Outlet[] = [
   { id: "rehman", name: "Rehman General Store", address: "Clifton Block 2", time: "09:10", distance: "1.2 km", status: "planned" },
   { id: "zamzama", name: "Zamzama Mart", address: "Zamzama Commercial", time: "10:05", distance: "2.4 km", status: "planned" },
   { id: "madina", name: "Al-Madina Traders", address: "Clifton Block 5", time: "11:20", distance: "3.1 km", status: "planned" },
   { id: "seaview", name: "Sea View Supermarket", address: "Sea View Road", time: "12:15", distance: "4.8 km", status: "planned" },
 ];
+
+type PersistedState = { shiftActive: boolean; outlets: Outlet[]; queue: QueueItem[] };
+
+function parsePersistedState(saved: string): PersistedState | null {
+  try {
+    const state = JSON.parse(saved) as Partial<PersistedState>;
+    const outletsAreValid = Array.isArray(state.outlets) && state.outlets.length > 0 && state.outlets.every((outlet) =>
+      outlet &&
+      typeof outlet.id === "string" &&
+      typeof outlet.name === "string" &&
+      typeof outlet.address === "string" &&
+      typeof outlet.time === "string" &&
+      typeof outlet.distance === "string" &&
+      ["planned", "active", "completed"].includes(outlet.status),
+    );
+    const queueIsValid = Array.isArray(state.queue) && state.queue.every((item) =>
+      item &&
+      typeof item.id === "string" &&
+      typeof item.label === "string" &&
+      ["pending", "confirmed"].includes(item.state),
+    );
+
+    if (typeof state.shiftActive !== "boolean" || !outletsAreValid || !queueIsValid) return null;
+    return state as PersistedState;
+  } catch {
+    return null;
+  }
+}
 
 export default function FieldOpsApp() {
   const [screen, setScreen] = useState<Screen>("today");
@@ -50,7 +78,11 @@ export default function FieldOpsApp() {
     AsyncStorage.getItem(STORAGE_KEY)
       .then((saved) => {
         if (!saved) return;
-        const state = JSON.parse(saved) as { shiftActive: boolean; outlets: Outlet[]; queue: QueueItem[] };
+        const state = parsePersistedState(saved);
+        if (!state) {
+          AsyncStorage.removeItem(STORAGE_KEY).catch(() => undefined);
+          return;
+        }
         setShiftActive(state.shiftActive);
         setOutlets(state.outlets);
         setQueue(state.queue);
