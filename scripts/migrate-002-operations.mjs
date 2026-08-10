@@ -71,9 +71,12 @@ const tables = [
     columns: [
       ["employee_id", "varchar", 36, true], ["outlet_id", "varchar", 36, true],
       ["route_assignment_id", "varchar", 36, false], ["work_date", "varchar", 10, true],
+      ["visit_type", "varchar", 24, false], ["customer_name", "varchar", 160, false],
+      ["customer_address", "varchar", 500, false],
       ["check_in_at", "datetime", true], ["check_out_at", "datetime", false],
       ["latitude", "float", true], ["longitude", "float", true], ["accuracy", "float", true],
       ["geofence_distance_m", "integer", true], ["geofence_accepted", "boolean", true],
+      ["completion_distance_m", "integer", false],
       ["outcome", "varchar", 48, false], ["notes", "text", false],
       ["order_amount", "float", false], ["status", "varchar", 24, true],
       ["idempotency_key", "varchar", 64, true], ["device_captured_at", "datetime", true],

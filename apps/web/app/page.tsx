@@ -53,7 +53,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const assignedOutletIds = new Set(visibleRoutes.map((row) => String(row.outlet_id)));
   const visibleOutlets = outletRows.filter((row) => assignedOutletIds.has(row.$id));
   const visibleAttendance = attendanceRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
-  const completed = visitRows.filter((row) => row.status === "completed").length;
+  const completedVisits = visitRows.filter((row) => row.status === "completed").length;
+  const assignedCompleted = visibleRoutes.filter((row) => row.status === "completed").length;
+  const assignedPending = visibleRoutes.length - assignedCompleted;
+  const selfInitiatedVisits = visitRows.filter((row) => row.visit_type === "self_initiated" || !row.route_assignment_id).length;
   const sales = orderRows.reduce((sum, row) => sum + Number(row.total_amount ?? 0), 0) + visitRows.reduce((sum, row) => sum + Number(row.order_amount ?? 0), 0);
 
   const byEmployee = new Map<string, typeof locationRows>();
@@ -75,7 +78,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   });
   const mapPoints: MapPoint[] = [
     ...visibleOutlets.map((outlet) => ({ id: outlet.$id, name: String(outlet.name), address: String(outlet.address), latitude: Number(outlet.latitude), longitude: Number(outlet.longitude), kind: "outlet" as const })),
-    ...visitRows.map((visit) => ({ id: visit.$id, name: `${String(employees.get(String(visit.employee_id))?.display_name ?? "Salesperson")} · ${String(outlets.get(String(visit.outlet_id))?.name ?? "Visit")}`, address: `${Math.round(Number(visit.geofence_distance_m))} m from visit location`, latitude: Number(visit.latitude), longitude: Number(visit.longitude), kind: "visit" as const })),
+    ...visitRows.map((visit) => ({ id: visit.$id, name: `${String(employees.get(String(visit.employee_id))?.display_name ?? "Salesperson")} · ${String(visit.customer_name || outlets.get(String(visit.outlet_id))?.name || "Visit")}`, address: visit.route_assignment_id ? `${Math.round(Number(visit.geofence_distance_m))} m from assigned location` : "Salesperson-added visit point", latitude: Number(visit.latitude), longitude: Number(visit.longitude), kind: "visit" as const })),
     ...latestPoints,
   ];
 
@@ -86,15 +89,15 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       <div className="signed-in"><small>Signed in as</small><strong>{actor.user.name}</strong><LogoutButton /></div>
     </aside>
     <section className="workspace">
-      <header className="dashboard-head"><div><p className="eyebrow">Date-wise field record</p><h1>Every workday, on one map.</h1><p className="lede">Minute-by-minute route history, assigned visit completion, required photo and audio evidence, and orders taken anywhere.</p></div><a className="button-link" href="/management">Assign visits & manage team</a></header>
+      <header className="dashboard-head"><div><p className="eyebrow">Date-wise field record</p><h1>Every commitment and field visit.</h1><p className="lede">Minute-by-minute route history, unfinished management assignments, salesperson-added visits, required photo and audio evidence, and orders taken anywhere.</p></div><a className="button-link" href="/management">Assign visits & manage team</a></header>
       <form className="filter-bar" method="get" id="reports">
         <label>Date<input type="date" name="date" defaultValue={date} /></label>
         <label>Salesperson<select name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => employee.$id !== actor.employee.$id).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
         <button>View history</button>
       </form>
       <section className="pulse" aria-label="Filtered totals">
-        <article><span>Assigned visits</span><b>{visibleRoutes.length}</b><small>{date}</small></article>
-        <article><span>Completed visits</span><b>{completed}</b><small>{visitRows.length} captured visits</small></article>
+        <article><span>Assigned completion</span><b>{assignedCompleted}/{visibleRoutes.length}</b><small>{assignedPending} still need follow-up</small></article>
+        <article><span>Visits recorded</span><b>{completedVisits}</b><small>{selfInitiatedVisits} added by salespeople</small></article>
         <article><span>Orders recorded</span><b>{orderRows.length}</b><small>PKR {sales.toLocaleString()}</small></article>
         <article><span>GPS route points</span><b>{locationRows.length}</b><small>Minute-by-minute history</small></article>
       </section>
@@ -108,9 +111,15 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         })}</ul>{visibleAttendance.length === 0 && <p className="muted-on-dark">No one started work for this filter.</p>}</aside>
       </section>
       <details className="table-card route-log"><summary><span><span className="eyebrow">Audit trail</span><strong>Open minute-by-minute route log</strong></span><b>{locationRows.length} points</b></summary><div className="table-scroll"><table><thead><tr><th>Captured</th><th>Salesperson</th><th>Coordinates</th><th>Accuracy</th><th>Source</th><th>Server received</th></tr></thead><tbody>{locationRows.map((point) => <tr key={point.$id}><td>{time(point.captured_at)}</td><td>{String(employees.get(String(point.employee_id))?.display_name ?? "Unknown")}</td><td><a href={`https://www.openstreetmap.org/?mlat=${point.latitude}&mlon=${point.longitude}#map=18/${point.latitude}/${point.longitude}`} target="_blank">{Number(point.latitude).toFixed(6)}, {Number(point.longitude).toFixed(6)}</a></td><td>±{Math.round(Number(point.accuracy))} m</td><td>{String(point.source).replaceAll("_", " ")}</td><td>{time(point.received_at)}</td></tr>)}</tbody></table></div></details>
+      <section className="table-card visits-card" id="assignments"><div className="section-head"><div><p className="eyebrow">Management commitments</p><h2>Assigned visit completion status</h2></div><span>{assignedPending} need follow-up</span></div>
+        <div className="table-scroll"><table><thead><tr><th>Salesperson</th><th>Assigned customer</th><th>Sequence</th><th>Status</th><th>Completed</th></tr></thead><tbody>
+          {visibleRoutes.map((route) => <tr key={route.$id}><td>{String(employees.get(String(route.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(route.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(route.outlet_id))?.address ?? "")}</small></td><td>{Number(route.sequence)}</td><td><span className={route.status === "completed" ? "ok" : "warn"}>{String(route.status).replaceAll("_", " ")}</span></td><td>{time(route.completed_at)}</td></tr>)}
+          {visibleRoutes.length === 0 && <tr><td colSpan={5} className="empty-table">No visits were assigned for this filter.</td></tr>}
+        </tbody></table></div>
+      </section>
       <section className="table-card visits-card" id="visits"><div className="section-head"><div><p className="eyebrow">Visit history</p><h2>Location, photo, and audio by date</h2></div><span>{visitRows.length} records</span></div>
-        <div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Assigned visit</th><th>70 m check</th><th>Outcome</th><th>Required evidence</th></tr></thead><tbody>
-          {visitRows.map((visit) => <tr key={visit.$id}><td>{time(visit.check_in_at)}<small>{visit.check_out_at ? `Finished ${time(visit.check_out_at)}` : "In progress"}</small></td><td>{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(visit.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(visit.outlet_id))?.address ?? "")}</small></td><td><span className={visit.geofence_accepted ? "ok" : "warn"}>{Math.round(Number(visit.geofence_distance_m))} m</span><small>Maximum 70 m</small></td><td>{String(visit.outcome ?? visit.status)}</td><td><div className="evidence-links">{(evidence.get(visit.$id) ?? []).map((item) => item.type === "photo" ? <a key={item.$id} href={`/api/evidence/${item.file_id}`} target="_blank">View photo</a> : <audio key={item.$id} controls preload="none" src={`/api/evidence/${item.file_id}`} />)}</div></td></tr>)}
+        <div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Visit</th><th>Location check</th><th>Outcome</th><th>Required evidence</th></tr></thead><tbody>
+          {visitRows.map((visit) => { const assigned = Boolean(visit.route_assignment_id); const outlet = outlets.get(String(visit.outlet_id)); return <tr key={visit.$id}><td>{time(visit.check_in_at)}<small>{visit.check_out_at ? `Finished ${time(visit.check_out_at)}` : "In progress"}</small></td><td>{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown")}</td><td><span className={assigned ? "visit-kind assigned" : "visit-kind self"}>{assigned ? "Assigned" : "Salesperson-added"}</span><strong>{String(visit.customer_name || outlet?.name || "Unknown")}</strong><small>{String(visit.customer_address || outlet?.address || "GPS location saved")}</small></td><td><a href={`https://www.openstreetmap.org/?mlat=${visit.latitude}&mlon=${visit.longitude}#map=18/${visit.latitude}/${visit.longitude}`} target="_blank">Open visit point</a><small>{assigned ? `${Math.round(Number(visit.geofence_distance_m))} m at check-in` : `${Math.round(Number(visit.completion_distance_m ?? 0))} m from start at finish`} · maximum 70 m</small></td><td>{String(visit.outcome ?? visit.status)}</td><td><div className="evidence-links">{(evidence.get(visit.$id) ?? []).map((item) => item.type === "photo" ? <a key={item.$id} href={`/api/evidence/${item.file_id}`} target="_blank">View photo</a> : <audio key={item.$id} controls preload="none" src={`/api/evidence/${item.file_id}`} />)}</div></td></tr>; })}
           {visitRows.length === 0 && <tr><td colSpan={6} className="empty-table">No visits are recorded for this filter.</td></tr>}
         </tbody></table></div>
       </section>

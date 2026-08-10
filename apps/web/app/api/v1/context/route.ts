@@ -31,6 +31,8 @@ export async function GET(request: Request) {
         sequence: route.sequence,
         status: route.status,
         notes: outlet.notes ?? "",
+        kind: "assigned",
+        workDate: date,
       });
     } catch { /* A removed outlet is omitted from the downloaded plan. */ }
   }

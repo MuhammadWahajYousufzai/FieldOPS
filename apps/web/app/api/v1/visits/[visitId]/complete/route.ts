@@ -38,15 +38,18 @@ export async function POST(request: Request, context: { params: Promise<{ visitI
   if (!(photo instanceof File) || photo.size === 0 || !(audio instanceof File) || audio.size === 0) {
     return NextResponse.json({ error: "A visit photo and audio note are both required." }, { status: 422 });
   }
-  const outlet = await db.getRow({ databaseId, tableId: "outlets", rowId: String(visit.outlet_id) });
+  const selfInitiated = visit.visit_type === "self_initiated" || !visit.route_assignment_id;
+  const visitPoint = selfInitiated
+    ? { latitude: Number(visit.latitude), longitude: Number(visit.longitude) }
+    : await db.getRow({ databaseId, tableId: "outlets", rowId: String(visit.outlet_id) }).then((outlet) => ({ latitude: Number(outlet.latitude), longitude: Number(outlet.longitude) }));
   const geofence = evaluateGeofence(
-    { latitude: Number(outlet.latitude), longitude: Number(outlet.longitude) },
+    visitPoint,
     { latitude, longitude },
     70,
     0,
   );
   if (!geofence.accepted) {
-    return NextResponse.json({ error: `Return to the visit location. You are ${geofence.distanceMeters} m away; the maximum is 70 m.` }, { status: 422 });
+    return NextResponse.json({ error: `Return to the visit point. You are ${geofence.distanceMeters} m away; the maximum is 70 m.` }, { status: 422 });
   }
   let evidenceCount = 0;
   const storage = createAdminStorage();
@@ -77,7 +80,8 @@ export async function POST(request: Request, context: { params: Promise<{ visitI
   const orderAmount = number(form.get("orderAmount"));
   await db.updateRow({ databaseId, tableId: "visits", rowId: visitId, data: {
     check_out_at: now, outcome: text(form.get("outcome"), 48) || "Visit completed",
-    notes: text(form.get("notes"), 4000), ...(orderAmount === null ? {} : { order_amount: orderAmount }), status: "completed",
+    notes: text(form.get("notes"), 4000), ...(orderAmount === null ? {} : { order_amount: orderAmount }),
+    completion_distance_m: geofence.distanceMeters, status: "completed",
   } });
   await db.createRow({ databaseId, tableId: "location_points", rowId: ID.unique(), data: {
     employee_id: actor.employee.$id, visit_id: visitId, captured_at: capturedAt, received_at: now,
