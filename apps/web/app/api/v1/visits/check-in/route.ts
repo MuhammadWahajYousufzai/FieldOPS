@@ -69,7 +69,7 @@ export async function POST(request: Request) {
   }, permissions: [] });
   await db.createRow({ databaseId, tableId: "location_points", rowId: ID.unique(), data: {
     employee_id: actor.employee.$id, visit_id: visit.$id, captured_at: capturedAt,
-    received_at: now, latitude, longitude, accuracy, source: "visit_check_in", work_date: date,
+    received_at: now, latitude, longitude, coordinates: [longitude, latitude], accuracy, source: "visit_check_in", work_date: date,
   }, permissions: [] });
   if (assignment) {
     try { await db.updateRow({ databaseId, tableId: "route_assignments", rowId: assignment.$id, data: { status: "active" } }); } catch { /* The visit remains valid if an old plan changed. */ }

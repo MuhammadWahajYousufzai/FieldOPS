@@ -85,7 +85,7 @@ export async function POST(request: Request, context: { params: Promise<{ visitI
   } });
   await db.createRow({ databaseId, tableId: "location_points", rowId: ID.unique(), data: {
     employee_id: actor.employee.$id, visit_id: visitId, captured_at: capturedAt, received_at: now,
-    latitude, longitude, accuracy, source: "visit_check_out", work_date: String(visit.work_date),
+    latitude, longitude, coordinates: [longitude, latitude], accuracy, source: "visit_check_out", work_date: String(visit.work_date),
   }, permissions: [] });
   if (visit.route_assignment_id) {
     try { await db.updateRow({ databaseId, tableId: "route_assignments", rowId: String(visit.route_assignment_id), data: { status: "completed", completed_at: now } }); } catch { /* Visit completion remains authoritative. */ }

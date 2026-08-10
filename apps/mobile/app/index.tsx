@@ -165,6 +165,8 @@ function FieldOpsApp() {
   const queueRef = useRef<QueueItem[]>([]);
   const syncingRef = useRef(false);
   const permissionPrompted = useRef(false);
+  const heartbeatRunningRef = useRef(false);
+  const lastHeartbeatAtRef = useRef(0);
 
   const selected = outlets.find((outlet) => outlet.id === selectedId) ?? outlets[0];
   const assignedOutlets = outlets.filter((outlet) => outlet.kind === "assigned");
@@ -223,7 +225,11 @@ function FieldOpsApp() {
   useEffect(() => {
     if (!session || workState !== "active") return;
     setTrackingSession({ token: session.token, employeeId: session.employee.id }, true).catch(() => undefined);
-    if (trackingReady) startRouteTracking({ token: session.token, employeeId: session.employee.id }).catch(() => undefined);
+    if (!trackingReady) return;
+    startRouteTracking({ token: session.token, employeeId: session.employee.id }).catch(() => undefined);
+    captureLiveHeartbeat(true).catch(() => undefined);
+    const heartbeatTimer = setInterval(() => captureLiveHeartbeat(true).catch(() => undefined), 60_000);
+    return () => clearInterval(heartbeatTimer);
   }, [session?.token, trackingReady, workState]);
 
   useEffect(() => {
@@ -234,17 +240,24 @@ function FieldOpsApp() {
       flushLocationQueue(session.token).then(() => refreshLocationCount()).catch(() => undefined);
     }, 15_000);
     const appSubscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") refreshPermissions(false).catch(() => undefined);
+      if (state === "active") {
+        refreshPermissions(false)
+          .then((permissions) => captureLiveHeartbeat(true, permissions))
+          .catch(() => undefined);
+      }
     });
     const networkSubscription = NetInfo.addEventListener((state) => {
       if (state.isConnected) {
         syncOperations().catch(() => undefined);
+        refreshPermissions(false)
+          .then((permissions) => captureLiveHeartbeat(true, permissions))
+          .catch(() => undefined);
         flushLocationQueue(session.token).then(() => refreshLocationCount()).catch(() => undefined);
         refreshContext(false).catch(() => undefined);
       }
     });
     return () => { clearInterval(timer); appSubscription.remove(); networkSubscription(); };
-  }, [hydrated, session?.token]);
+  }, [hydrated, session?.token, trackingReady, workState]);
 
   async function refreshLocationCount() {
     setLocationPending(await locationQueueCount());
@@ -258,14 +271,16 @@ function FieldOpsApp() {
       getRecordingPermissionsAsync(),
       Location.hasServicesEnabledAsync(),
     ]);
-    setPermissionState({
+    const next = {
       foreground: foreground.granted,
       background: background.granted,
       camera: camera.granted,
       microphone: microphone.granted,
       services,
-    });
+    };
+    setPermissionState(next);
     if (markChecked) setPermissionChecked(true);
+    return next;
   }
 
   async function requestAllPermissions() {
@@ -374,10 +389,33 @@ function FieldOpsApp() {
     return Location.getCurrentPositionAsync({ accuracy });
   }
 
+  async function captureLiveHeartbeat(force = false, permissions: PermissionState = permissionState) {
+    if (!session || workState !== "active") return;
+    if (!permissions.foreground || !permissions.background || !permissions.services) return;
+    if (heartbeatRunningRef.current) return;
+    if (!force && Date.now() - lastHeartbeatAtRef.current < 45_000) {
+      await flushLocationQueue(session.token);
+      await refreshLocationCount();
+      return;
+    }
+
+    heartbeatRunningRef.current = true;
+    try {
+      await startRouteTracking({ token: session.token, employeeId: session.employee.id });
+      const point = await gps(Location.Accuracy.High);
+      await queueLocationObjects([point], "foreground");
+      lastHeartbeatAtRef.current = Date.now();
+      await flushLocationQueue(session.token);
+      await refreshLocationCount();
+    } finally {
+      heartbeatRunningRef.current = false;
+    }
+  }
+
   async function startWork() {
     if (!session) return;
-    await refreshPermissions();
-    if (!permissionState.foreground || !permissionState.background) {
+    const permissions = await refreshPermissions();
+    if (!permissions.foreground || !permissions.background || !permissions.services) {
       Alert.alert("Location access required", "Allow Always/background location before starting work.");
       return;
     }
@@ -387,6 +425,7 @@ function FieldOpsApp() {
       setWorkState("active");
       await queueLocationObjects([point], "foreground");
       await startRouteTracking({ token: session.token, employeeId: session.employee.id });
+      await flushLocationQueue(session.token);
       enqueue("Start work", { type: "json", path: "/attendance", body: {
         action: "check_in",
         latitude: point.coords.latitude,

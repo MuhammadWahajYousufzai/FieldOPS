@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     } });
     await db.createRow({ databaseId, tableId: "location_points", rowId: ID.unique(), data: {
       employee_id: actor.employee.$id, captured_at: capturedAt, received_at: now,
-      latitude, longitude, accuracy, source: "shift_check_out", work_date: date,
+      latitude, longitude, coordinates: [longitude, latitude], accuracy, source: "shift_check_out", work_date: date,
     }, permissions: [] });
     return NextResponse.json({ ok: true, attendanceId: row.$id, status: row.status });
   }
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
   }, permissions: [] });
   await db.createRow({ databaseId, tableId: "location_points", rowId: ID.unique(), data: {
     employee_id: actor.employee.$id, captured_at: capturedAt, received_at: now,
-    latitude, longitude, accuracy, source: "shift_check_in", work_date: date,
+    latitude, longitude, coordinates: [longitude, latitude], accuracy, source: "shift_check_in", work_date: date,
   }, permissions: [] });
   return NextResponse.json({ ok: true, attendanceId: row.$id, status: row.status }, { status: 201 });
 }

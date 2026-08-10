@@ -16,11 +16,21 @@ export async function listAllRows(db: TablesDB, databaseId: string, tableId: str
 
 export async function listAllRowsOrEmpty(db: TablesDB, databaseId: string, tableId: string, queries: string[] = [], maximum = 10_000) {
   try {
-    return await listAllRows(db, databaseId, tableId, queries, maximum);
+    return await withTimeout(listAllRows(db, databaseId, tableId, queries, maximum), 6_000, `Listing ${tableId} timed out`);
   } catch (error) {
-    console.error(`Could not list optional FieldOPS table ${tableId}`, error);
+    console.error(`Could not list FieldOPS table ${tableId}`, error);
     return [];
   }
+}
+
+export function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    operation.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 export function localDateRange(date: string) {

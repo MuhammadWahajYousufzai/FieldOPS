@@ -39,6 +39,7 @@ export async function POST(request: Request) {
     notes: text(body.notes, 4000),
     latitude,
     longitude,
+    coordinates: [longitude, latitude],
     accuracy: Math.max(0, accuracy),
     captured_at: capturedAt,
     received_at: now,

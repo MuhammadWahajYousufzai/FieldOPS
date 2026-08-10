@@ -27,6 +27,7 @@ export async function POST(request: Request) {
         received_at: now,
         latitude,
         longitude,
+        coordinates: [longitude, latitude],
         accuracy: Math.max(0, accuracy),
         source: raw.source === "foreground" ? "foreground" : "background",
         idempotency_key: idempotencyKey,

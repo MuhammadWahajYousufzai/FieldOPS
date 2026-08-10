@@ -8,8 +8,8 @@ def releaseKeystorePassword = System.getenv("KEYSTORE_PASSWORD")
 def releaseKeyAlias = System.getenv("KEY_ALIAS")
 def releaseKeyPassword = System.getenv("KEY_PASSWORD")
 def hasReleaseSigning = releaseKeystoreFile && releaseKeystorePassword && releaseKeyAlias && releaseKeyPassword
-def fieldOpsVersionCode = System.getenv("VERSION_CODE") ? System.getenv("VERSION_CODE").toInteger() : 1
-def fieldOpsVersionName = System.getenv("VERSION_NAME") ?: "0.1.0"
+def fieldOpsVersionCode = System.getenv("VERSION_CODE") ? System.getenv("VERSION_CODE").toInteger() : 2
+def fieldOpsVersionName = System.getenv("VERSION_NAME") ?: "0.2.0"
 
 /**
  * This is the configuration block to customize your React Native Android app.

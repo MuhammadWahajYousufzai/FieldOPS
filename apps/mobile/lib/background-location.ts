@@ -8,6 +8,7 @@ export const LOCATION_QUEUE_KEY = "fieldops-location-outbox-v1";
 export const TRACKING_SESSION_KEY = "fieldops-tracking-session-v1";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
+let queueMutation: Promise<void> = Promise.resolve();
 
 export type QueuedLocation = {
   idempotencyKey: string;
@@ -41,13 +42,21 @@ async function readQueue(): Promise<QueuedLocation[]> {
   }
 }
 
+async function mutateQueue(update: (current: QueuedLocation[]) => QueuedLocation[]) {
+  const operation = queueMutation.then(async () => {
+    const current = await readQueue();
+    await AsyncStorage.setItem(LOCATION_QUEUE_KEY, JSON.stringify(update(current)));
+  });
+  queueMutation = operation.catch(() => undefined);
+  await operation;
+}
+
 export async function locationQueueCount() {
   return (await readQueue()).length;
 }
 
 export async function queueLocationObjects(locations: Location.LocationObject[], source: QueuedLocation["source"] = "background") {
   if (locations.length === 0) return;
-  const current = await readQueue();
   const additions = locations.map((location) => ({
     idempotencyKey: pointId(location.timestamp),
     capturedAt: new Date(location.timestamp).toISOString(),
@@ -59,7 +68,7 @@ export async function queueLocationObjects(locations: Location.LocationObject[],
     heading: location.coords.heading ?? null,
     source,
   }));
-  await AsyncStorage.setItem(LOCATION_QUEUE_KEY, JSON.stringify([...current, ...additions].slice(-20_000)));
+  await mutateQueue((current) => [...current, ...additions].slice(-20_000));
 }
 
 export async function flushLocationQueue(token?: string): Promise<number> {
@@ -78,8 +87,7 @@ export async function flushLocationQueue(token?: string): Promise<number> {
     if (!response.ok) return 0;
     const result = await response.json() as { confirmed?: string[] };
     const confirmed = new Set(result.confirmed ?? batch.map((point) => point.idempotencyKey));
-    const latest = await readQueue();
-    await AsyncStorage.setItem(LOCATION_QUEUE_KEY, JSON.stringify(latest.filter((point) => !confirmed.has(point.idempotencyKey))));
+    await mutateQueue((latest) => latest.filter((point) => !confirmed.has(point.idempotencyKey)));
     return confirmed.size;
   } catch {
     return 0;
