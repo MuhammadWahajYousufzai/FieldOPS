@@ -27,11 +27,10 @@ export function ManagementForms({ employees, outlets, territories, today }: { em
     {status && <p className={status.includes("saved") ? "form-success global-message" : "form-error global-message"}>{status}</p>}
     <section className="management-grid">
       <form className="management-form" onSubmit={(event) => run(event, "/api/management/employees", "Salesperson")}>
-        <div><p className="eyebrow">People</p><h2>Create salesperson</h2><p className="lede">Creates a login and assigns a territory.</p></div>
+        <div><p className="eyebrow">People</p><h2>Create salesperson</h2><p className="lede">Creates a field-only login. No territory is assigned.</p></div>
         <label>Full name<input name="name" placeholder="Ali Raza" required /></label>
         <div className="field-pair"><label>Email<input name="email" type="email" placeholder="ali@sherazwaqar.tech" required /></label><label>Employee code<input name="employeeCode" placeholder="SR-015" required /></label></div>
-        <label>Territory<select name="territoryId" required><option value="">Select territory</option>{territories.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-        <label>Initial password<input name="password" type="password" placeholder="Uses the management password if blank" minLength={8} /></label>
+        <label>Salesperson password<input name="password" type="password" placeholder="Create a separate password for this salesperson" minLength={8} autoComplete="new-password" required /></label>
         <button disabled={Boolean(busy)}>{busy === "Salesperson" ? "Creating…" : "Create salesperson"}</button>
       </form>
       <form className="management-form" onSubmit={(event) => run(event, "/api/management/outlets", "Outlet")}>

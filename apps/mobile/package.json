@@ -9,24 +9,26 @@
     "ios:asc:upload": "bash ./scripts/ios-app-store-connect.sh upload",
     "ios:asc:export": "bash ./scripts/ios-app-store-connect.sh export",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "android:apk": "cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
     "@fieldops/domain": "workspace:*",
-    "@react-native-async-storage/async-storage": "2.1.2",
-    "expo": "~53.0.20",
-    "expo-av": "~15.1.7",
-    "expo-image-picker": "~16.1.4",
-    "expo-location": "~18.1.6",
-    "expo-router": "~5.1.4",
-    "react": "19.0.0",
-    "react-native": "0.79.5",
-    "react-native-safe-area-context": "5.4.0",
-    "react-native-screens": "~4.11.1",
-    "react-native-webview": "13.13.5"
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/netinfo": "12.0.1",
+    "expo": "57.0.11",
+    "expo-audio": "~57.0.3",
+    "expo-constants": "~57.0.9",
+    "expo-file-system": "~57.0.2",
+    "expo-image-picker": "~57.0.8",
+    "expo-location": "~57.0.8",
+    "expo-task-manager": "~57.0.8",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-webview": "13.16.1"
   },
   "devDependencies": {
-    "@types/react": "~19.0.10",
-    "typescript": "^5.9.2"
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
   }
 }

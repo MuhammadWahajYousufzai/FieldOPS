@@ -3,11 +3,18 @@ import { Query } from "node-appwrite";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { requireManager } from "../lib/auth";
 import { workDate } from "../lib/mobile-auth";
+import { listAllRows, listAllRowsOrEmpty } from "../lib/table-data";
 import { LogoutButton } from "./logout-button";
-import { MapPoint, OperationsMap } from "./operations-map";
+import { MapPoint, OperationsMap, RouteLine } from "./operations-map";
 
 export const dynamic = "force-dynamic";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
+const routeColors = ["#D8A629", "#2F75A8", "#B5523B", "#267057", "#75579B", "#CA7134"];
+
+function time(value: unknown) {
+  if (!value) return "—";
+  return new Date(String(value)).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Karachi" });
+}
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ date?: string; employee?: string }> }) {
   const actor = await requireManager();
@@ -16,73 +23,98 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const date = /^\d{4}-\d{2}-\d{2}$/.test(params.date ?? "") ? String(params.date) : workDate();
   const selectedEmployee = params.employee ?? "all";
   const db = createAdminTablesDb();
-  const [employeeList, outletsResult, routesResult, attendanceResult] = await Promise.all([
-    db.listRows({ databaseId, tableId: "employees", queries: [Query.equal("status", "active"), Query.orderAsc("display_name"), Query.limit(100)] }),
-    db.listRows({ databaseId, tableId: "outlets", queries: [Query.equal("status", "active"), Query.orderAsc("name"), Query.limit(100)] }),
-    db.listRows({ databaseId, tableId: "route_assignments", queries: [Query.equal("work_date", date), Query.limit(100)] }),
-    db.listRows({ databaseId, tableId: "attendance_records", queries: [Query.equal("work_date", date), Query.limit(100)] }),
+  const employeeFilter = selectedEmployee === "all" ? [] : [Query.equal("employee_id", selectedEmployee)];
+  const [employeeRows, outletRows, routeRows, attendanceRows, visitRows, evidenceRows, locationRows, orderRows] = await Promise.all([
+    listAllRows(db, databaseId, "employees", [Query.equal("status", "active")]),
+    listAllRows(db, databaseId, "outlets", [Query.equal("status", "active")]),
+    listAllRows(db, databaseId, "route_assignments", [Query.equal("work_date", date)]),
+    listAllRows(db, databaseId, "attendance_records", [Query.equal("work_date", date)]),
+    listAllRows(db, databaseId, "visits", [Query.equal("work_date", date), ...employeeFilter]),
+    listAllRowsOrEmpty(db, databaseId, "visit_evidence"),
+    listAllRowsOrEmpty(db, databaseId, "location_points", [Query.equal("work_date", date), ...employeeFilter]),
+    listAllRowsOrEmpty(db, databaseId, "orders", [Query.equal("work_date", date), ...employeeFilter]),
   ]);
-  const visitQueries = [Query.equal("work_date", date), Query.orderDesc("check_in_at"), Query.limit(100)];
-  if (selectedEmployee !== "all") visitQueries.unshift(Query.equal("employee_id", selectedEmployee));
-  const visitsResult = await db.listRows({ databaseId, tableId: "visits", queries: visitQueries });
-  const evidenceResult = await db.listRows({ databaseId, tableId: "visit_evidence", queries: [Query.orderDesc("captured_at"), Query.limit(100)] });
-  const employees = new Map(employeeList.rows.map((row) => [row.$id, row]));
-  const outlets = new Map(outletsResult.rows.map((row) => [row.$id, row]));
-  const evidence = new Map<string, typeof evidenceResult.rows>();
-  for (const item of evidenceResult.rows) {
+  employeeRows.sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
+  outletRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  visitRows.sort((a, b) => String(b.check_in_at).localeCompare(String(a.check_in_at)));
+  locationRows.sort((a, b) => String(a.captured_at).localeCompare(String(b.captured_at)));
+  orderRows.sort((a, b) => String(b.captured_at).localeCompare(String(a.captured_at)));
+  const employees = new Map(employeeRows.map((row) => [row.$id, row]));
+  const outlets = new Map(outletRows.map((row) => [row.$id, row]));
+  const visitIds = new Set(visitRows.map((row) => row.$id));
+  const evidence = new Map<string, typeof evidenceRows>();
+  for (const item of evidenceRows) {
+    if (!visitIds.has(String(item.visit_id))) continue;
     const list = evidence.get(String(item.visit_id)) ?? [];
     list.push(item);
     evidence.set(String(item.visit_id), list);
   }
-  const visibleRoutes = routesResult.rows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
-  const visibleOutlets = outletsResult.rows.filter((row) => selectedEmployee === "all" || row.assigned_employee_id === selectedEmployee);
-  const completed = visitsResult.rows.filter((row) => row.status === "completed").length;
-  const sales = visitsResult.rows.reduce((sum, row) => sum + Number(row.order_amount ?? 0), 0);
+  const visibleRoutes = routeRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
+  const assignedOutletIds = new Set(visibleRoutes.map((row) => String(row.outlet_id)));
+  const visibleOutlets = outletRows.filter((row) => assignedOutletIds.has(row.$id));
+  const visibleAttendance = attendanceRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
+  const completed = visitRows.filter((row) => row.status === "completed").length;
+  const sales = orderRows.reduce((sum, row) => sum + Number(row.total_amount ?? 0), 0) + visitRows.reduce((sum, row) => sum + Number(row.order_amount ?? 0), 0);
+
+  const byEmployee = new Map<string, typeof locationRows>();
+  for (const point of locationRows) {
+    const list = byEmployee.get(String(point.employee_id)) ?? [];
+    list.push(point);
+    byEmployee.set(String(point.employee_id), list);
+  }
+  const routeLines: RouteLine[] = [...byEmployee.entries()].map(([employeeId, points], index) => ({
+    id: employeeId,
+    name: String(employees.get(employeeId)?.display_name ?? "Salesperson"),
+    color: routeColors[index % routeColors.length]!,
+    coordinates: points.map((point) => [Number(point.longitude), Number(point.latitude)] as [number, number]),
+  }));
+  const latestPoints: MapPoint[] = [...byEmployee.entries()].flatMap(([employeeId, points]) => {
+    const last = points.at(-1);
+    if (!last) return [];
+    return [{ id: last.$id, name: `${String(employees.get(employeeId)?.display_name ?? "Salesperson")} · latest`, address: `${time(last.captured_at)} · ±${Math.round(Number(last.accuracy))} m`, latitude: Number(last.latitude), longitude: Number(last.longitude), kind: "live" as const }];
+  });
   const mapPoints: MapPoint[] = [
     ...visibleOutlets.map((outlet) => ({ id: outlet.$id, name: String(outlet.name), address: String(outlet.address), latitude: Number(outlet.latitude), longitude: Number(outlet.longitude), kind: "outlet" as const })),
-    ...visitsResult.rows.map((visit) => ({ id: visit.$id, name: `${String(employees.get(String(visit.employee_id))?.display_name ?? "Salesperson")} · ${String(outlets.get(String(visit.outlet_id))?.name ?? "Visit")}`, address: `${Math.round(Number(visit.geofence_distance_m))}m from assigned outlet`, latitude: Number(visit.latitude), longitude: Number(visit.longitude), kind: "visit" as const })),
+    ...visitRows.map((visit) => ({ id: visit.$id, name: `${String(employees.get(String(visit.employee_id))?.display_name ?? "Salesperson")} · ${String(outlets.get(String(visit.outlet_id))?.name ?? "Visit")}`, address: `${Math.round(Number(visit.geofence_distance_m))} m from visit location`, latitude: Number(visit.latitude), longitude: Number(visit.longitude), kind: "visit" as const })),
+    ...latestPoints,
   ];
 
   return <main className="shell">
     <aside className="rail">
-      <div className="brand"><span className="grain">YR</span><div><strong>Yousuf Rice FieldOps</strong><small>Karachi operations</small></div></div>
-      <nav aria-label="Primary"><a className="selected" href="/">Overview</a><a href="/management">Management</a><a href="/?date=">Field activity</a><a href="/management">Salespersons</a><a href="#reports">Reports</a></nav>
+      <div className="brand"><span className="grain">YR</span><div><strong>Yousuf Rice FieldOps</strong><small>Field operations</small></div></div>
+      <nav aria-label="Primary"><a className="selected" href="/">Overview</a><a href="/management">Management</a><a href="#route-history">Route history</a><a href="#visits">Visit history</a><a href="#orders">Orders</a></nav>
       <div className="signed-in"><small>Signed in as</small><strong>{actor.user.name}</strong><LogoutButton /></div>
     </aside>
     <section className="workspace">
-      <header className="dashboard-head"><div><p className="eyebrow">Production workspace</p><h1>Karachi in one view.</h1><p className="lede">Assignments, GPS evidence, visit photos, audio notes, and sales results update from the field app.</p></div><a className="button-link" href="/management">Manage team & stores</a></header>
+      <header className="dashboard-head"><div><p className="eyebrow">Date-wise field record</p><h1>Every workday, on one map.</h1><p className="lede">Minute-by-minute route history, assigned visit completion, required photo and audio evidence, and orders taken anywhere.</p></div><a className="button-link" href="/management">Assign visits & manage team</a></header>
       <form className="filter-bar" method="get" id="reports">
         <label>Date<input type="date" name="date" defaultValue={date} /></label>
-        <label>Salesperson<select name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeList.rows.map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
-        <button>View report</button>
+        <label>Salesperson<select name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => employee.$id !== actor.employee.$id).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
+        <button>View history</button>
       </form>
       <section className="pulse" aria-label="Filtered totals">
-        <article><span>Assigned stops</span><b>{visibleRoutes.length}</b><small>{date}</small></article>
-        <article><span>Completed visits</span><b>{completed}</b><small>{visitsResult.total} captured visits</small></article>
-        <article><span>Sales recorded</span><b>PKR {sales.toLocaleString()}</b><small>Server-confirmed outcomes</small></article>
-        <article><span>Checked in</span><b>{attendanceResult.rows.filter((row) => row.status === "checked_in" && (selectedEmployee === "all" || row.employee_id === selectedEmployee)).length}</b><small>Active shifts</small></article>
+        <article><span>Assigned visits</span><b>{visibleRoutes.length}</b><small>{date}</small></article>
+        <article><span>Completed visits</span><b>{completed}</b><small>{visitRows.length} captured visits</small></article>
+        <article><span>Orders recorded</span><b>{orderRows.length}</b><small>PKR {sales.toLocaleString()}</small></article>
+        <article><span>GPS route points</span><b>{locationRows.length}</b><small>Minute-by-minute history</small></article>
       </section>
-      <section className="dashboard-grid">
-        <article className="map-card"><div className="section-head"><div><p className="eyebrow">OpenStreetMap · MapLibre</p><h2>Assigned and captured locations</h2></div><span className="live">Live data</span></div><OperationsMap points={mapPoints} /><p className="map-key"><i className="key-outlet" /> Assigned outlet <i className="key-visit" /> Captured visit point</p></article>
-        <aside className="decision-card"><p className="eyebrow">Route progress</p><h2>{date}</h2><ul>{visibleRoutes.slice(0, 8).map((route) => {
-          const outlet = outlets.get(String(route.outlet_id)); const employee = employees.get(String(route.employee_id));
-          return <li key={route.$id}><span className={`flag ${route.status === "completed" ? "blue" : "amber"}`}>{String(route.status)}</span><strong>{String(outlet?.name ?? "Removed outlet")}</strong><small>{String(employee?.display_name ?? "Unassigned")} · stop {String(route.sequence)}</small></li>;
-        })}</ul>{visibleRoutes.length === 0 && <p className="muted-on-dark">No published stops for this filter.</p>}</aside>
+      <section className="dashboard-grid" id="route-history">
+        <article className="map-card"><div className="section-head"><div><p className="eyebrow">Full route history</p><h2>{date} · {locationRows.length} GPS points</h2></div><span className="live">Server saved</span></div><OperationsMap points={mapPoints} routes={routeLines} /><p className="map-key"><i className="key-outlet" /> Assigned visit <i className="key-visit" /> Completed visit <i className="key-live" /> Latest position</p></article>
+        <aside className="decision-card"><p className="eyebrow">Workday status</p><h2>{date}</h2><ul>{visibleAttendance.map((attendance) => {
+          const points = byEmployee.get(String(attendance.employee_id)) ?? [];
+          const latest = points.at(-1);
+          const stale = attendance.status === "checked_in" && (!latest || Date.now() - new Date(String(latest.captured_at)).valueOf() > 150_000);
+          return <li key={attendance.$id}><span className={`flag ${attendance.status === "checked_out" ? "blue" : stale ? "red" : "amber"}`}>{attendance.status === "checked_out" ? "finished" : stale ? "GPS stopped" : "working"}</span><strong>{String(employees.get(String(attendance.employee_id))?.display_name ?? "Salesperson")}</strong><small>{time(attendance.check_in_at)} → {time(attendance.check_out_at)} · {points.length} route points</small></li>;
+        })}</ul>{visibleAttendance.length === 0 && <p className="muted-on-dark">No one started work for this filter.</p>}</aside>
       </section>
-      <section className="table-card visits-card"><div className="section-head"><div><p className="eyebrow">Evidence report</p><h2>Visits by date and salesperson</h2></div><span>{visitsResult.total} records</span></div>
-        <div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Outlet</th><th>GPS</th><th>Outcome</th><th>Evidence</th><th>Sales</th></tr></thead><tbody>
-          {visitsResult.rows.map((visit) => <tr key={visit.$id}>
-            <td>{new Date(String(visit.check_in_at)).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Karachi" })}</td>
-            <td>{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown")}</td>
-            <td><strong>{String(outlets.get(String(visit.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(visit.outlet_id))?.address ?? "")}</small></td>
-            <td><span className={visit.geofence_accepted ? "ok" : "warn"}>{Math.round(Number(visit.geofence_distance_m))} m</span><small>±{Math.round(Number(visit.accuracy))} m accuracy</small></td>
-            <td>{String(visit.outcome ?? visit.status)}</td>
-            <td><div className="evidence-links">{(evidence.get(visit.$id) ?? []).map((item) => item.type === "photo" ? <a key={item.$id} href={`/api/evidence/${item.file_id}`} target="_blank">Photo</a> : <audio key={item.$id} controls preload="none" src={`/api/evidence/${item.file_id}`} />)}</div></td>
-            <td>{visit.order_amount ? `PKR ${Number(visit.order_amount).toLocaleString()}` : "—"}</td>
-          </tr>)}
-          {visitsResult.total === 0 && <tr><td colSpan={7} className="empty-table">No visits are recorded for this filter yet. Complete a visit in the app to see it here.</td></tr>}
+      <details className="table-card route-log"><summary><span><span className="eyebrow">Audit trail</span><strong>Open minute-by-minute route log</strong></span><b>{locationRows.length} points</b></summary><div className="table-scroll"><table><thead><tr><th>Captured</th><th>Salesperson</th><th>Coordinates</th><th>Accuracy</th><th>Source</th><th>Server received</th></tr></thead><tbody>{locationRows.map((point) => <tr key={point.$id}><td>{time(point.captured_at)}</td><td>{String(employees.get(String(point.employee_id))?.display_name ?? "Unknown")}</td><td><a href={`https://www.openstreetmap.org/?mlat=${point.latitude}&mlon=${point.longitude}#map=18/${point.latitude}/${point.longitude}`} target="_blank">{Number(point.latitude).toFixed(6)}, {Number(point.longitude).toFixed(6)}</a></td><td>±{Math.round(Number(point.accuracy))} m</td><td>{String(point.source).replaceAll("_", " ")}</td><td>{time(point.received_at)}</td></tr>)}</tbody></table></div></details>
+      <section className="table-card visits-card" id="visits"><div className="section-head"><div><p className="eyebrow">Visit history</p><h2>Location, photo, and audio by date</h2></div><span>{visitRows.length} records</span></div>
+        <div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Assigned visit</th><th>70 m check</th><th>Outcome</th><th>Required evidence</th></tr></thead><tbody>
+          {visitRows.map((visit) => <tr key={visit.$id}><td>{time(visit.check_in_at)}<small>{visit.check_out_at ? `Finished ${time(visit.check_out_at)}` : "In progress"}</small></td><td>{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(visit.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(visit.outlet_id))?.address ?? "")}</small></td><td><span className={visit.geofence_accepted ? "ok" : "warn"}>{Math.round(Number(visit.geofence_distance_m))} m</span><small>Maximum 70 m</small></td><td>{String(visit.outcome ?? visit.status)}</td><td><div className="evidence-links">{(evidence.get(visit.$id) ?? []).map((item) => item.type === "photo" ? <a key={item.$id} href={`/api/evidence/${item.file_id}`} target="_blank">View photo</a> : <audio key={item.$id} controls preload="none" src={`/api/evidence/${item.file_id}`} />)}</div></td></tr>)}
+          {visitRows.length === 0 && <tr><td colSpan={6} className="empty-table">No visits are recorded for this filter.</td></tr>}
         </tbody></table></div>
       </section>
+      <section className="table-card visits-card" id="orders"><div className="section-head"><div><p className="eyebrow">Order history</p><h2>Orders taken from any location</h2></div><span>{orderRows.length} records</span></div><div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Customer</th><th>Product</th><th>Quantity</th><th>Total</th><th>Location</th></tr></thead><tbody>{orderRows.map((order) => <tr key={order.$id}><td>{time(order.captured_at)}</td><td>{String(employees.get(String(order.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(order.customer_name)}</strong><small>{String(order.phone || order.address || "")}</small></td><td>{String(order.product_name)}</td><td>{Number(order.quantity_kg).toLocaleString()} kg</td><td>PKR {Number(order.total_amount).toLocaleString()}</td><td><a href={`https://www.openstreetmap.org/?mlat=${order.latitude}&mlon=${order.longitude}#map=18/${order.latitude}/${order.longitude}`} target="_blank">Open map</a></td></tr>)}{orderRows.length === 0 && <tr><td colSpan={7} className="empty-table">No orders are recorded for this filter.</td></tr>}</tbody></table></div></section>
     </section>
   </main>;
 }

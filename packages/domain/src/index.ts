@@ -36,10 +36,10 @@ export function evaluateGeofence(
   outlet: Coordinate,
   checkIn: Coordinate,
   radiusMeters: number,
-  accuracyMeters: number,
+  _accuracyMeters = 0,
 ) {
   const distance = distanceMeters(outlet, checkIn);
-  return { distanceMeters: Math.round(distance), accepted: distance <= radiusMeters + accuracyMeters };
+  return { distanceMeters: Math.round(distance), accepted: distance <= radiusMeters };
 }
 
 export type SyncOperation = {

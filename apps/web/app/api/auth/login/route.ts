@@ -1,14 +1,27 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { createAdminAccount, createSessionAccount } from "@fieldops/appwrite/server";
-import { managerForUser, SESSION_COOKIE } from "../../../../lib/auth";
+import { createAdminUsers, createSessionAccount } from "@fieldops/appwrite/server";
+import { dashboardManagerUserId, managerForUser, SESSION_COOKIE } from "../../../../lib/auth";
+
+function matchesDashboardPassword(password: string): boolean {
+  const configured = process.env.FIELDOPS_INITIAL_PASSWORD;
+  if (!configured) throw new Error("FIELDOPS_INITIAL_PASSWORD is not configured.");
+  const submittedDigest = createHash("sha256").update(password).digest();
+  const configuredDigest = createHash("sha256").update(configured).digest();
+  return timingSafeEqual(submittedDigest, configuredDigest);
+}
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    if (typeof body.email !== "string" || typeof body.password !== "string") {
-      return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
+    if (typeof body.password !== "string" || !body.password) {
+      return NextResponse.json({ error: "Enter your password." }, { status: 400 });
     }
-    const session = await createAdminAccount().createEmailPasswordSession({ email: body.email.trim(), password: body.password });
+    if (!matchesDashboardPassword(body.password)) {
+      return NextResponse.json({ error: "The password is incorrect." }, { status: 401 });
+    }
+    const userId = await dashboardManagerUserId();
+    const session = await createAdminUsers().createSession({ userId });
     const account = createSessionAccount(session.secret);
     const user = await account.get();
     const actor = await managerForUser(user);
@@ -25,7 +38,8 @@ export async function POST(request: Request) {
       path: "/",
     });
     return response;
-  } catch {
-    return NextResponse.json({ error: "The email or password is incorrect." }, { status: 401 });
+  } catch (error) {
+    console.error("Dashboard sign-in failed", error);
+    return NextResponse.json({ error: "Dashboard sign-in is not configured correctly." }, { status: 503 });
   }
 }

@@ -7,3 +7,5 @@ onlyBuiltDependencies:
 allowBuilds:
   esbuild: true
   sharp: true
+overrides:
+  react-native-worklets: 0.10.1

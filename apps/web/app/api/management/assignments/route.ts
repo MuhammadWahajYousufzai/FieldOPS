@@ -15,7 +15,6 @@ export async function POST(request: Request) {
   const outletId = text(body.outletId, 36), employeeId = text(body.employeeId, 36), date = text(body.workDate, 10) || workDate();
   if (!outletId || !employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ error: "Outlet, salesperson, and date are required." }, { status: 400 });
   const db = createAdminTablesDb();
-  await db.updateRow({ databaseId, tableId: "outlets", rowId: outletId, data: { assigned_employee_id: employeeId } });
   const current = await db.listRows({ databaseId, tableId: "route_assignments", queries: [Query.equal("employee_id", employeeId), Query.equal("work_date", date), Query.limit(100)] });
   const routeId = stableId("route", `${date}:${employeeId}:${outletId}`);
   try {

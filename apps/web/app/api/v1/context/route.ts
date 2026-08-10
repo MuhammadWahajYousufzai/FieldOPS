@@ -43,6 +43,7 @@ export async function GET(request: Request) {
     date,
     employee: { id: actor.employee.$id, name: actor.employee.display_name, code: actor.employee.employee_code },
     shiftActive: attendance?.status === "checked_in",
+    workState: attendance?.status === "checked_in" ? "active" : attendance?.status === "checked_out" ? "finished" : "not_started",
     route: rows,
     map: { styleUrl: "https://tiles.openfreemap.org/styles/liberty", attribution: "© OpenStreetMap contributors" },
   });

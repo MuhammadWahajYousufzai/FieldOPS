@@ -11,6 +11,7 @@ const endpoint = required("APPWRITE_ENDPOINT");
 const projectId = required("APPWRITE_PROJECT_ID");
 const databaseId = required("APPWRITE_DATABASE_ID");
 const initialPassword = required("FIELDOPS_INITIAL_PASSWORD");
+const salespersonPassword = required("FIELDOPS_SEED_SALESPERSON_PASSWORD");
 const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(required("APPWRITE_API_KEY"));
 const db = new TablesDB(client);
 const users = new Users(client);
@@ -28,10 +29,10 @@ async function ensureRow(tableId, rowId, data) {
   }
 }
 
-async function ensureUser(email, name) {
+async function ensureUser(email, name, password) {
   const existing = (await users.list({ queries: [Query.equal("email", email), Query.limit(1)] })).users[0];
   if (existing) return existing;
-  return users.create({ userId: ID.unique(), email, password: initialPassword, name });
+  return users.create({ userId: ID.unique(), email, password, name });
 }
 
 const organizationId = stableId("org", "yousuf-rice");
@@ -48,8 +49,8 @@ const salesRoleId = stableId("role", "sales_person");
 await ensureRow("roles", managerRoleId, { code: "super_admin", name: "Executive manager", system: true, active: true });
 await ensureRow("roles", salesRoleId, { code: "sales_person", name: "Sales person", system: true, active: true });
 
-const manager = await ensureUser("management@sherazwaqar.tech", "FieldOPS Management");
-const salesperson = await ensureUser("ali.raza@sherazwaqar.tech", "Ali Raza");
+const manager = await ensureUser("management@sherazwaqar.tech", "FieldOPS Management", initialPassword);
+const salesperson = await ensureUser("ali.raza@sherazwaqar.tech", "Ali Raza", salespersonPassword);
 const managerEmployeeId = stableId("emp", manager.$id);
 const salesEmployeeId = stableId("emp", salesperson.$id);
 await ensureRow("employees", managerEmployeeId, { user_id: manager.$id, employee_code: "YR-0001", display_name: manager.name, status: "active", joining_date: now });

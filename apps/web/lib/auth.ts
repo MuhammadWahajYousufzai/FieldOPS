@@ -27,6 +27,23 @@ export async function requireManager() {
   return managerForUser(user);
 }
 
+export async function dashboardManagerUserId(): Promise<string> {
+  const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
+  const db = createAdminTablesDb();
+  for (const code of ["super_admin", "executive", "manager"]) {
+    const roleResult = await db.listRows({ databaseId, tableId: "roles", queries: [Query.equal("code", code), Query.equal("active", true), Query.limit(1)] });
+    const role = roleResult.rows[0];
+    if (!role) continue;
+    const assignmentResult = await db.listRows({ databaseId, tableId: "employee_assignments", queries: [Query.equal("role_id", role.$id), Query.limit(25)] });
+    for (const assignment of assignmentResult.rows) {
+      if (assignment.effective_to) continue;
+      const employee = await db.getRow({ databaseId, tableId: "employees", rowId: String(assignment.employee_id) });
+      if (employee.status === "active" && employee.user_id) return String(employee.user_id);
+    }
+  }
+  throw new Error("No active dashboard manager is configured.");
+}
+
 export async function managerForUser(user: { $id: string; name: string }) {
   const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
   const db = createAdminTablesDb();

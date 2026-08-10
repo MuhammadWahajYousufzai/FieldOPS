@@ -17,7 +17,7 @@
             "startCommand": "",
             "outputDirectory": "apps/web/.next",
             "buildSpecification": "s-1vcpu-1gb",
-            "runtimeSpecification": "s-1vcpu-1gb",
+            "runtimeSpecification": "s-8vcpu-8gb",
             "deploymentRetention": 5,
             "path": "."
         }

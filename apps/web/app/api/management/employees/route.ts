@@ -13,10 +13,9 @@ export async function POST(request: Request) {
   if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
   const body = await request.json();
   const name = text(body.name, 128), email = text(body.email, 320).toLowerCase(), employeeCode = text(body.employeeCode, 32).toUpperCase();
-  const password = text(body.password, 256) || process.env.FIELDOPS_INITIAL_PASSWORD || "";
-  const territoryId = text(body.territoryId, 36);
-  if (!name || !email.includes("@") || !employeeCode || password.length < 8 || !territoryId) {
-    return NextResponse.json({ error: "Name, email, employee code, territory, and an 8+ character password are required." }, { status: 400 });
+  const password = text(body.password, 256);
+  if (!name || !email.includes("@") || !employeeCode || password.length < 8) {
+    return NextResponse.json({ error: "Name, email, employee code, and a separate 8+ character salesperson password are required." }, { status: 400 });
   }
   const db = createAdminTablesDb();
   try {
@@ -29,12 +28,12 @@ export async function POST(request: Request) {
       status: "active", joining_date: new Date().toISOString(),
     }, permissions: [] });
     await db.createRow({ databaseId, tableId: "employee_assignments", rowId: ID.unique(), data: {
-      employee_id: employeeId, role_id: role.$id, territory_id: territoryId,
+      employee_id: employeeId, role_id: role.$id,
       effective_from: new Date().toISOString(), assigned_by: actor.user.$id, reason: "Created from management dashboard",
     }, permissions: [] });
     await db.createRow({ databaseId, tableId: "audit_logs", rowId: ID.unique(), data: {
       actor_user_id: actor.user.$id, action: "employee.created", entity_type: "employee", entity_id: employeeId,
-      occurred_at: new Date().toISOString(), after_json: JSON.stringify({ email, employeeCode, territoryId }),
+      occurred_at: new Date().toISOString(), after_json: JSON.stringify({ email, employeeCode }),
       reason: "Management dashboard", correlation_id: randomUUID(),
     }, permissions: [] });
     return NextResponse.json({ ok: true, employeeId }, { status: 201 });

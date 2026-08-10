@@ -13,7 +13,14 @@ export type MapPoint = {
   kind: "outlet" | "visit" | "live";
 };
 
-export function OperationsMap({ points }: { points: MapPoint[] }) {
+export type RouteLine = {
+  id: string;
+  name: string;
+  color: string;
+  coordinates: [number, number][];
+};
+
+export function OperationsMap({ points, routes = [] }: { points: MapPoint[]; routes?: RouteLine[] }) {
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!container.current) return;
@@ -25,6 +32,15 @@ export function OperationsMap({ points }: { points: MapPoint[] }) {
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     const bounds = new maplibregl.LngLatBounds();
+    map.on("load", () => {
+      routes.forEach((route, index) => {
+        if (route.coordinates.length < 2) return;
+        const sourceId = `route-${index}`;
+        map.addSource(sourceId, { type: "geojson", data: { type: "Feature", properties: { name: route.name }, geometry: { type: "LineString", coordinates: route.coordinates } } });
+        map.addLayer({ id: sourceId, type: "line", source: sourceId, paint: { "line-color": route.color, "line-width": 4, "line-opacity": 0.82 } });
+      });
+    });
+    for (const route of routes) for (const coordinate of route.coordinates) bounds.extend(coordinate);
     for (const point of points) {
       const color = point.kind === "visit" ? "#267057" : point.kind === "live" ? "#d8a629" : "#243d74";
       new maplibregl.Marker({ color })
@@ -33,9 +49,9 @@ export function OperationsMap({ points }: { points: MapPoint[] }) {
         .addTo(map);
       bounds.extend([point.longitude, point.latitude]);
     }
-    if (points.length > 1) map.fitBounds(bounds as LngLatBoundsLike, { padding: 55, maxZoom: 14, duration: 0 });
+    if (points.length + routes.reduce((sum, route) => sum + route.coordinates.length, 0) > 1) map.fitBounds(bounds as LngLatBoundsLike, { padding: 55, maxZoom: 14, duration: 0 });
     return () => map.remove();
-  }, [points]);
+  }, [points, routes]);
   return <div className="operations-map" ref={container} aria-label="Map of assigned outlets and captured visit locations" />;
 }
 

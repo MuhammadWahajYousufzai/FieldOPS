@@ -14,12 +14,18 @@ describe("territory authorization", () => {
 });
 
 describe("visit geofence", () => {
-  it("accounts for reported GPS accuracy", () => {
+  it("enforces the configured radius without expanding it for poor accuracy", () => {
     const outlet = { latitude: 24.8138, longitude: 67.0305 };
     const nearby = { latitude: 24.8141, longitude: 67.0305 };
-    const result = evaluateGeofence(outlet, nearby, 25, 15);
-    expect(result.accepted).toBe(true);
+    const result = evaluateGeofence(outlet, nearby, 25, 50);
+    expect(result.accepted).toBe(false);
     expect(result.distanceMeters).toBeGreaterThan(30);
+  });
+
+  it("accepts a point inside the 70 metre visit boundary", () => {
+    const outlet = { latitude: 24.8138, longitude: 67.0305 };
+    const nearby = { latitude: 24.8141, longitude: 67.0305 };
+    expect(evaluateGeofence(outlet, nearby, 70, 0).accepted).toBe(true);
   });
 });
 
