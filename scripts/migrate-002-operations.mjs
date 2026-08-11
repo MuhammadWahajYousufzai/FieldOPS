@@ -58,10 +58,12 @@ const tables = [
       ["check_in_accuracy", "float", true], ["check_out_latitude", "float", false],
       ["check_out_longitude", "float", false], ["check_out_accuracy", "float", false],
       ["status", "varchar", 24, true], ["idempotency_key", "varchar", 64, true],
+      ["check_out_idempotency_key", "varchar", 64, false],
     ],
     indexes: [
       ["attendance_idempotency", "unique", ["idempotency_key"]],
-      ["attendance_employee_date", "unique", ["employee_id", "work_date"]],
+      ["attendance_checkout_idempotency", "unique", ["check_out_idempotency_key"]],
+      ["attendance_employee_date", "key", ["employee_id", "work_date"]],
       ["attendance_date_status", "key", ["work_date", "status"]],
     ],
   },

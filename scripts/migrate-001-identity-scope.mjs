@@ -33,9 +33,9 @@ const tables = [
     ["code", "string", 64, true], ["name", "string", 128, true], ["system", "boolean", true], ["active", "boolean", true],
   ], indexes: [["role_code", "unique", ["code"]], ["role_active", "key", ["active"]]] },
   { id: "employees", name: "Employees", columns: [
-    ["user_id", "string", 36, true], ["employee_code", "string", 32, true], ["display_name", "string", 128, true],
+    ["user_id", "string", 36, true], ["display_name", "string", 128, true],
     ["manager_employee_id", "string", 36, false], ["status", "string", 24, true], ["joining_date", "datetime", true],
-  ], indexes: [["employee_user", "unique", ["user_id"]], ["employee_code", "unique", ["employee_code"]], ["manager_status", "key", ["manager_employee_id", "status"]]] },
+  ], indexes: [["employee_user", "unique", ["user_id"]], ["manager_status", "key", ["manager_employee_id", "status"]]] },
   { id: "employee_assignments", name: "Employee Assignments", columns: [
     ["employee_id", "string", 36, true], ["role_id", "string", 36, true], ["territory_id", "string", 36, false],
     ["effective_from", "datetime", true], ["effective_to", "datetime", false], ["assigned_by", "string", 36, true], ["reason", "string", 500, false],

@@ -2,7 +2,7 @@
   "expo": {
     "name": "FieldOPS",
     "slug": "yousuf-rice-fieldops",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "fieldops",
@@ -35,7 +35,7 @@
     "ios": {
       "bundleIdentifier": "pk.yousufrice.fieldops",
       "appleTeamId": "V4AYP7YKGS",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "icon": "./assets/icon.png",
       "supportsTablet": false,
       "infoPlist": {
@@ -48,7 +48,7 @@
     },
     "android": {
       "package": "pk.yousufrice.fieldops",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#17233B"

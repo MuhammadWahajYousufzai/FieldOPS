@@ -14,7 +14,7 @@ A manager can define a scoped territory and beat, assign a representative, and p
 |---|---|---|
 | Organization hierarchy | Missing | Regions → areas → territories with active dates |
 | Access control | Foundation | Server verifies granular permission and assignment at event time |
-| Employee profiles | Missing | Employee code, manager, status, role/territory history |
+| Employee profiles | Missing | Work email, manager, status, role/territory history |
 | Attendance | Missing | Idempotent check-in/out, accuracy, geofence, shift/privacy rules |
 | Outlet CRM | Missing | Search, scoped assignment, duplicate hints, approval state |
 | Beats/plans | Missing | Recurrence, ordered outlets, daily plan, missed/rescheduled status |
@@ -42,4 +42,3 @@ A manager can define a scoped territory and beat, assign a representative, and p
 ## Deferred from Phase 1
 
 Distribution inventory, fulfillment, van sales, receivables, returns, campaigns, merchandising, configurable forms, B2B self-service, gamification, AI recommendations and anomaly scoring. Phase 1 keeps extension points but does not ship empty pages for these modules.
-

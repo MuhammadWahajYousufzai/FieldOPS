@@ -6,6 +6,7 @@ import { requireManager } from "../../lib/auth";
 import { workDate } from "../../lib/mobile-auth";
 import { listAllRows } from "../../lib/table-data";
 import { LogoutButton } from "../logout-button";
+import { ui } from "../ui";
 import { ManagementForms } from "./management-forms";
 
 export const dynamic = "force-dynamic";
@@ -15,23 +16,20 @@ export default async function ManagementPage() {
   const actor = await requireManager();
   if (!actor) redirect("/login");
   const db = createAdminTablesDb();
-  const [employeeRows, outletRows, territoryRows, areaRows, assignmentRows] = await Promise.all([
+  const [employeeRows, outletRows, territoryRows, assignmentRows] = await Promise.all([
     listAllRows(db, databaseId, "employees", [Query.equal("status", "active")]),
     listAllRows(db, databaseId, "outlets", [Query.equal("status", "active")]),
     listAllRows(db, databaseId, "territories", [Query.equal("active", true)]),
-    listAllRows(db, databaseId, "areas", [Query.equal("active", true)]),
     listAllRows(db, databaseId, "employee_assignments", []),
   ]);
   employeeRows.sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
   outletRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   territoryRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  areaRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  const employees = employeeRows.filter((row) => row.$id !== actor.employee.$id).map((row) => ({ id: row.$id, label: `${String(row.display_name)} · ${String(row.employee_code)}` }));
+  const employees = employeeRows.filter((row) => row.$id !== actor.employee.$id).map((row) => ({ id: row.$id, label: String(row.display_name) }));
   const outlets = outletRows.map((row) => ({ id: row.$id, label: `${String(row.name)} · ${String(row.code)}` }));
   const territories = territoryRows.map((row) => ({ id: row.$id, name: String(row.name), code: String(row.code), boundary: parseTerritoryBoundary(row.boundary) }));
-  const areas = areaRows.map((row) => ({ id: row.$id, label: `${String(row.name)} · ${String(row.code)}` }));
   const employeeLabels = new Map(employees.map((employee) => [employee.id, employee.label]));
-  const territoryLabels = new Map(territories.map((territory) => [territory.id, `${territory.name} · ${territory.code}`]));
+  const territoryLabels = new Map(territories.map((territory) => [territory.id, territory.name]));
   const now = Date.now();
   const territoryAssignments = assignmentRows.flatMap((row) => {
     const employeeId = String(row.employee_id), territoryId = String(row.territory_id ?? "");
@@ -39,11 +37,16 @@ export default async function ManagementPage() {
     const employeeLabel = employeeLabels.get(employeeId), territoryLabel = territoryLabels.get(territoryId);
     return effective && employeeLabel && territoryLabel ? [{ employeeId, employeeLabel, territoryId, territoryLabel }] : [];
   });
-  return <main className="shell">
-    <aside className="rail"><div className="brand"><span className="grain">YR</span><div><strong>Yousuf Rice FieldOps</strong><small>Karachi operations</small></div></div><nav aria-label="Primary"><a href="/">Overview</a><a className="selected" href="/management">Management</a><a href="/">Field activity</a><a href="/management">Salespersons</a><a href="/#reports">Reports</a></nav><div className="signed-in"><small>Signed in as</small><strong>{actor.user.name}</strong><LogoutButton /></div></aside>
-    <section className="workspace management-page"><header><div><p className="eyebrow">Management control room</p><h1>Shape the field, then assign it.</h1><p className="lede">Draw territory boundaries, place outlets directly on the map, assign or remove territory access at any time, and keep dated outlet commitments measurable beside self-directed sales work.</p></div><a className="button-link" href="/">View completion & routes</a></header>
-      <section className="management-summary"><article><b>{Math.max(0, employeeRows.length - 1)}</b><span>Salespersons</span></article><article><b>{outletRows.length}</b><span>Visit locations</span></article><article><b>{territoryRows.filter((row) => parseTerritoryBoundary(row.boundary)).length}/{territoryRows.length}</b><span>Territories mapped</span></article></section>
-      <ManagementForms employees={employees} outlets={outlets} territories={territories} areas={areas} territoryAssignments={territoryAssignments} today={workDate()} />
+  return <main className={ui.shell}>
+    <aside className={ui.rail}>
+      <div className={ui.brand}><span className={ui.logo}>YR</span><div><strong className="block text-sm">Yousuf Rice FieldOps</strong><small className="mt-1 block text-slate-400">Karachi operations</small></div></div>
+      <nav className={ui.nav} aria-label="Primary"><a className={ui.navLink} href="/">Overview</a><a className={`${ui.navLink} ${ui.navSelected}`} href="/management">Management</a><a className={ui.navLink} href="/">Field activity</a><a className={ui.navLink} href="/management">Salespersons</a><a className={ui.navLink} href="/#reports">Reports</a></nav>
+      <div className="mt-6 border-t border-white/15 px-2 pt-4 lg:mt-auto"><small className="mb-1 block text-slate-400">Signed in as</small><strong className="block">{actor.user.name}</strong><LogoutButton /></div>
+    </aside>
+    <section className={ui.workspace}>
+      <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>Management control room</p><h1 className={ui.h1}>Shape the field, then assign it.</h1><p className={ui.lede}>Draw territory boundaries, place outlets directly on the map, assign or remove territory access at any time, and keep dated outlet commitments measurable beside self-directed sales work.</p></div><a className={ui.button} href="/">View completion & routes</a></header>
+      <section className="mb-6 grid grid-cols-1 border-y border-slate-200 sm:grid-cols-3"><article className="py-5 sm:border-r sm:border-slate-200 sm:px-6 sm:first:pl-0"><b className="block text-3xl font-black">{Math.max(0, employeeRows.length - 1)}</b><span className="mt-1 block text-xs text-slate-500">Salespersons</span></article><article className="py-5 sm:border-r sm:border-slate-200 sm:px-6"><b className="block text-3xl font-black">{outletRows.length}</b><span className="mt-1 block text-xs text-slate-500">Visit locations</span></article><article className="py-5 sm:px-6"><b className="block text-3xl font-black">{territoryRows.filter((row) => parseTerritoryBoundary(row.boundary)).length}/{territoryRows.length}</b><span className="mt-1 block text-xs text-slate-500">Territories mapped</span></article></section>
+      <ManagementForms employees={employees} outlets={outlets} territories={territories} territoryAssignments={territoryAssignments} today={workDate()} />
     </section>
   </main>;
 }

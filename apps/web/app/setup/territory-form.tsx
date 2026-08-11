@@ -1,3 +1,34 @@
 "use client";
-import {FormEvent,useState} from "react";import{useRouter}from"next/navigation";
-export function TerritoryForm(){const router=useRouter(),[error,setError]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState(false);async function submit(event:FormEvent<HTMLFormElement>){event.preventDefault();setBusy(true);setError("");setSaved(false);const form=event.currentTarget,data=Object.fromEntries(new FormData(form));const response=await fetch("/api/setup/territory",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(data)}),body=await response.json();setBusy(false);if(!response.ok){setError(body.error);return}form.reset();setSaved(true);router.refresh()}return <form className="setup-form" onSubmit={submit}><div><p className="eyebrow">Sales hierarchy</p><h2>Add a territory path</h2></div><fieldset><legend>Region</legend><label>Name<input name="regionName" placeholder="Karachi" required/></label><label>Code<input name="regionCode" placeholder="KHI" maxLength={32} required/></label></fieldset><fieldset><legend>Area</legend><label>Name<input name="areaName" placeholder="South Karachi" required/></label><label>Code<input name="areaCode" placeholder="KHI-S" maxLength={32} required/></label></fieldset><fieldset><legend>Territory</legend><label>Name<input name="territoryName" placeholder="Clifton & DHA" required/></label><label>Code<input name="territoryCode" placeholder="CLF-DHA" maxLength={32} required/></label></fieldset>{error&&<p className="form-error" role="alert">{error}</p>}{saved&&<p className="form-success">Territory saved and audited.</p>}<button disabled={busy}>{busy?"Saving…":"Save territory path"}</button></form>}
+
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ui } from "../ui";
+
+export function TerritoryForm() {
+  const router = useRouter();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true); setError(""); setSaved(false);
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    const response = await fetch("/api/setup/territory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
+    const body = await response.json();
+    setBusy(false);
+    if (!response.ok) { setError(body.error); return; }
+    form.reset(); setSaved(true); router.refresh();
+  }
+
+  return <form className={`${ui.card} grid gap-5`} onSubmit={submit}>
+    <div><p className={ui.eyebrow}>Sales hierarchy</p><h2 className={ui.h2}>Add a territory path</h2></div>
+    <fieldset className="grid gap-3 border-0 border-t border-slate-200 pt-5 sm:grid-cols-[2fr_1fr]"><legend className="pr-3 text-lg font-black">Region</legend><label className={ui.label}>Name<input className={ui.input} name="regionName" placeholder="Karachi" required /></label><label className={ui.label}>Internal region key<input className={ui.input} name="regionCode" placeholder="KHI" maxLength={32} required /></label></fieldset>
+    <fieldset className="grid gap-3 border-0 border-t border-slate-200 pt-5 sm:grid-cols-[2fr_1fr]"><legend className="pr-3 text-lg font-black">Area</legend><label className={ui.label}>Name<input className={ui.input} name="areaName" placeholder="South Karachi" required /></label><label className={ui.label}>Internal area key<input className={ui.input} name="areaCode" placeholder="KHI-S" maxLength={32} required /></label></fieldset>
+    <fieldset className="grid gap-3 border-0 border-t border-slate-200 pt-5"><legend className="pr-3 text-lg font-black">Territory</legend><label className={ui.label}>Name<input className={ui.input} name="territoryName" placeholder="Clifton & DHA" required /></label></fieldset>
+    {error && <p className={ui.messageError} role="alert">{error}</p>}
+    {saved && <p className={ui.messageSuccess}>Territory saved and audited.</p>}
+    <button className={ui.button} disabled={busy}>{busy ? "Saving…" : "Save territory path"}</button>
+  </form>;
+}

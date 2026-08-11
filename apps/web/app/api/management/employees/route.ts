@@ -12,10 +12,10 @@ export async function POST(request: Request) {
   const actor = await requireManager();
   if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
   const body = await request.json();
-  const name = text(body.name, 128), email = text(body.email, 320).toLowerCase(), employeeCode = text(body.employeeCode, 32).toUpperCase();
+  const name = text(body.name, 128), email = text(body.email, 320).toLowerCase();
   const password = text(body.password, 256);
-  if (!name || !email.includes("@") || !employeeCode || password.length < 8) {
-    return NextResponse.json({ error: "Name, email, employee code, and a separate 8+ character salesperson password are required." }, { status: 400 });
+  if (!name || !email.includes("@") || password.length < 8) {
+    return NextResponse.json({ error: "Name, email, and a separate 8+ character salesperson password are required." }, { status: 400 });
   }
   const db = createAdminTablesDb();
   try {
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const role = (await db.listRows({ databaseId, tableId: "roles", queries: [Query.equal("code", "sales_person"), Query.limit(1)] })).rows[0];
     if (!role) throw new Error("Sales role is not configured");
     await db.createRow({ databaseId, tableId: "employees", rowId: employeeId, data: {
-      user_id: user.$id, employee_code: employeeCode, display_name: name, manager_employee_id: actor.employee.$id,
+      user_id: user.$id, display_name: name, manager_employee_id: actor.employee.$id,
       status: "active", joining_date: new Date().toISOString(),
     }, permissions: [] });
     await db.createRow({ databaseId, tableId: "employee_assignments", rowId: ID.unique(), data: {
@@ -33,12 +33,12 @@ export async function POST(request: Request) {
     }, permissions: [] });
     await db.createRow({ databaseId, tableId: "audit_logs", rowId: ID.unique(), data: {
       actor_user_id: actor.user.$id, action: "employee.created", entity_type: "employee", entity_id: employeeId,
-      occurred_at: new Date().toISOString(), after_json: JSON.stringify({ email, employeeCode }),
+      occurred_at: new Date().toISOString(), after_json: JSON.stringify({ email }),
       reason: "Management dashboard", correlation_id: randomUUID(),
     }, permissions: [] });
     return NextResponse.json({ ok: true, employeeId }, { status: 201 });
   } catch (error) {
     const code = typeof error === "object" && error && "code" in error ? Number(error.code) : 500;
-    return NextResponse.json({ error: code === 409 ? "That email or employee code already exists." : "The salesperson could not be created." }, { status: code === 409 ? 409 : 500 });
+    return NextResponse.json({ error: code === 409 ? "A salesperson with that email already exists." : "The salesperson could not be created." }, { status: code === 409 ? 409 : 500 });
   }
 }

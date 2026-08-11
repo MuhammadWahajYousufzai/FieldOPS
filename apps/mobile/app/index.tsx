@@ -38,11 +38,12 @@ import {
   locationQueueCount,
   queueLocationObjects,
 } from "../lib/background-location";
+import { EVIDENCE_UPLOAD_TIMEOUT_MS, fetchWithTimeout } from "../lib/network";
 
 type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "sync" | "profile";
 type VisitStatus = "planned" | "active" | "completed";
 type WorkState = "not_started" | "active" | "finished";
-type Session = { token: string; expiresAt: string; employee: { id: string; name: string; code: string } };
+type Session = { token: string; expiresAt: string; employee: { id: string; name: string } };
 type JsonOperation = { type: "json"; path: string; body: Record<string, unknown> };
 type EvidenceAttachment = { uri: string; name: string; type: string };
 type VisitUploadOperation = {
@@ -296,7 +297,7 @@ function territoryCopy(policy: TerritoryPolicy, position: TerritoryPosition) {
 }
 
 async function jsonRequest(path: string, options: RequestInit = {}, token?: string) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetchWithTimeout(`${API_BASE}${path}`, {
     ...options,
     headers: {
       ...(options.body ? { "content-type": "application/json" } : {}),
@@ -340,7 +341,7 @@ function FieldOpsApp() {
   const [territoryPolicy, setTerritoryPolicy] = useState<TerritoryPolicy>(unrestrictedTerritoryPolicy);
   const [territoryPosition, setTerritoryPosition] = useState<TerritoryPosition>("unrestricted");
   const queueRef = useRef<QueueItem[]>([]);
-  const syncingRef = useRef(false);
+  const syncPromiseRef = useRef<Promise<void> | null>(null);
   const visitSubmittingRef = useRef(false);
   const permissionPrompted = useRef(false);
   const heartbeatRunningRef = useRef(false);
@@ -439,8 +440,10 @@ function FieldOpsApp() {
     if (!hydrated || !session) return;
     const timer = setInterval(() => {
       refreshPermissions(false).catch(() => undefined);
-      syncOperations().catch(() => undefined);
-      flushLocationQueue(session.token).then(() => refreshLocationCount()).catch(() => undefined);
+      syncOperations()
+        .then(() => flushLocationQueue(session.token))
+        .then(() => refreshLocationCount())
+        .catch(() => undefined);
     }, 15_000);
     const appSubscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
@@ -452,11 +455,13 @@ function FieldOpsApp() {
     });
     const networkSubscription = NetInfo.addEventListener((state) => {
       if (state.isConnected) {
-        syncOperations().catch(() => undefined);
+        syncOperations()
+          .then(() => flushLocationQueue(session.token))
+          .then(() => refreshLocationCount())
+          .catch(() => undefined);
         refreshPermissions(false)
           .then((permissions) => captureLiveHeartbeat(true, permissions))
           .catch(() => undefined);
-        flushLocationQueue(session.token).then(() => refreshLocationCount()).catch(() => undefined);
         refreshContext(false).catch(() => undefined);
       }
     });
@@ -509,20 +514,20 @@ function FieldOpsApp() {
     for (const [key, value] of Object.entries(operation.fields)) form.append(key, value);
     form.append("photo", operation.photo as never);
     form.append("audio", operation.audio as never);
-    const response = await fetch(`${API_BASE}${operation.path}`, {
+    const response = await fetchWithTimeout(`${API_BASE}${operation.path}`, {
       method: "POST",
       headers: { authorization: `Bearer ${session.token}` },
       body: form,
-    });
+    }, EVIDENCE_UPLOAD_TIMEOUT_MS);
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Visit evidence could not be uploaded.");
     return body;
   }
 
-  async function syncOperations() {
-    if (!session || syncingRef.current) return;
-    syncingRef.current = true;
-    try {
+  function syncOperations(): Promise<void> {
+    if (!session) return Promise.resolve();
+    if (syncPromiseRef.current) return syncPromiseRef.current;
+    const operation = (async () => {
       const candidates = [...queueRef.current]
         .filter((item) => item.operation && item.state !== "confirmed")
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -540,12 +545,16 @@ function FieldOpsApp() {
             attempts: entry.attempts + 1,
             error: error instanceof Error ? error.message : "Will retry when connected.",
           } : entry));
-          break;
+          // One slow or rejected operation must never block later visits,
+          // orders, or attendance records that are safe to retry independently.
+          continue;
         }
       }
-    } finally {
-      syncingRef.current = false;
-    }
+    })();
+    syncPromiseRef.current = operation;
+    return operation.finally(() => {
+      if (syncPromiseRef.current === operation) syncPromiseRef.current = null;
+    });
   }
 
   function enqueue(label: string, operation: OfflineOperation) {
@@ -656,7 +665,6 @@ function FieldOpsApp() {
       const capturedAt = new Date(point.timestamp).toISOString();
       setWorkState("active");
       await queueLocationObjects([point], "foreground");
-      await flushLocationQueue(session.token);
       enqueue("Start work", { type: "json", path: "/attendance", body: {
         action: "check_in",
         latitude: point.coords.latitude,
@@ -665,6 +673,7 @@ function FieldOpsApp() {
         capturedAt,
         idempotencyKey: operationId("start"),
       } });
+      flushLocationQueue(session.token).then(() => refreshLocationCount()).catch(() => undefined);
       await refreshLocationCount();
     } catch (error) {
       setWorkState("not_started");
@@ -1284,7 +1293,7 @@ function Today({
 }) {
   const running = workState === "active" && trackingReady;
   const title = workState === "finished"
-    ? "Today’s work finished"
+    ? "Ready for another session"
     : running
       ? "Work in progress"
       : workState === "active"
@@ -1295,7 +1304,7 @@ function Today({
     : running
       ? "Route recording every minute"
       : workState === "finished"
-        ? "Tracking ended for today"
+        ? "Your last session is saved. Start again whenever needed"
         : "GPS starts with your work";
   const actionEnabled = running && fieldActionsAllowed;
   return <>
@@ -1308,8 +1317,8 @@ function Today({
         <Text className="mt-1 text-lg font-black text-white">{title}</Text>
         <Text className="mt-1 text-[11px] text-[#BAC4D8]">{detail}</Text>
       </View>
-      {workState === "not_started" && <Button label="Start work" onPress={onStartWork} />}
-      {workState === "active" && trackingReady && <Button label="Finish today" onPress={onFinishWork} />}
+      {workState !== "active" && <Button label={workState === "finished" ? "Start again" : "Start work"} onPress={onStartWork} />}
+      {workState === "active" && trackingReady && <Button label="Finish session" onPress={onFinishWork} />}
       {workState === "active" && !trackingReady && <Button label="Fix GPS" onPress={onFixGps} />}
     </View>
 
@@ -1714,36 +1723,72 @@ function Order({
 }
 
 function SyncQueue({ queue, locationPending, onRetry }: { queue: QueueItem[]; locationPending: number; onRetry: () => void }) {
-  const pending = queue.filter((item) => item.state !== "confirmed").length + locationPending;
+  const pendingOperations = queue.filter((item) => item.state !== "confirmed");
+  const failed = pendingOperations.filter((item) => item.state === "failed").length;
+  const syncing = pendingOperations.some((item) => item.state === "syncing");
+  const pending = pendingOperations.length + locationPending;
+  const recent = [...queue].reverse().slice(0, 12);
   return <>
-    <ScreenTitle>Offline & server activity</ScreenTitle>
-    <BodyText>In-progress visits stay on this phone. A visit enters this queue only after you submit it with both photo and audio; failed submitted work retries when internet returns.</BodyText>
-    {pending > 0 && <Button label="Retry all now" onPress={onRetry} />}
-    <View className="flex-row items-center gap-3 rounded-xl bg-[#E6ECF8] p-4">
-      <Text className="text-[27px] font-black text-field">{locationPending}</Text>
-      <View>
-        <Text className="font-extrabold text-ink">Route points waiting</Text>
-        <Text className="mt-1 text-xs text-muted">Minute-by-minute GPS saved on this phone</Text>
-      </View>
+    <View className="gap-2">
+      <Eyebrow>SYNC CENTER</Eyebrow>
+      <ScreenTitle>Your work is protected</ScreenTitle>
+      <BodyText>Visits, evidence, orders, attendance, and route points remain on this phone until the server confirms each record.</BodyText>
     </View>
-    {queue.length === 0
-      ? <EmptyState title="No work activity yet" body="Start work to begin the activity record." />
-      : [...queue].reverse().map((item) => <View key={item.id} className="min-h-16 flex-row items-center gap-2.5 border-b border-line py-3">
-        <View className={classes(
-          "h-2.5 w-2.5 rounded-full",
-          item.state === "confirmed" ? "bg-success" : item.state === "pending" || item.state === "syncing" ? "bg-gold" : "bg-danger",
-        )} />
+    <View className="overflow-hidden rounded-2xl bg-ink p-5">
+      <View className="flex-row items-start justify-between gap-4">
         <View className="flex-1">
-          <Text className="font-extrabold text-ink">{item.label}</Text>
-          <Text className="mt-1 text-xs text-muted">
-            {item.state === "confirmed"
-              ? "Saved by server"
-              : item.state === "syncing"
-                ? "Uploading now"
-                : item.error ?? "Saved on phone · waiting for internet"}
+          <Text className="text-xs font-black uppercase tracking-widest text-[#93A4C4]">Automatic sync</Text>
+          <Text className="mt-2 text-2xl font-black text-white">
+            {pending === 0 ? "Everything is up to date" : syncing ? "Syncing securely" : `${pending} ${pending === 1 ? "record" : "records"} waiting`}
+          </Text>
+          <Text className="mt-2 leading-5 text-[#C9D3E6]">
+            {failed > 0 ? `${failed} ${failed === 1 ? "record needs" : "records need"} another attempt.` : "FieldOPS retries automatically whenever a connection is available."}
           </Text>
         </View>
-      </View>)}
+        <View className={classes("h-12 min-w-12 items-center justify-center rounded-full px-3", pending === 0 ? "bg-[#1E5A49]" : "bg-[#253A63]")}>
+          <Text className="font-black text-white">{pending}</Text>
+        </View>
+      </View>
+      {pending > 0 && <View className="mt-5"><Button label={syncing ? "Syncing now…" : "Sync now"} onPress={onRetry} disabled={syncing} /></View>}
+    </View>
+    <View className="flex-row items-center justify-between rounded-2xl border border-line bg-white p-4">
+      <View className="flex-1 pr-4">
+        <Text className="font-black text-ink">Route tracking</Text>
+        <Text className="mt-1 text-xs leading-4 text-muted">GPS points waiting for server confirmation</Text>
+      </View>
+      <View className="h-11 min-w-11 items-center justify-center rounded-xl bg-[#E8EEF9] px-3">
+        <Text className="text-xl font-black text-field">{locationPending}</Text>
+      </View>
+    </View>
+    {recent.length === 0
+      ? <EmptyState title="Ready for field work" body="New activity will appear here with a clear server-confirmation status." />
+      : <View className="overflow-hidden rounded-2xl border border-line bg-white">
+        <View className="border-b border-line px-4 py-3">
+          <Text className="text-xs font-black uppercase tracking-widest text-muted">Recent activity</Text>
+        </View>
+        {recent.map((item) => <View key={item.id} className="min-h-[72px] flex-row items-start gap-3 border-b border-line px-4 py-4 last:border-b-0">
+          <View className={classes(
+            "mt-1 h-3 w-3 rounded-full border-2 border-white",
+            item.state === "confirmed" ? "bg-success" : item.state === "failed" ? "bg-danger" : "bg-gold",
+          )} />
+          <View className="flex-1">
+            <View className="flex-row items-start justify-between gap-3">
+              <Text className="flex-1 font-extrabold text-ink">{item.label}</Text>
+              <Text className={classes(
+                "text-[10px] font-black uppercase tracking-wider",
+                item.state === "confirmed" ? "text-success" : item.state === "failed" ? "text-danger" : "text-[#8A6500]",
+              )}>{item.state === "confirmed" ? "Synced" : item.state === "syncing" ? "Sending" : item.state === "failed" ? "Retrying" : "Queued"}</Text>
+            </View>
+            <Text className="mt-1 text-xs leading-4 text-muted">
+              {item.state === "confirmed"
+                ? "Confirmed and saved by FieldOPS"
+                : item.state === "syncing"
+                  ? "Secure upload in progress"
+                  : item.error ?? "Safely stored on this phone and queued"}
+            </Text>
+          </View>
+        </View>)}
+      </View>}
   </>;
 }
 
@@ -1767,7 +1812,7 @@ function Profile({
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
       <Eyebrow>SALES REPRESENTATIVE</Eyebrow>
       <Text className="text-xl font-black text-ink">{session.employee.name}</Text>
-      <BodyText>Employee code {session.employee.code}</BodyText>
+      <BodyText>Field sales account</BodyText>
     </View>
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
       <Text className="text-xl font-black text-ink">Tracking & privacy</Text>
@@ -1791,7 +1836,7 @@ function Nav({ screen, setScreen }: { screen: Screen; setScreen: (screen: Screen
     { key: "sync", label: "Activity" },
     { key: "profile", label: "Profile" },
   ];
-  return <View accessibilityRole="tablist" className="mx-3.5 mb-2 flex-row rounded-2xl bg-ink p-1.5">
+  return <View accessibilityRole="tablist" className="mx-3.5 mb-2 flex-row rounded-2xl border border-[#253652] bg-ink p-1.5">
     {items.map((item) => <TouchableOpacity
       key={item.key}
       accessibilityRole="tab"
@@ -1799,11 +1844,11 @@ function Nav({ screen, setScreen }: { screen: Screen; setScreen: (screen: Screen
       accessibilityState={{ selected: screen === item.key }}
       className={classes(
         "min-h-12 flex-1 items-center justify-center rounded-xl border",
-        screen === item.key ? "border-gold bg-[#24324E]" : "border-transparent",
+        screen === item.key ? "border-[#4F7CE8] bg-[#254A9A]" : "border-transparent",
       )}
       onPress={() => setScreen(item.key)}
     >
-      <Text className={classes("text-[11px] font-extrabold", screen === item.key ? "text-gold" : "text-[#AAB3C5]")}>{item.label}</Text>
+      <Text className={classes("text-[11px] font-extrabold", screen === item.key ? "text-white" : "text-[#AAB3C5]")}>{item.label}</Text>
     </TouchableOpacity>)}
   </View>;
 }
@@ -1814,13 +1859,13 @@ function Button({ label, onPress, disabled = false }: { label: string; onPress: 
     accessibilityLabel={label}
     accessibilityState={{ disabled }}
     className={classes(
-      "min-h-12 items-center justify-center rounded-[9px] bg-gold px-4 py-3",
+      "min-h-12 items-center justify-center rounded-xl bg-[#2563EB] px-4 py-3",
       disabled && "opacity-45",
     )}
     onPress={onPress}
     disabled={disabled}
   >
-    <Text className="font-black text-ink">{label}</Text>
+    <Text className="font-black text-white">{label}</Text>
   </TouchableOpacity>;
 }
 
@@ -1923,7 +1968,7 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 function ScreenTitle({ children }: { children: React.ReactNode }) {
-  return <Text accessibilityRole="header" className="text-[32px] font-black text-ink">{children}</Text>;
+  return <Text accessibilityRole="header" className="text-[30px] font-black leading-9 text-ink">{children}</Text>;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {

@@ -1,10 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import { fetchWithTimeout } from "./network";
 
 export const LOCATION_QUEUE_KEY = "fieldops-location-outbox-v1";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
 let queueMutation: Promise<void> = Promise.resolve();
+let activeFlush: Promise<number> | null = null;
 
 export type QueuedLocation = {
   idempotencyKey: string;
@@ -63,21 +65,29 @@ export async function queueLocationObjects(locations: Location.LocationObject[],
 
 export async function flushLocationQueue(token?: string): Promise<number> {
   if (!token) return 0;
-  const queue = await readQueue();
-  if (queue.length === 0) return 0;
-  const batch = queue.slice(0, 100);
+  if (activeFlush) return activeFlush;
+  activeFlush = (async () => {
+    const queue = await readQueue();
+    if (queue.length === 0) return 0;
+    const batch = queue.slice(0, 100);
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/locations/batch`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ points: batch }),
+      });
+      if (!response.ok) return 0;
+      const result = await response.json() as { confirmed?: string[] };
+      const confirmed = new Set(result.confirmed ?? batch.map((point) => point.idempotencyKey));
+      await mutateQueue((latest) => latest.filter((point) => !confirmed.has(point.idempotencyKey)));
+      return confirmed.size;
+    } catch {
+      return 0;
+    }
+  })();
   try {
-    const response = await fetch(`${API_BASE}/locations/batch`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ points: batch }),
-    });
-    if (!response.ok) return 0;
-    const result = await response.json() as { confirmed?: string[] };
-    const confirmed = new Set(result.confirmed ?? batch.map((point) => point.idempotencyKey));
-    await mutateQueue((latest) => latest.filter((point) => !confirmed.has(point.idempotencyKey)));
-    return confirmed.size;
-  } catch {
-    return 0;
+    return await activeFlush;
+  } finally {
+    activeFlush = null;
   }
 }

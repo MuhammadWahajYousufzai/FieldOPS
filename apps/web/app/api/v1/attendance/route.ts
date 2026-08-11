@@ -16,18 +16,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "A valid GPS point and operation ID are required." }, { status: 400 });
   }
   const db = createAdminTablesDb();
-  const duplicate = (await db.listRows({ databaseId, tableId: "attendance_records", queries: [Query.equal("idempotency_key", idempotencyKey), Query.limit(1)] })).rows[0];
+  const duplicate = (await db.listRows({ databaseId, tableId: "attendance_records", queries: [
+    Query.or([Query.equal("idempotency_key", idempotencyKey), Query.equal("check_out_idempotency_key", idempotencyKey)]),
+    Query.limit(1),
+  ] })).rows[0];
   if (duplicate) return NextResponse.json({ ok: true, attendanceId: duplicate.$id, status: duplicate.status });
   const capturedDate = new Date(text(body.capturedAt, 40));
   const capturedAt = Number.isNaN(capturedDate.valueOf()) ? new Date().toISOString() : capturedDate.toISOString();
   const date = workDate(new Date(capturedAt));
-  const existing = (await db.listRows({ databaseId, tableId: "attendance_records", queries: [Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.limit(1)] })).rows[0];
+  const sessions = (await db.listRows({ databaseId, tableId: "attendance_records", queries: [
+    Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.limit(100),
+  ] })).rows;
+  const active = sessions.find((session) => session.status === "checked_in" && !session.check_out_at);
   const now = new Date().toISOString();
   if (action === "check_out") {
-    if (!existing) return NextResponse.json({ error: "Check in before checking out." }, { status: 409 });
-    if (existing.status === "checked_out") return NextResponse.json({ ok: true, attendanceId: existing.$id, status: existing.status });
-    const row = await db.updateRow({ databaseId, tableId: "attendance_records", rowId: existing.$id, data: {
-      check_out_at: capturedAt, check_out_latitude: latitude, check_out_longitude: longitude, check_out_accuracy: accuracy, status: "checked_out",
+    if (!active) return NextResponse.json({ error: "Start work before finishing the session." }, { status: 409 });
+    const row = await db.updateRow({ databaseId, tableId: "attendance_records", rowId: active.$id, data: {
+      check_out_at: capturedAt, check_out_latitude: latitude, check_out_longitude: longitude, check_out_accuracy: accuracy,
+      check_out_idempotency_key: idempotencyKey, status: "checked_out",
     } });
     await db.createRow({ databaseId, tableId: "location_points", rowId: ID.unique(), data: {
       employee_id: actor.employee.$id, captured_at: capturedAt, received_at: now,
@@ -35,9 +41,8 @@ export async function POST(request: Request) {
     }, permissions: [] });
     return NextResponse.json({ ok: true, attendanceId: row.$id, status: row.status });
   }
-  if (existing) {
-    if (existing.status === "checked_out") return NextResponse.json({ error: "Today's work is already finished." }, { status: 409 });
-    return NextResponse.json({ ok: true, attendanceId: existing.$id, status: existing.status });
+  if (active) {
+    return NextResponse.json({ ok: true, attendanceId: active.$id, status: active.status });
   }
   const row = await db.createRow({ databaseId, tableId: "attendance_records", rowId: ID.unique(), data: {
     employee_id: actor.employee.$id, work_date: date, check_in_at: capturedAt,

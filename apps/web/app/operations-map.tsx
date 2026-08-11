@@ -104,7 +104,7 @@ export function OperationsMap({ points, routes = [] }: { points: MapPoint[]; rou
     }
   }, [points, ready, routes]);
 
-  return <div className="operations-map" ref={container} aria-label="Map of assigned outlets and captured visit locations" />;
+  return <div className="mt-5 h-[350px] w-full overflow-hidden rounded-2xl bg-slate-200 sm:h-[430px]" ref={container} aria-label="Map of assigned outlets and captured visit locations" />;
 }
 
 function routeSourceId(id: string) {
@@ -114,9 +114,8 @@ function routeSourceId(id: string) {
 function liveMarker(name: string) {
   const marker = document.createElement("button");
   marker.type = "button";
-  marker.className = "live-location-marker";
+  marker.className = "relative h-6 w-6 cursor-pointer rounded-full border-[3px] border-white bg-amber-500 p-0 shadow-lg ring-4 ring-amber-400/40 focus-visible:outline-3 focus-visible:outline-offset-4 focus-visible:outline-[#14213D]";
   marker.setAttribute("aria-label", `${name}, live location`);
-  marker.innerHTML = "<span></span>";
   return marker;
 }
 

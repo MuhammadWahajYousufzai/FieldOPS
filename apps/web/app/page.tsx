@@ -9,6 +9,7 @@ import type { LiveAttendance, LiveEmployee, LiveLocationPoint } from "../lib/liv
 import { LogoutButton } from "./logout-button";
 import { LiveGpsCount, LiveOperations } from "./live-operations";
 import type { MapPoint } from "./operations-map";
+import { ui } from "./ui";
 
 export const dynamic = "force-dynamic";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
@@ -16,6 +17,15 @@ const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 function time(value: unknown) {
   if (!value) return "—";
   return new Date(String(value)).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Karachi" });
+}
+
+function latestAttendanceByEmployee<T extends object>(rows: T[]) {
+  const latest = new Map<string, T>();
+  for (const row of [...rows].sort((a, b) => String((b as Record<string, unknown>).check_in_at).localeCompare(String((a as Record<string, unknown>).check_in_at)))) {
+    const employeeId = String((row as Record<string, unknown>).employee_id);
+    if (!latest.has(employeeId)) latest.set(employeeId, row);
+  }
+  return [...latest.values()];
 }
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ date?: string; employee?: string }> }) {
@@ -58,7 +68,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const visibleRoutes = routeRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
   const assignedOutletIds = new Set(visibleRoutes.map((row) => String(row.outlet_id)));
   const visibleOutlets = outletRows.filter((row) => assignedOutletIds.has(row.$id));
-  const visibleAttendance = attendanceRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
+  const visibleAttendance = latestAttendanceByEmployee(attendanceRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee));
   const completedVisits = visitRows.filter((row) => row.status === "completed").length;
   const assignedCompleted = visibleRoutes.filter((row) => row.status === "completed").length;
   const assignedPending = visibleRoutes.length - assignedCompleted;
@@ -76,39 +86,44 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     return { id: row.$id, employeeId: String(row.employee_id), capturedAt: String(row.captured_at), receivedAt: String(row.received_at), latitude: Number(coordinates[1]), longitude: Number(coordinates[0]), accuracy: Number(row.accuracy), source: String(row.source) };
   });
 
-  return <main className="shell">
-    <aside className="rail">
-      <div className="brand"><span className="grain">YR</span><div><strong>Yousuf Rice FieldOps</strong><small>Field operations</small></div></div>
-      <nav aria-label="Primary"><a className="selected" href="/">Overview</a><a href="/management">Management</a><a href="#route-history">Route history</a><a href="#visits">Visit history</a><a href="#orders">Orders</a></nav>
-      <div className="signed-in"><small>Signed in as</small><strong>{actor.user.name}</strong><LogoutButton /></div>
+  const metricClass = "border-b border-slate-200 py-5 sm:border-b-0 sm:border-r sm:px-6 sm:first:pl-0 sm:last:border-r-0";
+  const metricValue = "my-2 block text-3xl font-black";
+  const metricLabel = "block text-sm text-slate-600";
+  const metricDetail = "block text-xs text-slate-500";
+  const tableLink = "font-extrabold text-blue-700 hover:text-blue-900";
+  return <main className={ui.shell}>
+    <aside className={ui.rail}>
+      <div className={ui.brand}><span className={ui.logo}>YR</span><div><strong className="block text-sm">Yousuf Rice FieldOps</strong><small className="mt-1 block text-slate-400">Field operations</small></div></div>
+      <nav className={ui.nav} aria-label="Primary"><a className={`${ui.navLink} ${ui.navSelected}`} href="/">Overview</a><a className={ui.navLink} href="/management">Management</a><a className={ui.navLink} href="#route-history">Route history</a><a className={ui.navLink} href="#visits">Visit history</a><a className={ui.navLink} href="#orders">Orders</a></nav>
+      <div className="mt-6 border-t border-white/15 px-2 pt-4 lg:mt-auto"><small className="mb-1 block text-slate-400">Signed in as</small><strong className="block">{actor.user.name}</strong><LogoutButton /></div>
     </aside>
-    <section className="workspace">
-      <header className="dashboard-head"><div><p className="eyebrow">Date-wise field record</p><h1>Every commitment and field visit.</h1><p className="lede">Minute-by-minute route history, unfinished management assignments, salesperson-added visits, required photo and audio evidence, and territory-aware orders.</p></div><a className="button-link" href="/management">Assign visits & manage team</a></header>
-      <form className="filter-bar" method="get" id="reports">
-        <label>Date<input type="date" name="date" defaultValue={date} /></label>
-        <label>Salesperson<select name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => employee.$id !== actor.employee.$id).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
-        <button>View history</button>
+    <section className={ui.workspace}>
+      <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>Date-wise field record</p><h1 className={ui.h1}>Every commitment and field visit.</h1><p className={ui.lede}>Minute-by-minute route history, unfinished management assignments, salesperson-added visits, required photo and audio evidence, and territory-aware orders.</p></div><a className={ui.button} href="/management">Assign visits & manage team</a></header>
+      <form className="mb-7 flex flex-col items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-end" method="get" id="reports">
+        <label className={`${ui.label} sm:min-w-48`}>Date<input className={ui.input} type="date" name="date" defaultValue={date} /></label>
+        <label className={`${ui.label} sm:min-w-56`}>Salesperson<select className={ui.input} name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => employee.$id !== actor.employee.$id).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
+        <button className={ui.button}>View history</button>
       </form>
-      <section className="pulse" aria-label="Filtered totals">
-        <article><span>Assigned completion</span><b>{assignedCompleted}/{visibleRoutes.length}</b><small>{assignedPending} still need follow-up</small></article>
-        <article><span>Visits recorded</span><b>{completedVisits}</b><small>{selfInitiatedVisits} added by salespeople</small></article>
-        <article><span>Orders recorded</span><b>{orderRows.length}</b><small>PKR {sales.toLocaleString()}</small></article>
-        <article><span>GPS route points</span><LiveGpsCount initialCount={locationRows.length} /><small>Minute-by-minute history</small></article>
+      <section className="mb-7 grid border-y border-slate-200 sm:grid-cols-2 xl:grid-cols-4" aria-label="Filtered totals">
+        <article className={metricClass}><span className={metricLabel}>Assigned completion</span><b className={metricValue}>{assignedCompleted}/{visibleRoutes.length}</b><small className={metricDetail}>{assignedPending} still need follow-up</small></article>
+        <article className={metricClass}><span className={metricLabel}>Visits recorded</span><b className={metricValue}>{completedVisits}</b><small className={metricDetail}>{selfInitiatedVisits} added by salespeople</small></article>
+        <article className={metricClass}><span className={metricLabel}>Orders recorded</span><b className={metricValue}>{orderRows.length}</b><small className={metricDetail}>PKR {sales.toLocaleString()}</small></article>
+        <article className={metricClass}><span className={metricLabel}>GPS route points</span><span className={metricValue}><LiveGpsCount initialCount={locationRows.length} /></span><small className={metricDetail}>Minute-by-minute history</small></article>
       </section>
       <LiveOperations key={`${date}:${selectedEmployee}`} date={date} selectedEmployee={selectedEmployee} pollingEnabled={date === workDate()} generatedAt={new Date().toISOString()} staticPoints={staticMapPoints} initialEmployees={liveEmployees} initialAttendance={liveAttendance} initialLocations={liveLocations} />
-      <section className="table-card visits-card" id="assignments"><div className="section-head"><div><p className="eyebrow">Management commitments</p><h2>Assigned visit completion status</h2></div><span>{assignedPending} need follow-up</span></div>
-        <div className="table-scroll"><table><thead><tr><th>Salesperson</th><th>Assigned customer</th><th>Sequence</th><th>Status</th><th>Completed</th></tr></thead><tbody>
-          {visibleRoutes.map((route) => <tr key={route.$id}><td>{String(employees.get(String(route.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(route.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(route.outlet_id))?.address ?? "")}</small></td><td>{Number(route.sequence)}</td><td><span className={route.status === "completed" ? "ok" : "warn"}>{String(route.status).replaceAll("_", " ")}</span></td><td>{time(route.completed_at)}</td></tr>)}
-          {visibleRoutes.length === 0 && <tr><td colSpan={5} className="empty-table">No visits were assigned for this filter.</td></tr>}
+      <section className={ui.tableCard} id="assignments"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Management commitments</p><h2 className={ui.h2}>Assigned visit completion status</h2></div><span className="text-sm font-bold text-slate-500">{assignedPending} need follow-up</span></div>
+        <div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Salesperson</th><th>Assigned customer</th><th>Sequence</th><th>Status</th><th>Completed</th></tr></thead><tbody>
+          {visibleRoutes.map((route) => <tr key={route.$id}><td>{String(employees.get(String(route.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(route.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(route.outlet_id))?.address ?? "")}</small></td><td>{Number(route.sequence)}</td><td><span className={route.status === "completed" ? "font-extrabold text-emerald-700" : "font-extrabold text-amber-700"}>{String(route.status).replaceAll("_", " ")}</span></td><td>{time(route.completed_at)}</td></tr>)}
+          {visibleRoutes.length === 0 && <tr><td colSpan={5} className="py-9 text-center text-slate-500">No visits were assigned for this filter.</td></tr>}
         </tbody></table></div>
       </section>
-      <section className="table-card visits-card" id="visits"><div className="section-head"><div><p className="eyebrow">Visit history</p><h2>Location, photo, and audio by date</h2></div><span>{visitRows.length} records</span></div>
-        <div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Visit</th><th>Location check</th><th>Outcome</th><th>Required evidence</th></tr></thead><tbody>
-          {visitRows.map((visit) => { const assigned = Boolean(visit.route_assignment_id); const outlet = outlets.get(String(visit.outlet_id)); return <tr key={visit.$id}><td>{time(visit.check_in_at)}<small>{visit.check_out_at ? `Finished ${time(visit.check_out_at)}` : "In progress"}</small></td><td>{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown")}</td><td><span className={assigned ? "visit-kind assigned" : "visit-kind self"}>{assigned ? "Assigned" : "Salesperson-added"}</span><strong>{String(visit.customer_name || outlet?.name || "Unknown")}</strong><small>{String(visit.customer_address || outlet?.address || "GPS location saved")}</small></td><td><a href={`https://www.openstreetmap.org/?mlat=${visit.latitude}&mlon=${visit.longitude}#map=18/${visit.latitude}/${visit.longitude}`} target="_blank">Open visit point</a><small>{assigned ? `${Math.round(Number(visit.geofence_distance_m))} m at check-in` : `${Math.round(Number(visit.completion_distance_m ?? 0))} m from start at finish`} · maximum 70 m</small></td><td>{String(visit.outcome ?? visit.status)}</td><td><div className="evidence-links">{(evidence.get(visit.$id) ?? []).map((item) => item.type === "photo" ? <a key={item.$id} href={`/api/evidence/${item.file_id}`} target="_blank">View photo</a> : <audio key={item.$id} controls preload="none" src={`/api/evidence/${item.file_id}`} />)}</div></td></tr>; })}
-          {visitRows.length === 0 && <tr><td colSpan={6} className="empty-table">No visits are recorded for this filter.</td></tr>}
+      <section className={ui.tableCard} id="visits"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Visit history</p><h2 className={ui.h2}>Location, photo, and audio by date</h2></div><span className="text-sm font-bold text-slate-500">{visitRows.length} records</span></div>
+        <div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Time</th><th>Salesperson</th><th>Visit</th><th>Location check</th><th>Outcome</th><th>Required evidence</th></tr></thead><tbody>
+          {visitRows.map((visit) => { const assigned = Boolean(visit.route_assignment_id); const outlet = outlets.get(String(visit.outlet_id)); return <tr key={visit.$id}><td>{time(visit.check_in_at)}<small>{visit.check_out_at ? `Finished ${time(visit.check_out_at)}` : "In progress"}</small></td><td>{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown")}</td><td><span className={`mb-2 block w-max rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${assigned ? "bg-blue-50 text-blue-800" : "bg-emerald-50 text-emerald-800"}`}>{assigned ? "Assigned" : "Salesperson-added"}</span><strong>{String(visit.customer_name || outlet?.name || "Unknown")}</strong><small>{String(visit.customer_address || outlet?.address || "GPS location saved")}</small></td><td><a className={tableLink} href={`https://www.openstreetmap.org/?mlat=${visit.latitude}&mlon=${visit.longitude}#map=18/${visit.latitude}/${visit.longitude}`} target="_blank">Open visit point</a><small>{assigned ? `${Math.round(Number(visit.geofence_distance_m))} m at check-in` : `${Math.round(Number(visit.completion_distance_m ?? 0))} m from start at finish`} · maximum 70 m</small></td><td>{String(visit.outcome ?? visit.status)}</td><td><div className="grid gap-2">{(evidence.get(visit.$id) ?? []).map((item) => item.type === "photo" ? <a className={tableLink} key={item.$id} href={`/api/evidence/${item.file_id}`} target="_blank">View photo</a> : <audio className="h-9 w-48" key={item.$id} controls preload="none" src={`/api/evidence/${item.file_id}`} />)}</div></td></tr>; })}
+          {visitRows.length === 0 && <tr><td colSpan={6} className="py-9 text-center text-slate-500">No visits are recorded for this filter.</td></tr>}
         </tbody></table></div>
       </section>
-      <section className="table-card visits-card" id="orders"><div className="section-head"><div><p className="eyebrow">Order history</p><h2>GPS-verified field orders</h2></div><span>{orderRows.length} records</span></div><div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Customer</th><th>Product</th><th>Quantity</th><th>Total</th><th>Location</th></tr></thead><tbody>{orderRows.map((order) => <tr key={order.$id}><td>{time(order.captured_at)}</td><td>{String(employees.get(String(order.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(order.customer_name)}</strong><small>{String(order.phone || order.address || "")}</small></td><td>{String(order.product_name)}</td><td>{Number(order.quantity_kg).toLocaleString()} kg</td><td>PKR {Number(order.total_amount).toLocaleString()}</td><td><a href={`https://www.openstreetmap.org/?mlat=${order.latitude}&mlon=${order.longitude}#map=18/${order.latitude}/${order.longitude}`} target="_blank">Open map</a></td></tr>)}{orderRows.length === 0 && <tr><td colSpan={7} className="empty-table">No orders are recorded for this filter.</td></tr>}</tbody></table></div></section>
+      <section className={ui.tableCard} id="orders"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Order history</p><h2 className={ui.h2}>GPS-verified field orders</h2></div><span className="text-sm font-bold text-slate-500">{orderRows.length} records</span></div><div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Time</th><th>Salesperson</th><th>Customer</th><th>Product</th><th>Quantity</th><th>Total</th><th>Location</th></tr></thead><tbody>{orderRows.map((order) => <tr key={order.$id}><td>{time(order.captured_at)}</td><td>{String(employees.get(String(order.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(order.customer_name)}</strong><small>{String(order.phone || order.address || "")}</small></td><td>{String(order.product_name)}</td><td>{Number(order.quantity_kg).toLocaleString()} kg</td><td>PKR {Number(order.total_amount).toLocaleString()}</td><td><a className={tableLink} href={`https://www.openstreetmap.org/?mlat=${order.latitude}&mlon=${order.longitude}#map=18/${order.latitude}/${order.longitude}`} target="_blank">Open map</a></td></tr>)}{orderRows.length === 0 && <tr><td colSpan={7} className="py-9 text-center text-slate-500">No orders are recorded for this filter.</td></tr>}</tbody></table></div></section>
     </section>
   </main>;
 }

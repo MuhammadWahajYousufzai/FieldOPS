@@ -4,6 +4,7 @@ import type { LngLat, TerritoryBoundary } from "@fieldops/domain";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSourceSpecification, LngLatBoundsLike } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
+import { ui } from "../ui";
 
 export type TerritoryMapOption = { id: string; name: string; code: string; boundary: TerritoryBoundary | null };
 export type SelectedPoint = { latitude: number; longitude: number };
@@ -69,11 +70,11 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
     markerRef.current.setLngLat([value.longitude, value.latitude]);
   }, [ready, value]);
 
-  return <div className="map-picker-block">
-    <div className="map-picker" ref={container} role="application" aria-label="Outlet map picker. Click the map or move it and use the center button to select a visit point." />
-    <div className="map-tools">
-      <button type="button" className="quiet" onClick={() => { const center = mapRef.current?.getCenter(); if (center) onChange({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
-      <span aria-live="polite">{value ? `${value.latitude.toFixed(6)}, ${value.longitude.toFixed(6)} selected` : "No visit point selected"}</span>
+  return <div className="grid gap-3">
+    <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Outlet map picker. Click the map or move it and use the center button to select a visit point." />
+    <div className="flex flex-wrap items-center gap-3">
+      <button type="button" className={ui.quietButton} onClick={() => { const center = mapRef.current?.getCenter(); if (center) onChange({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
+      <span className="text-xs font-bold text-slate-500" aria-live="polite">{value ? `${value.latitude.toFixed(6)}, ${value.longitude.toFixed(6)} selected` : "No visit point selected"}</span>
     </div>
   </div>;
 }
@@ -117,13 +118,13 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
     if (ready && source) source.setData(draftFeature(points));
   }, [points, ready]);
 
-  return <div className="map-picker-block">
-    <div className="territory-editor" ref={container} role="application" aria-label="Territory boundary editor. Click to add boundary points. At least three points are required." />
-    <div className="map-tools">
-      <button type="button" className="quiet" disabled={points.length === 0} onClick={() => update(points.slice(0, -1))}>Undo point</button>
-      <button type="button" className="danger-quiet" disabled={points.length === 0} onClick={() => update([])}>Clear</button>
-      <button type="button" className="quiet" onClick={() => { const center = mapRef.current?.getCenter(); if (center) update([...points, [center.lng, center.lat]]); }}>Add map center</button>
-      <span aria-live="polite">{points.length < 3 ? `${points.length}/3 points · add ${3 - points.length} more` : `${points.length} points · boundary ready`}</span>
+  return <div className="grid gap-3">
+    <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Territory boundary editor. Click to add boundary points. At least three points are required." />
+    <div className="flex flex-wrap items-center gap-3">
+      <button type="button" className={ui.quietButton} disabled={points.length === 0} onClick={() => update(points.slice(0, -1))}>Undo point</button>
+      <button type="button" className={ui.dangerButton} disabled={points.length === 0} onClick={() => update([])}>Clear</button>
+      <button type="button" className={ui.quietButton} onClick={() => { const center = mapRef.current?.getCenter(); if (center) update([...points, [center.lng, center.lat]]); }}>Add map center</button>
+      <span className="text-xs font-bold text-slate-500" aria-live="polite">{points.length < 3 ? `${points.length}/3 points · add ${3 - points.length} more` : `${points.length} points · boundary ready`}</span>
     </div>
   </div>;
 }

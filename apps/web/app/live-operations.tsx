@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LiveAttendance, LiveEmployee, LiveLocationPoint, LiveOperationsPayload } from "../lib/live-types";
 import { type MapPoint, OperationsMap, type RouteLine } from "./operations-map";
+import { ui } from "./ui";
 
 const routeColors = ["#D8A629", "#2F75A8", "#B5523B", "#267057", "#75579B", "#CA7134"];
 const staleAfterMs = 150_000;
@@ -138,20 +139,22 @@ export function LiveOperations({
   const mapPoints = [...staticPoints, ...latestLocations];
   const statusCopy = connectionCopy(connection, lastUpdatedAt, clock);
 
-  return <><section className="dashboard-grid" id="route-history">
-    <article className="map-card">
-      <div className="section-head"><div><p className="eyebrow">Full route history</p><h2>{date} · {locations.length} GPS points</h2></div><span className={`live-feed ${connection}`}><i />{statusCopy}</span></div>
+  const connectionStyle = connection === "live" ? "bg-emerald-50 text-emerald-800" : connection === "delayed" ? "bg-red-50 text-red-800" : connection === "history" ? "bg-blue-50 text-blue-800" : "bg-amber-50 text-amber-800";
+  return <><section className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.85fr)_minmax(280px,.72fr)]" id="route-history">
+    <article className={ui.card}>
+      <div className={ui.sectionHead}><div><p className={ui.eyebrow}>Full route history</p><h2 className={ui.h2}>{date} · {locations.length} GPS points</h2></div><span className={`inline-flex max-w-60 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-extrabold ${connectionStyle}`}><i className="h-2 w-2 shrink-0 rounded-full bg-current" />{statusCopy}</span></div>
       <OperationsMap points={mapPoints} routes={routes} />
-      <div className="map-key"><span><i className="key-outlet" /> Assigned visit</span><span><i className="key-visit" /> Completed visit</span><span><i className="key-live" /> Latest position</span>{pollingEnabled && <small>Checks for new server-saved GPS every 15 seconds</small>}</div>
+      <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500"><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-blue-700" /> Assigned visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-emerald-700" /> Completed visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Latest position</span>{pollingEnabled && <small className="sm:ml-auto">Checks for new server-saved GPS every 15 seconds</small>}</div>
     </article>
-    <aside className="decision-card"><p className="eyebrow">Workday status</p><h2>{date}</h2><ul>{attendance.map((record) => {
+    <aside className="self-start rounded-2xl bg-[#14213D] p-6 text-white"><p className="text-[11px] font-black uppercase tracking-[0.13em] text-slate-400">Workday status</p><h2 className="my-1 text-2xl font-black tracking-tight text-white">{date}</h2><ul className="my-6 list-none p-0">{attendance.map((record) => {
       const points = locationsByEmployee.get(record.employeeId) ?? [];
       const latest = points.at(-1);
       const stale = record.status === "checked_in" && (!latest || clock - new Date(latest.capturedAt).valueOf() > staleAfterMs);
-      return <li key={record.id}><span className={`flag ${record.status === "checked_out" ? "blue" : stale ? "red" : "amber"}`}>{record.status === "checked_out" ? "finished" : stale ? "GPS stopped" : "working live"}</span><strong>{employeeById.get(record.employeeId)?.name ?? "Salesperson"}</strong><small>{time(record.checkInAt)} → {time(record.checkOutAt)} · {points.length} route points</small>{latest && <small className="last-fix">Last GPS {relativeTime(latest.capturedAt, clock)}</small>}</li>;
-    })}</ul>{attendance.length === 0 && <p className="muted-on-dark">No one started work for this filter.</p>}</aside>
+      const flagStyle = record.status === "checked_out" ? "bg-blue-300/20 text-blue-100" : stale ? "bg-red-300/20 text-red-100" : "bg-amber-300/20 text-amber-100";
+      return <li className="border-t border-white/15 py-4" key={record.id}><span className={`inline-block rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wider ${flagStyle}`}>{record.status === "checked_out" ? "finished" : stale ? "GPS stopped" : "working live"}</span><strong className="my-2 block">{employeeById.get(record.employeeId)?.name ?? "Salesperson"}</strong><small className="block text-slate-300">{time(record.checkInAt)} → {time(record.checkOutAt)} · {points.length} route points</small>{latest && <small className="mt-2 block text-emerald-200">Last GPS {relativeTime(latest.capturedAt, clock)}</small>}</li>;
+    })}</ul>{attendance.length === 0 && <p className="leading-6 text-slate-300">No one started work for this filter.</p>}</aside>
   </section>
-  <details className="table-card route-log"><summary><span><span className="eyebrow">Audit trail</span><strong>Open minute-by-minute route log</strong></span><b>{locations.length} points</b></summary><div className="table-scroll"><table><thead><tr><th>Captured</th><th>Salesperson</th><th>Coordinates</th><th>Accuracy</th><th>Source</th><th>Server received</th></tr></thead><tbody>{locations.map((point) => <tr key={point.id}><td>{time(point.capturedAt)}</td><td>{employeeById.get(point.employeeId)?.name ?? "Unknown"}</td><td><a href={`https://www.openstreetmap.org/?mlat=${point.latitude}&mlon=${point.longitude}#map=18/${point.latitude}/${point.longitude}`} target="_blank">{point.latitude.toFixed(6)}, {point.longitude.toFixed(6)}</a></td><td>±{Math.round(point.accuracy)} m</td><td>{point.source.replaceAll("_", " ")}</td><td>{time(point.receivedAt)}</td></tr>)}</tbody></table></div></details></>;
+  <details className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(20,33,61,0.055)]"><summary className="flex cursor-pointer list-none items-center justify-between gap-5 p-5 sm:p-6"><span><span className={ui.eyebrow}>Audit trail</span><strong className="mt-1 block text-xl font-black">Open minute-by-minute route log</strong></span><b className="text-sm text-emerald-700">{locations.length} points</b></summary><div className="overflow-x-auto border-t border-slate-200 px-5 pb-5 sm:px-6 sm:pb-6"><table className={ui.table}><thead><tr><th>Captured</th><th>Salesperson</th><th>Coordinates</th><th>Accuracy</th><th>Source</th><th>Server received</th></tr></thead><tbody>{locations.map((point) => <tr key={point.id}><td>{time(point.capturedAt)}</td><td>{employeeById.get(point.employeeId)?.name ?? "Unknown"}</td><td><a className="font-extrabold text-blue-700 hover:text-blue-900" href={`https://www.openstreetmap.org/?mlat=${point.latitude}&mlon=${point.longitude}#map=18/${point.latitude}/${point.longitude}`} target="_blank">{point.latitude.toFixed(6)}, {point.longitude.toFixed(6)}</a></td><td>±{Math.round(point.accuracy)} m</td><td>{point.source.replaceAll("_", " ")}</td><td>{time(point.receivedAt)}</td></tr>)}</tbody></table></div></details></>;
 }
 
 function mergeLocations(current: LiveLocationPoint[], additions: LiveLocationPoint[]) {

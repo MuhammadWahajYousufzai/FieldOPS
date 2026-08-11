@@ -13,16 +13,18 @@ export async function POST(request: Request) {
   const actor = await requireManager();
   if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
-  const name = text(body.name, 128), code = text(body.code, 32).toUpperCase(), areaId = text(body.areaId, 36);
+  const name = text(body.name, 128);
   const boundary = parseTerritoryBoundary(body.boundary);
   const employeeIds = sanitizeIds(body.employeeIds);
-  if (!name || !code || !areaId || !boundary) {
-    return NextResponse.json({ error: "Name, code, area, and a closed map boundary with at least three points are required." }, { status: 400 });
+  if (!name || !boundary) {
+    return NextResponse.json({ error: "A name and closed map boundary with at least three points are required." }, { status: 400 });
   }
   const db = createAdminTablesDb();
   try {
-    const area = await db.getRow({ databaseId, tableId: "areas", rowId: areaId });
-    if (area.active !== true) return NextResponse.json({ error: "Select an active area." }, { status: 409 });
+    const area = (await db.listRows({ databaseId, tableId: "areas", queries: [Query.equal("active", true), Query.orderAsc("$createdAt"), Query.limit(1)] })).rows[0];
+    if (!area) return NextResponse.json({ error: "Organization geography must be set up before creating a territory." }, { status: 409 });
+    const areaId = area.$id;
+    const code = `TER-${createHash("sha256").update(`${areaId}:${name.trim().toLowerCase()}`).digest("hex").slice(0, 10).toUpperCase()}`;
     const territoryId = stableId("ter", `${areaId}:${code}`);
     await db.createRow({ databaseId, tableId: "territories", rowId: territoryId, data: {
       area_id: areaId, code, name, boundary: boundary.coordinates, active: true,
@@ -41,7 +43,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, territoryId }, { status: 201 });
   } catch (error) {
     const codeValue = typeof error === "object" && error && "code" in error ? Number(error.code) : 500;
-    return NextResponse.json({ error: codeValue === 409 ? "That territory code already exists in this area." : "The territory could not be created." }, { status: codeValue === 409 ? 409 : 500 });
+    return NextResponse.json({ error: codeValue === 409 ? "A territory with that name already exists." : "The territory could not be created." }, { status: codeValue === 409 ? 409 : 500 });
   }
 }
 

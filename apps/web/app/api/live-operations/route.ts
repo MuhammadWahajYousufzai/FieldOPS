@@ -37,7 +37,7 @@ export async function GET(request: Request) {
     const payload: LiveOperationsPayload = {
       serverTime: new Date().toISOString(),
       employees: employeeRows.map((row) => ({ id: row.$id, name: String(row.display_name ?? "Salesperson") })),
-      attendance: attendanceRows.map((row) => ({
+      attendance: latestAttendanceByEmployee(attendanceRows).map((row) => ({
         id: row.$id,
         employeeId: String(row.employee_id),
         status: String(row.status),
@@ -73,4 +73,13 @@ function parseNear(value: string | null): [number, number] | null {
 
 function validPoint(value: unknown): value is [number, number] {
   return Array.isArray(value) && value.length === 2 && value.every((coordinate) => Number.isFinite(Number(coordinate)));
+}
+
+function latestAttendanceByEmployee<T extends object>(rows: T[]) {
+  const latest = new Map<string, T>();
+  for (const row of [...rows].sort((a, b) => String((b as Record<string, unknown>).check_in_at).localeCompare(String((a as Record<string, unknown>).check_in_at)))) {
+    const employeeId = String((row as Record<string, unknown>).employee_id);
+    if (!latest.has(employeeId)) latest.set(employeeId, row);
+  }
+  return [...latest.values()];
 }

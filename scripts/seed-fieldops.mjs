@@ -53,8 +53,8 @@ const manager = await ensureUser("management@sherazwaqar.tech", "FieldOPS Manage
 const salesperson = await ensureUser("ali.raza@sherazwaqar.tech", "Ali Raza", salespersonPassword);
 const managerEmployeeId = stableId("emp", manager.$id);
 const salesEmployeeId = stableId("emp", salesperson.$id);
-await ensureRow("employees", managerEmployeeId, { user_id: manager.$id, employee_code: "YR-0001", display_name: manager.name, status: "active", joining_date: now });
-await ensureRow("employees", salesEmployeeId, { user_id: salesperson.$id, employee_code: "SR-014", display_name: salesperson.name, manager_employee_id: managerEmployeeId, status: "active", joining_date: now });
+await ensureRow("employees", managerEmployeeId, { user_id: manager.$id, display_name: manager.name, status: "active", joining_date: now });
+await ensureRow("employees", salesEmployeeId, { user_id: salesperson.$id, display_name: salesperson.name, manager_employee_id: managerEmployeeId, status: "active", joining_date: now });
 await ensureRow("employee_assignments", stableId("assign", `${managerEmployeeId}:manager`), { employee_id: managerEmployeeId, role_id: managerRoleId, territory_id: territoryId, effective_from: now, assigned_by: manager.$id, reason: "Initial FieldOPS deployment" });
 await ensureRow("employee_assignments", stableId("assign", `${salesEmployeeId}:sales`), { employee_id: salesEmployeeId, role_id: salesRoleId, territory_id: territoryId, effective_from: now, assigned_by: manager.$id, reason: "Pilot route assignment" });
 

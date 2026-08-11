@@ -124,18 +124,22 @@ export async function POST(request: Request) {
   }
 
   const date = workDate(new Date(checkInAt));
-  const attendance = (await db.listRows({
+  const attendanceRows = (await db.listRows({
     databaseId,
     tableId: "attendance_records",
-    queries: [Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.limit(1)],
-  })).rows[0];
-  if (!attendance) return NextResponse.json({ error: "Check in for your shift first." }, { status: 409 });
+    queries: [Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.limit(100)],
+  })).rows;
+  if (attendanceRows.length === 0) return NextResponse.json({ error: "Start a work session before recording a visit." }, { status: 409 });
   const allowedClockSkewMs = 5 * 60 * 1000;
-  const attendanceStart = new Date(String(attendance.check_in_at)).valueOf();
-  const attendanceEnd = attendance.check_out_at ? new Date(String(attendance.check_out_at)).valueOf() : null;
-  if (new Date(checkInAt).valueOf() + allowedClockSkewMs < attendanceStart
-    || (attendanceEnd !== null && new Date(completionAt).valueOf() - allowedClockSkewMs > attendanceEnd)) {
-    return NextResponse.json({ error: "The visit must be captured during the active work shift." }, { status: 409 });
+  const visitStart = new Date(checkInAt).valueOf(), visitEnd = new Date(completionAt).valueOf();
+  const matchingSession = attendanceRows.find((attendance) => {
+    const attendanceStart = new Date(String(attendance.check_in_at)).valueOf();
+    const attendanceEnd = attendance.check_out_at ? new Date(String(attendance.check_out_at)).valueOf() : null;
+    return visitStart + allowedClockSkewMs >= attendanceStart
+      && (attendanceEnd === null || visitEnd - allowedClockSkewMs <= attendanceEnd);
+  });
+  if (!matchingSession) {
+    return NextResponse.json({ error: "The visit must be captured during one of today’s work sessions." }, { status: 409 });
   }
 
   const [checkInTerritory, completionTerritory] = await Promise.all([

@@ -41,16 +41,19 @@ export async function GET(request: Request) {
       });
     } catch { /* A removed outlet is omitted from the downloaded plan. */ }
   }
-  const attendance = (await db.listRows({
+  const attendanceRows = (await db.listRows({
     databaseId,
     tableId: "attendance_records",
-    queries: [Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.limit(1)],
-  })).rows[0];
+    queries: [Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.limit(100)],
+  })).rows;
+  attendanceRows.sort((a, b) => String(b.check_in_at).localeCompare(String(a.check_in_at)));
+  const activeAttendance = attendanceRows.find((row) => row.status === "checked_in" && !row.check_out_at);
+  const workState = activeAttendance ? "active" : attendanceRows.length > 0 ? "finished" : "not_started";
   return NextResponse.json({
     date,
-    employee: { id: actor.employee.$id, name: actor.employee.display_name, code: actor.employee.employee_code },
-    shiftActive: attendance?.status === "checked_in",
-    workState: attendance?.status === "checked_in" ? "active" : attendance?.status === "checked_out" ? "finished" : "not_started",
+    employee: { id: actor.employee.$id, name: actor.employee.display_name },
+    shiftActive: Boolean(activeAttendance),
+    workState,
     route: rows,
     territoryPolicy: {
       mode: territoryAccess.restricted ? "restricted" : "unrestricted",

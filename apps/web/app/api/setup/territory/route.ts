@@ -14,8 +14,9 @@ export async function POST(request:Request){
   const body=await request.json();
   const regionName=text(body.regionName,128),regionCode=text(body.regionCode,32).toUpperCase();
   const areaName=text(body.areaName,128),areaCode=text(body.areaCode,32).toUpperCase();
-  const territoryName=text(body.territoryName,128),territoryCode=text(body.territoryCode,32).toUpperCase();
-  if(!regionName||!regionCode||!areaName||!areaCode||!territoryName||!territoryCode)return NextResponse.json({error:"Complete every hierarchy field."},{status:400});
+  const territoryName=text(body.territoryName,128);
+  if(!regionName||!regionCode||!areaName||!areaCode||!territoryName)return NextResponse.json({error:"Complete every hierarchy field."},{status:400});
+  const territoryCode=`TER-${createHash("sha256").update(`${areaCode}:${territoryName.trim().toLowerCase()}`).digest("hex").slice(0,10).toUpperCase()}`;
   const db=createAdminTablesDb();
   const organizations=await db.listRows({databaseId,tableId:"organizations",queries:[Query.equal("active",true),Query.limit(1)]});
   const organization=organizations.rows[0]; if(!organization)return NextResponse.json({error:"Create the organization first."},{status:409});

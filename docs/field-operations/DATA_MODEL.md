@@ -11,7 +11,7 @@ The self-hosted Appwrite 1.9.6 project uses TablesDB with server-only access. Ev
 | `areas` | region hierarchy |
 | `territories` | area, code, name, native `boundary` polygon, active state |
 | `roles` | manager and salesperson role definitions |
-| `employees` | Appwrite user link, employee code, manager, status |
+| `employees` | Appwrite user link, display name, manager, status |
 | `employee_assignments` | effective-dated role and optional territory assignment |
 | `audit_logs` | immutable management/security mutations |
 | `outlets` | territory, address, latitude/longitude, required native `coordinates` point |

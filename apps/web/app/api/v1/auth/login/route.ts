@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       token: session.secret,
       expiresAt: session.expire,
-      employee: { id: employee.$id, name: employee.display_name, code: employee.employee_code },
+      employee: { id: employee.$id, name: employee.display_name },
     });
   } catch {
     return NextResponse.json({ error: "The email or password is incorrect." }, { status: 401 });
