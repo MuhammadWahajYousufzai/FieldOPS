@@ -27,17 +27,11 @@ const tables = [
   ], indexes: [["area_code", "unique", ["region_id", "code"]], ["area_active", "key", ["region_id", "active"]]] },
   { id: "territories", name: "Territories", columns: [
     ["area_id", "string", 36, true], ["code", "string", 32, true], ["name", "string", 128, true],
-    ["boundary_geojson", "string", 16383, false], ["active", "boolean", true],
+    ["boundary", "polygon", false], ["active", "boolean", true],
   ], indexes: [["territory_code", "unique", ["area_id", "code"]], ["territory_active", "key", ["area_id", "active"]]] },
   { id: "roles", name: "Roles", columns: [
     ["code", "string", 64, true], ["name", "string", 128, true], ["system", "boolean", true], ["active", "boolean", true],
   ], indexes: [["role_code", "unique", ["code"]], ["role_active", "key", ["active"]]] },
-  { id: "permissions", name: "Permissions", columns: [
-    ["code", "string", 96, true], ["description", "string", 255, true], ["sensitive", "boolean", true],
-  ], indexes: [["permission_code", "unique", ["code"]]] },
-  { id: "role_permissions", name: "Role Permissions", columns: [
-    ["role_id", "string", 36, true], ["permission_id", "string", 36, true], ["granted_by", "string", 36, true], ["granted_at", "datetime", true],
-  ], indexes: [["role_permission", "unique", ["role_id", "permission_id"]], ["permission_roles", "key", ["permission_id"]]] },
   { id: "employees", name: "Employees", columns: [
     ["user_id", "string", 36, true], ["employee_code", "string", 32, true], ["display_name", "string", 128, true],
     ["manager_employee_id", "string", 36, false], ["status", "string", 24, true], ["joining_date", "datetime", true],
@@ -46,21 +40,12 @@ const tables = [
     ["employee_id", "string", 36, true], ["role_id", "string", 36, true], ["territory_id", "string", 36, false],
     ["effective_from", "datetime", true], ["effective_to", "datetime", false], ["assigned_by", "string", 36, true], ["reason", "string", 500, false],
   ], indexes: [["employee_dates", "key", ["employee_id", "effective_from"]], ["territory_dates", "key", ["territory_id", "effective_from"]]] },
-  { id: "permission_overrides", name: "Permission Overrides", columns: [
-    ["user_id", "string", 36, true], ["permission_id", "string", 36, true], ["effect", "string", 8, true],
-    ["scope_json", "string", 4096, true], ["effective_from", "datetime", true], ["effective_to", "datetime", false],
-    ["reason", "string", 500, true], ["approved_by", "string", 36, true],
-  ], indexes: [["override_user_dates", "key", ["user_id", "effective_from"]], ["override_permission", "key", ["permission_id"]]] },
   { id: "audit_logs", name: "Immutable Audit Logs", columns: [
     ["actor_user_id", "string", 36, true], ["action", "string", 96, true], ["entity_type", "string", 64, true],
     ["entity_id", "string", 36, true], ["occurred_at", "datetime", true], ["before_json", "string", 16383, false],
     ["after_json", "string", 16383, false], ["reason", "string", 1000, false], ["session_id", "string", 64, false],
     ["correlation_id", "string", 64, true],
   ], indexes: [["audit_entity_time", "key", ["entity_type", "entity_id", "occurred_at"]], ["audit_actor_time", "key", ["actor_user_id", "occurred_at"]], ["audit_action_time", "key", ["action", "occurred_at"]]] },
-  { id: "integration_events", name: "Integration Events", columns: [
-    ["event_type", "string", 96, true], ["entity_type", "string", 64, true], ["entity_id", "string", 36, true],
-    ["payload_json", "string", 16383, true], ["occurred_at", "datetime", true], ["published_at", "datetime", false], ["attempts", "integer", false],
-  ], indexes: [["event_pending", "key", ["published_at", "occurred_at"]], ["event_entity", "key", ["entity_type", "entity_id"]]] },
 ];
 
 async function exists(getter) {
@@ -100,6 +85,7 @@ for (const table of tables) {
     if (type === "boolean") await db.createBooleanColumn({ ...base, required: sizeOrRequired });
     if (type === "datetime") await db.createDatetimeColumn({ ...base, required: sizeOrRequired });
     if (type === "integer") await db.createIntegerColumn({ ...base, required: sizeOrRequired });
+    if (type === "polygon") await db.createPolygonColumn({ ...base, required: sizeOrRequired });
     await waitForColumn(table.id, key);
     console.log(`created column ${table.id}.${key}`);
   }

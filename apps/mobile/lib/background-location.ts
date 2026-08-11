@@ -1,11 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
-import * as TaskManager from "expo-task-manager";
-import { Platform } from "react-native";
 
-export const LOCATION_TASK = "fieldops-minute-route-v1";
 export const LOCATION_QUEUE_KEY = "fieldops-location-outbox-v1";
-export const TRACKING_SESSION_KEY = "fieldops-tracking-session-v1";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
 let queueMutation: Promise<void> = Promise.resolve();
@@ -19,13 +15,7 @@ export type QueuedLocation = {
   altitude: number | null;
   speed: number | null;
   heading: number | null;
-  source: "background" | "foreground";
-};
-
-type TrackingSession = {
-  token: string;
-  employeeId: string;
-  workActive: boolean;
+  source: "foreground";
 };
 
 function pointId(timestamp: number) {
@@ -55,7 +45,7 @@ export async function locationQueueCount() {
   return (await readQueue()).length;
 }
 
-export async function queueLocationObjects(locations: Location.LocationObject[], source: QueuedLocation["source"] = "background") {
+export async function queueLocationObjects(locations: Location.LocationObject[], source: QueuedLocation["source"] = "foreground") {
   if (locations.length === 0) return;
   const additions = locations.map((location) => ({
     idempotencyKey: pointId(location.timestamp),
@@ -72,16 +62,14 @@ export async function queueLocationObjects(locations: Location.LocationObject[],
 }
 
 export async function flushLocationQueue(token?: string): Promise<number> {
-  const session = token ? null : await readTrackingSession();
-  const authToken = token ?? session?.token;
-  if (!authToken) return 0;
+  if (!token) return 0;
   const queue = await readQueue();
   if (queue.length === 0) return 0;
   const batch = queue.slice(0, 100);
   try {
     const response = await fetch(`${API_BASE}/locations/batch`, {
       method: "POST",
-      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ points: batch }),
     });
     if (!response.ok) return 0;
@@ -93,60 +81,3 @@ export async function flushLocationQueue(token?: string): Promise<number> {
     return 0;
   }
 }
-
-async function readTrackingSession(): Promise<TrackingSession | null> {
-  try {
-    const saved = await AsyncStorage.getItem(TRACKING_SESSION_KEY);
-    if (!saved) return null;
-    const value = JSON.parse(saved) as TrackingSession;
-    return value?.token && value?.employeeId ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function setTrackingSession(session: Omit<TrackingSession, "workActive">, workActive: boolean) {
-  await AsyncStorage.setItem(TRACKING_SESSION_KEY, JSON.stringify({ ...session, workActive }));
-}
-
-export async function clearTrackingSession() {
-  await AsyncStorage.removeItem(TRACKING_SESSION_KEY);
-}
-
-export async function startRouteTracking(session: Omit<TrackingSession, "workActive">) {
-  await setTrackingSession(session, true);
-  if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK)) return;
-  await Location.startLocationUpdatesAsync(LOCATION_TASK, {
-    accuracy: Location.Accuracy.High,
-    timeInterval: 60_000,
-    distanceInterval: 0,
-    deferredUpdatesInterval: 60_000,
-    deferredUpdatesDistance: 0,
-    pausesUpdatesAutomatically: false,
-    activityType: Location.ActivityType.OtherNavigation,
-    showsBackgroundLocationIndicator: true,
-    foregroundService: Platform.OS === "android" ? {
-      notificationTitle: "FieldOPS work in progress",
-      notificationBody: "Your work route is being recorded for management.",
-      notificationColor: "#D8A629",
-      killServiceOnDestroy: false,
-    } : undefined,
-  });
-}
-
-export async function stopRouteTracking() {
-  const session = await readTrackingSession();
-  if (session) await setTrackingSession(session, false);
-  if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK)) {
-    await Location.stopLocationUpdatesAsync(LOCATION_TASK);
-  }
-}
-
-TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
-  if (error || !data) return;
-  const session = await readTrackingSession();
-  if (!session?.workActive) return;
-  const locations = (data as { locations?: Location.LocationObject[] }).locations ?? [];
-  await queueLocationObjects(locations, "background");
-  await flushLocationQueue(session.token);
-});

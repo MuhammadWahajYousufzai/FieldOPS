@@ -5,10 +5,10 @@
     "endpoint": "https://yousufricemill.com/v1",
     "sites": [
         {
-            "$id": "fieldops-dashboard",
-            "name": "FieldOPS Management Dashboard",
-            "logging": true,
-            "timeout": 60,
+      "$id": "fieldops-dashboard",
+      "name": "FieldOPS Management Dashboard",
+      "logging": true,
+      "timeout": 30,
             "framework": "nextjs",
             "buildRuntime": "node-22",
             "adapter": "ssr",
@@ -17,9 +17,14 @@
             "startCommand": "",
             "outputDirectory": "apps/web/.next",
             "buildSpecification": "s-1vcpu-1gb",
-            "runtimeSpecification": "s-8vcpu-8gb",
-            "deploymentRetention": 5,
-            "path": "."
+      "runtimeSpecification": "s-8vcpu-8gb",
+      "deploymentRetention": 5,
+      "installationId": "6a78cdcd2ac6ad663c6b",
+      "providerRepositoryId": "1323882895",
+      "providerBranch": "main",
+      "providerSilentMode": false,
+      "providerRootDirectory": ".",
+      "path": "."
         }
     ],
     "settings": {

@@ -2,6 +2,7 @@ import { Query } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { mobileActor, workDate } from "../../../../lib/mobile-auth";
+import { territoryAccessForEmployee } from "../../../../lib/territory-access";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -10,11 +11,14 @@ export async function GET(request: Request) {
   if (!actor) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
   const db = createAdminTablesDb();
   const date = new URL(request.url).searchParams.get("date") || workDate();
-  const routes = await db.listRows({
-    databaseId,
-    tableId: "route_assignments",
-    queries: [Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.orderAsc("sequence"), Query.limit(100)],
-  });
+  const [routes, territoryAccess] = await Promise.all([
+    db.listRows({
+      databaseId,
+      tableId: "route_assignments",
+      queries: [Query.equal("employee_id", actor.employee.$id), Query.equal("work_date", date), Query.orderAsc("sequence"), Query.limit(100)],
+    }),
+    territoryAccessForEmployee(db, actor.employee.$id),
+  ]);
   const rows = [];
   for (const route of routes.rows) {
     try {
@@ -31,6 +35,7 @@ export async function GET(request: Request) {
         sequence: route.sequence,
         status: route.status,
         notes: outlet.notes ?? "",
+        territoryId: outlet.territory_id,
         kind: "assigned",
         workDate: date,
       });
@@ -47,6 +52,13 @@ export async function GET(request: Request) {
     shiftActive: attendance?.status === "checked_in",
     workState: attendance?.status === "checked_in" ? "active" : attendance?.status === "checked_out" ? "finished" : "not_started",
     route: rows,
+    territoryPolicy: {
+      mode: territoryAccess.restricted ? "restricted" : "unrestricted",
+      assignedCount: territoryAccess.assignedCount,
+      territories: territoryAccess.territories.map((territory) => ({
+        id: territory.id, code: territory.code, name: territory.name, boundary: territory.boundary,
+      })),
+    },
     map: { styleUrl: "https://tiles.openfreemap.org/styles/liberty", attribution: "© OpenStreetMap contributors" },
   });
 }

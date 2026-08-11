@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { ID, Query } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import { NextResponse } from "next/server";
-import { evaluateGeofence } from "@fieldops/domain";
+import { evaluateGeofence, hasRequiredVisitEvidence } from "@fieldops/domain";
 import { createAdminStorage, createAdminTablesDb } from "@fieldops/appwrite/server";
 import { mobileActor, number, text } from "../../../../../../lib/mobile-auth";
+import { evaluateTerritoryAccess, territoryAccessForEmployee } from "../../../../../../lib/territory-access";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 const bucketId = process.env.APPWRITE_EVIDENCE_BUCKET_ID ?? "visit-evidence";
@@ -26,7 +27,10 @@ export async function POST(request: Request, context: { params: Promise<{ visitI
   if (visit.employee_id !== actor.employee.$id) return NextResponse.json({ error: "This visit belongs to another salesperson." }, { status: 403 });
   if (visit.status === "completed") {
     const evidence = await db.listRows({ databaseId, tableId: "visit_evidence", queries: [Query.equal("visit_id", visitId), Query.limit(10)] });
-    return NextResponse.json({ ok: true, visitId, evidenceCount: evidence.total });
+    const evidenceTypes = new Set(evidence.rows.map((item) => String(item.type)));
+    if (hasRequiredVisitEvidence({ photo: evidenceTypes.has("photo"), audio: evidenceTypes.has("audio") })) {
+      return NextResponse.json({ ok: true, visitId, evidenceCount: evidenceTypes.size });
+    }
   }
   const form = await request.formData();
   const latitude = number(form.get("latitude")) ?? Number(visit.latitude);
@@ -39,6 +43,11 @@ export async function POST(request: Request, context: { params: Promise<{ visitI
     return NextResponse.json({ error: "A visit photo and audio note are both required." }, { status: 422 });
   }
   const selfInitiated = visit.visit_type === "self_initiated" || !visit.route_assignment_id;
+  const territoryDecision = evaluateTerritoryAccess(
+    await territoryAccessForEmployee(db, actor.employee.$id, new Date(capturedAt)),
+    { latitude, longitude },
+  );
+  if (!territoryDecision.allowed) return NextResponse.json({ error: territoryDecision.reason }, { status: 403 });
   const visitPoint = selfInitiated
     ? { latitude: Number(visit.latitude), longitude: Number(visit.longitude) }
     : await db.getRow({ databaseId, tableId: "outlets", rowId: String(visit.outlet_id) }).then((outlet) => ({ latitude: Number(outlet.latitude), longitude: Number(outlet.longitude) }));

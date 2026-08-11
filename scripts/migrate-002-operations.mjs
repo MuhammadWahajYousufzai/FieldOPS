@@ -21,7 +21,7 @@ const tables = [
     name: "Outlets",
     columns: [
       ["code", "varchar", 32, true], ["name", "varchar", 160, true],
-      ["address", "varchar", 500, true], ["latitude", "float", true], ["longitude", "float", true],
+      ["address", "varchar", 500, true], ["latitude", "float", true], ["longitude", "float", true], ["coordinates", "point", true],
       ["contact_name", "varchar", 128, false], ["phone", "varchar", 32, false],
       ["status", "varchar", 24, true], ["territory_id", "varchar", 36, true],
       ["assigned_employee_id", "varchar", 36, false], ["visit_frequency", "varchar", 32, true],
@@ -74,7 +74,7 @@ const tables = [
       ["visit_type", "varchar", 24, false], ["customer_name", "varchar", 160, false],
       ["customer_address", "varchar", 500, false],
       ["check_in_at", "datetime", true], ["check_out_at", "datetime", false],
-      ["latitude", "float", true], ["longitude", "float", true], ["accuracy", "float", true],
+      ["latitude", "float", true], ["longitude", "float", true], ["coordinates", "point", true], ["accuracy", "float", true],
       ["geofence_distance_m", "integer", true], ["geofence_accepted", "boolean", true],
       ["completion_distance_m", "integer", false],
       ["outcome", "varchar", 48, false], ["notes", "text", false],
@@ -145,6 +145,7 @@ async function createColumn(tableId, column) {
   if (type === "datetime") await db.createDatetimeColumn({ ...base, required: sizeOrRequired });
   if (type === "integer") await db.createIntegerColumn({ ...base, required: sizeOrRequired });
   if (type === "float") await db.createFloatColumn({ ...base, required: sizeOrRequired });
+  if (type === "point") await db.createPointColumn({ ...base, required: sizeOrRequired });
   await waitForColumn(tableId, key);
 }
 

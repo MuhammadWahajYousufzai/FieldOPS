@@ -1,6 +1,6 @@
 {
   "name": "@fieldops/mobile",
-  "version": "0.2.0",
+  "version": "1.0.1",
   "private": true,
   "main": "index.tsx",
   "scripts": {
@@ -10,7 +10,7 @@
     "ios:asc:export": "bash ./scripts/ios-app-store-connect.sh export",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "android:apk": "cd android && ./gradlew assembleRelease"
+    "android:aab": "cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
     "@fieldops/domain": "workspace:*",
@@ -23,13 +23,20 @@
     "expo-image-picker": "~57.0.8",
     "expo-location": "~57.0.8",
     "expo-task-manager": "~57.0.8",
+    "nativewind": "4.2.6",
     "react": "19.2.3",
     "react-native": "0.86.2",
+    "react-native-css-interop": "0.2.6",
+    "react-native-reanimated": "4.5.3",
     "react-native-safe-area-context": "~5.7.0",
+    "react-native-worklets": "0.10.1",
     "react-native-webview": "13.16.1"
   },
   "devDependencies": {
+    "@babel/plugin-transform-react-jsx": "7.29.7",
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "57.0.6",
+    "tailwindcss": "3.4.17",
     "typescript": "~6.0.3"
   }
 }

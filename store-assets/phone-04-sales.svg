@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+    <rect width="1080" height="1920" fill="#17233B"/>
+    <circle cx="930" cy="155" r="220" fill="#24324E"/>
+    <circle cx="102" cy="500" r="150" fill="#24324E"/>
+    <g transform="translate(72 74) scale(0.62)">
+    <path d="M40 2C18 20 8 45 8 69c0 23 13 43 32 57 19-14 32-34 32-57C72 45 62 20 40 2Z" fill="#D8A629"/>
+    <path d="M40 14c-11 18-16 35-16 53 0 13 5 27 16 41 11-14 16-28 16-41 0-18-5-35-16-53Z" fill="#17233B"/>
+    <circle cx="40" cy="88" r="18" fill="#D8A629" stroke="#17233B" stroke-width="8"/>
+    <circle cx="40" cy="88" r="5" fill="#F7F8F4"/>
+  </g>
+    <text x="144" y="119" font-family="Arial, sans-serif" font-size="31" font-weight="900" fill="#D8A629" text-anchor="start">FIELDOPS</text>
+    <text x="540" y="190" font-family="Georgia, serif" font-size="57" font-weight="800" fill="#FFFFFF" text-anchor="middle">Assignments and sales</text><text x="540" y="250" font-family="Georgia, serif" font-size="57" font-weight="800" fill="#FFFFFF" text-anchor="middle">stay accountable.</text>
+    <text x="540" y="290" font-family="Arial, sans-serif" font-size="26" font-weight="500" fill="#BAC4D8" text-anchor="middle">Manager-planned work is measured without hiding extra field wins.</text>
+    <rect x="55" y="330" width="970" height="1515" rx="45" fill="#F7F8F4" stroke="none" stroke-width="0"/>
+    <rect x="475" y="351" width="130" height="8" rx="4" fill="#C8CDC5"/>
+    <text x="105" y="425" font-family="Arial, sans-serif" font-size="22" font-weight="900" fill="#243D74" text-anchor="start">FIELDOPS</text>
+    <text x="105" y="461" font-family="Arial, sans-serif" font-size="36" font-weight="900" fill="#17233B" text-anchor="start">Sales activity</text>
+    <rect x="825" y="405" width="145" height="48" rx="24" fill="#E9F5EF" stroke="none" stroke-width="0"/>
+    <text x="897" y="436" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#267057" text-anchor="middle">LIVE</text>
+   <rect x="105" y="510" width="870" height="250" rx="22" fill="#FFFFFF" stroke="#DCE0D8" stroke-width="2"/>
+   <text x="145" y="558" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#697184" text-anchor="start">TODAY’S COMPLETION</text>
+   <text x="145" y="630" font-family="Arial, sans-serif" font-size="62" font-weight="900" fill="#17233B" text-anchor="start">6</text><text x="195" y="630" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#697184" text-anchor="start">assigned</text>
+   <text x="508" y="630" font-family="Arial, sans-serif" font-size="62" font-weight="900" fill="#267057" text-anchor="start">2</text><text x="558" y="630" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#697184" text-anchor="start">self-added</text>
+   <rect x="145" y="687" width="790" height="18" rx="9" fill="#E5E8E2"/><rect x="145" y="687" width="525" height="18" rx="9" fill="#D8A629"/>
+   <text x="145" y="735" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#697184" text-anchor="start">4 of 6 management assignments complete</text>
+   <text x="105" y="825" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#697184" text-anchor="start">TAKE AN ORDER</text>
+   <rect x="105" y="855" width="870" height="570" rx="22" fill="#FFFFFF" stroke="#DCE0D8" stroke-width="2"/>
+   <text x="145" y="905" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#697184" text-anchor="start">ASSIGNED VISIT · OPTIONAL</text>
+   <rect x="145" y="935" width="238" height="52" rx="26" fill="#243D74" stroke="none" stroke-width="0"/><text x="264" y="968" font-family="Arial, sans-serif" font-size="17" font-weight="800" fill="#FFFFFF" text-anchor="middle">Al Madina Store</text>
+   <rect x="402" y="935" width="175" height="52" rx="26" fill="#FFFFFF" stroke="#DCE0D8" stroke-width="2"/><text x="490" y="968" font-family="Arial, sans-serif" font-size="17" font-weight="800" fill="#17233B" text-anchor="middle">Any customer</text>
+   <text x="145" y="1040" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#697184" text-anchor="start">CUSTOMER</text>
+   <rect x="145" y="1062" width="790" height="60" rx="12" fill="#F7F8F4" stroke="#DCE0D8" stroke-width="2"/><text x="170" y="1100" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#17233B" text-anchor="start">Al Madina Super Store</text>
+   <text x="145" y="1170" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#697184" text-anchor="start">PRODUCT</text>
+   <rect x="145" y="1192" width="790" height="60" rx="12" fill="#F7F8F4" stroke="#DCE0D8" stroke-width="2"/><text x="170" y="1230" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#17233B" text-anchor="start">Yousuf Super Kernel Basmati</text>
+   <text x="145" y="1305" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#697184" text-anchor="start">Order total</text><text x="935" y="1305" font-family="Arial, sans-serif" font-size="27" font-weight="900" fill="#17233B" text-anchor="end">PKR 22,500</text>
+   <rect x="145" y="1335" width="790" height="62" rx="12" fill="#D8A629" stroke="none" stroke-width="0"/><text x="540" y="1375" font-family="Arial, sans-serif" font-size="21" font-weight="900" fill="#17233B" text-anchor="middle">Save order</text>
+   <rect x="105" y="1475" width="870" height="145" rx="22" fill="#E9F5EF" stroke="none" stroke-width="0"/>
+   <circle cx="160" cy="1548" r="22" fill="#267057"/><path d="M150 1548l7 8 15-18" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><text x="205" y="1538" font-family="Arial, sans-serif" font-size="24" font-weight="900" fill="#267057" text-anchor="start">Saved by the server</text>
+   <text x="205" y="1574" font-family="Arial, sans-serif" font-size="19" font-weight="500" fill="#4F655C" text-anchor="start">Order, outlet and GPS point are linked.</text>
+   <rect x="105" y="1678" width="870" height="96" rx="22" fill="#17233B" stroke="none" stroke-width="0"/>
+   <text x="192" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Today</text><text x="364" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Visits</text><text x="538" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#D8A629" text-anchor="middle">Order</text><text x="712" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Activity</text><text x="885" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Profile</text>
+  </svg>

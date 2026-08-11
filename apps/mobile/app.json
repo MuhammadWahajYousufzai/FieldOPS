@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Yousuf Rice FieldOps",
+    "name": "FieldOPS",
     "slug": "yousuf-rice-fieldops",
-    "version": "0.2.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "fieldops",
@@ -28,29 +28,22 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "FieldOPS records your route and visit evidence while work is active.",
-          "locationAlwaysAndWhenInUsePermission": "FieldOPS records your minute-by-minute work route while work is active, including when the app is in the background.",
-          "isIosBackgroundLocationEnabled": true,
-          "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": true
+          "locationWhenInUsePermission": "FieldOPS records route updates and visit evidence while the app is open during active work."
         }
       ]
     ],
     "ios": {
       "bundleIdentifier": "pk.yousufrice.fieldops",
       "appleTeamId": "V4AYP7YKGS",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "icon": "./assets/icon.png",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSLocationWhenInUseUsageDescription": "FieldOPS records your route and visit evidence while work is active.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "FieldOPS records your minute-by-minute work route while work is active, including when the app is in the background.",
-        "NSLocationAlwaysUsageDescription": "FieldOPS records your minute-by-minute work route while work is active, including when the app is in the background.",
+        "NSLocationWhenInUseUsageDescription": "FieldOPS records route updates and visit evidence while the app is open during active work.",
         "NSCameraUsageDescription": "FieldOPS uses the camera to capture timestamped outlet visit evidence.",
         "NSPhotoLibraryUsageDescription": "FieldOPS uses the photo library only when a salesperson attaches visit evidence.",
-        "NSMicrophoneUsageDescription": "FieldOPS uses the microphone to record the required audio note for a completed visit.",
-        "UIBackgroundModes": ["location"]
+        "NSMicrophoneUsageDescription": "FieldOPS uses the microphone to record the required audio note for a completed visit."
       }
     },
     "android": {
@@ -60,7 +53,7 @@
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#17233B"
       },
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION", "CAMERA", "RECORD_AUDIO"]
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA", "RECORD_AUDIO"]
     }
   }
 }

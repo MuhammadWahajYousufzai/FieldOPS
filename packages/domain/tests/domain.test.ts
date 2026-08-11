@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canAccessTerritory, evaluateGeofence, retryDelayMs, type AccessContext } from "../src";
+import { canAccessTerritory, evaluateGeofence, hasRequiredVisitEvidence, parseTerritoryBoundary, pointInTerritory, retryDelayMs, type AccessContext } from "../src";
 
 describe("territory authorization", () => {
   const actor: AccessContext = {
@@ -26,6 +26,33 @@ describe("visit geofence", () => {
     const outlet = { latitude: 24.8138, longitude: 67.0305 };
     const nearby = { latitude: 24.8141, longitude: 67.0305 };
     expect(evaluateGeofence(outlet, nearby, 70, 0).accepted).toBe(true);
+  });
+});
+
+describe("visit evidence", () => {
+  it("requires both a photo and an audio note before submission", () => {
+    expect(hasRequiredVisitEvidence({})).toBe(false);
+    expect(hasRequiredVisitEvidence({ photo: { uri: "photo.jpg" } })).toBe(false);
+    expect(hasRequiredVisitEvidence({ audio: { uri: "note.m4a" } })).toBe(false);
+    expect(hasRequiredVisitEvidence({ photo: { uri: "photo.jpg" }, audio: { uri: "note.m4a" } })).toBe(true);
+  });
+});
+
+describe("territory boundaries", () => {
+  const boundary = parseTerritoryBoundary({
+    type: "Polygon",
+    coordinates: [[[67.0, 24.8], [67.1, 24.8], [67.1, 24.9], [67.0, 24.9], [67.0, 24.8]]],
+  });
+
+  it("validates closed GeoJSON polygons", () => {
+    expect(boundary).not.toBeNull();
+    expect(parseTerritoryBoundary({ type: "Polygon", coordinates: [[[67, 24], [68, 24], [68, 25]]] })).toBeNull();
+  });
+
+  it("accepts points inside or on the boundary and rejects outside points", () => {
+    expect(pointInTerritory({ latitude: 24.85, longitude: 67.05 }, boundary!)).toBe(true);
+    expect(pointInTerritory({ latitude: 24.8, longitude: 67.05 }, boundary!)).toBe(true);
+    expect(pointInTerritory({ latitude: 24.95, longitude: 67.05 }, boundary!)).toBe(false);
   });
 });
 

@@ -2,6 +2,7 @@ import { ID, Query } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { mobileActor, number, text, workDate } from "../../../../lib/mobile-auth";
+import { evaluateTerritoryAccess, territoryAccessForEmployee } from "../../../../lib/territory-access";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -20,6 +21,11 @@ export async function POST(request: Request) {
   const db = createAdminTablesDb();
   const duplicate = (await db.listRows({ databaseId, tableId: "orders", queries: [Query.equal("idempotency_key", idempotencyKey), Query.limit(1)] })).rows[0];
   if (duplicate) return NextResponse.json({ ok: true, orderId: duplicate.$id, totalAmount: duplicate.total_amount });
+  const territoryDecision = evaluateTerritoryAccess(
+    await territoryAccessForEmployee(db, actor.employee.$id, capturedDate),
+    { latitude, longitude },
+  );
+  if (!territoryDecision.allowed) return NextResponse.json({ error: territoryDecision.reason }, { status: 403 });
   if (outletId) {
     try { await db.getRow({ databaseId, tableId: "outlets", rowId: outletId }); } catch { return NextResponse.json({ error: "The selected outlet no longer exists." }, { status: 409 }); }
   }
@@ -52,6 +58,7 @@ export async function POST(request: Request) {
     received_at: now,
     latitude,
     longitude,
+    coordinates: [longitude, latitude],
     accuracy: Math.max(0, accuracy),
     source: "order",
     work_date: workDate(capturedDate),

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Query } from "node-appwrite";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
+import { hasRequiredVisitEvidence } from "@fieldops/domain";
 import { requireManager } from "../lib/auth";
 import { workDate } from "../lib/mobile-auth";
 import { listAllRowsOrEmpty } from "../lib/table-data";
@@ -25,24 +26,23 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const selectedEmployee = params.employee ?? "all";
   const db = createAdminTablesDb();
   const employeeFilter = selectedEmployee === "all" ? [] : [Query.equal("employee_id", selectedEmployee)];
-  const [employeeRows, outletRows, routeRows, attendanceRows, visitRows, locationRows, orderRows] = await Promise.all([
+  const [employeeRows, outletRows, routeRows, attendanceRows, rawVisitRows, locationRows, orderRows] = await Promise.all([
     listAllRowsOrEmpty(db, databaseId, "employees", [Query.equal("status", "active")]),
     listAllRowsOrEmpty(db, databaseId, "outlets", [Query.equal("status", "active")]),
     listAllRowsOrEmpty(db, databaseId, "route_assignments", [Query.equal("work_date", date)]),
     listAllRowsOrEmpty(db, databaseId, "attendance_records", [Query.equal("work_date", date)]),
-    listAllRowsOrEmpty(db, databaseId, "visits", [Query.equal("work_date", date), ...employeeFilter]),
+    listAllRowsOrEmpty(db, databaseId, "visits", [Query.equal("work_date", date), Query.equal("status", "completed"), ...employeeFilter]),
     listAllRowsOrEmpty(db, databaseId, "location_points", [Query.equal("work_date", date), ...employeeFilter]),
     listAllRowsOrEmpty(db, databaseId, "orders", [Query.equal("work_date", date), ...employeeFilter]),
   ]);
-  const evidenceRows = visitRows.length > 0 ? await listAllRowsOrEmpty(db, databaseId, "visit_evidence", [], 5_000) : [];
+  const evidenceRows = rawVisitRows.length > 0 ? await listAllRowsOrEmpty(db, databaseId, "visit_evidence", [], 5_000) : [];
   employeeRows.sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
   outletRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  visitRows.sort((a, b) => String(b.check_in_at).localeCompare(String(a.check_in_at)));
   locationRows.sort((a, b) => String(a.captured_at).localeCompare(String(b.captured_at)));
   orderRows.sort((a, b) => String(b.captured_at).localeCompare(String(a.captured_at)));
   const employees = new Map(employeeRows.map((row) => [row.$id, row]));
   const outlets = new Map(outletRows.map((row) => [row.$id, row]));
-  const visitIds = new Set(visitRows.map((row) => row.$id));
+  const visitIds = new Set(rawVisitRows.map((row) => row.$id));
   const evidence = new Map<string, typeof evidenceRows>();
   for (const item of evidenceRows) {
     if (!visitIds.has(String(item.visit_id))) continue;
@@ -50,6 +50,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     list.push(item);
     evidence.set(String(item.visit_id), list);
   }
+  const visitRows = rawVisitRows.filter((visit) => {
+    const types = new Set((evidence.get(visit.$id) ?? []).map((item) => String(item.type)));
+    return hasRequiredVisitEvidence({ photo: types.has("photo"), audio: types.has("audio") });
+  });
+  visitRows.sort((a, b) => String(b.check_in_at).localeCompare(String(a.check_in_at)));
   const visibleRoutes = routeRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
   const assignedOutletIds = new Set(visibleRoutes.map((row) => String(row.outlet_id)));
   const visibleOutlets = outletRows.filter((row) => assignedOutletIds.has(row.$id));
@@ -78,7 +83,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       <div className="signed-in"><small>Signed in as</small><strong>{actor.user.name}</strong><LogoutButton /></div>
     </aside>
     <section className="workspace">
-      <header className="dashboard-head"><div><p className="eyebrow">Date-wise field record</p><h1>Every commitment and field visit.</h1><p className="lede">Minute-by-minute route history, unfinished management assignments, salesperson-added visits, required photo and audio evidence, and orders taken anywhere.</p></div><a className="button-link" href="/management">Assign visits & manage team</a></header>
+      <header className="dashboard-head"><div><p className="eyebrow">Date-wise field record</p><h1>Every commitment and field visit.</h1><p className="lede">Minute-by-minute route history, unfinished management assignments, salesperson-added visits, required photo and audio evidence, and territory-aware orders.</p></div><a className="button-link" href="/management">Assign visits & manage team</a></header>
       <form className="filter-bar" method="get" id="reports">
         <label>Date<input type="date" name="date" defaultValue={date} /></label>
         <label>Salesperson<select name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => employee.$id !== actor.employee.$id).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
@@ -103,7 +108,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           {visitRows.length === 0 && <tr><td colSpan={6} className="empty-table">No visits are recorded for this filter.</td></tr>}
         </tbody></table></div>
       </section>
-      <section className="table-card visits-card" id="orders"><div className="section-head"><div><p className="eyebrow">Order history</p><h2>Orders taken from any location</h2></div><span>{orderRows.length} records</span></div><div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Customer</th><th>Product</th><th>Quantity</th><th>Total</th><th>Location</th></tr></thead><tbody>{orderRows.map((order) => <tr key={order.$id}><td>{time(order.captured_at)}</td><td>{String(employees.get(String(order.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(order.customer_name)}</strong><small>{String(order.phone || order.address || "")}</small></td><td>{String(order.product_name)}</td><td>{Number(order.quantity_kg).toLocaleString()} kg</td><td>PKR {Number(order.total_amount).toLocaleString()}</td><td><a href={`https://www.openstreetmap.org/?mlat=${order.latitude}&mlon=${order.longitude}#map=18/${order.latitude}/${order.longitude}`} target="_blank">Open map</a></td></tr>)}{orderRows.length === 0 && <tr><td colSpan={7} className="empty-table">No orders are recorded for this filter.</td></tr>}</tbody></table></div></section>
+      <section className="table-card visits-card" id="orders"><div className="section-head"><div><p className="eyebrow">Order history</p><h2>GPS-verified field orders</h2></div><span>{orderRows.length} records</span></div><div className="table-scroll"><table><thead><tr><th>Time</th><th>Salesperson</th><th>Customer</th><th>Product</th><th>Quantity</th><th>Total</th><th>Location</th></tr></thead><tbody>{orderRows.map((order) => <tr key={order.$id}><td>{time(order.captured_at)}</td><td>{String(employees.get(String(order.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(order.customer_name)}</strong><small>{String(order.phone || order.address || "")}</small></td><td>{String(order.product_name)}</td><td>{Number(order.quantity_kg).toLocaleString()} kg</td><td>PKR {Number(order.total_amount).toLocaleString()}</td><td><a href={`https://www.openstreetmap.org/?mlat=${order.latitude}&mlon=${order.longitude}#map=18/${order.latitude}/${order.longitude}`} target="_blank">Open map</a></td></tr>)}{orderRows.length === 0 && <tr><td colSpan={7} className="empty-table">No orders are recorded for this filter.</td></tr>}</tbody></table></div></section>
     </section>
   </main>;
 }

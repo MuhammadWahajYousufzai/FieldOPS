@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+    <rect width="1080" height="1920" fill="#17233B"/>
+    <circle cx="930" cy="155" r="220" fill="#24324E"/>
+    <circle cx="102" cy="500" r="150" fill="#24324E"/>
+    <g transform="translate(72 74) scale(0.62)">
+    <path d="M40 2C18 20 8 45 8 69c0 23 13 43 32 57 19-14 32-34 32-57C72 45 62 20 40 2Z" fill="#D8A629"/>
+    <path d="M40 14c-11 18-16 35-16 53 0 13 5 27 16 41 11-14 16-28 16-41 0-18-5-35-16-53Z" fill="#17233B"/>
+    <circle cx="40" cy="88" r="18" fill="#D8A629" stroke="#17233B" stroke-width="8"/>
+    <circle cx="40" cy="88" r="5" fill="#F7F8F4"/>
+  </g>
+    <text x="144" y="119" font-family="Arial, sans-serif" font-size="31" font-weight="900" fill="#D8A629" text-anchor="start">FIELDOPS</text>
+    <text x="540" y="216" font-family="Georgia, serif" font-size="62" font-weight="800" fill="#FFFFFF" text-anchor="middle">The field day, clearly managed.</text>
+    <text x="540" y="290" font-family="Arial, sans-serif" font-size="26" font-weight="500" fill="#BAC4D8" text-anchor="middle">Assignments, access and progress in one calm view.</text>
+    <rect x="55" y="330" width="970" height="1515" rx="45" fill="#F7F8F4" stroke="none" stroke-width="0"/>
+    <rect x="475" y="351" width="130" height="8" rx="4" fill="#C8CDC5"/>
+    <text x="105" y="425" font-family="Arial, sans-serif" font-size="22" font-weight="900" fill="#243D74" text-anchor="start">FIELDOPS</text>
+    <text x="105" y="461" font-family="Arial, sans-serif" font-size="36" font-weight="900" fill="#17233B" text-anchor="start">Today</text>
+    <rect x="825" y="405" width="145" height="48" rx="24" fill="#E9F5EF" stroke="none" stroke-width="0"/>
+    <text x="897" y="436" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#267057" text-anchor="middle">SYNCED</text>
+   <rect x="105" y="500" width="870" height="160" rx="22" fill="#17233B" stroke="none" stroke-width="0"/>
+   <rect x="105" y="500" width="8" height="160" rx="4" fill="#52B889"/>
+   <text x="140" y="540" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#AAB3C5" text-anchor="start">TODAY · WORK STATUS</text>
+   <text x="140" y="587" font-family="Arial, sans-serif" font-size="34" font-weight="900" fill="#FFFFFF" text-anchor="start">Work in progress</text>
+   <text x="140" y="625" font-family="Arial, sans-serif" font-size="20" font-weight="500" fill="#BAC4D8" text-anchor="start">Route recording every minute</text>
+   <rect x="760" y="548" width="175" height="58" rx="12" fill="#D8A629" stroke="none" stroke-width="0"/>
+   <text x="847" y="585" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#17233B" text-anchor="middle">Finish today</text>
+   <text x="105" y="723" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#697184" text-anchor="start">ASSIGNED COMMITMENTS</text>
+   <line x1="105" y1="748" x2="975" y2="748" stroke="#DCE0D8" stroke-width="2"/>
+   <text x="200" y="813" font-family="Arial, sans-serif" font-size="43" font-weight="900" fill="#17233B" text-anchor="middle">3/6</text>
+   <text x="200" y="846" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#697184" text-anchor="middle">Completed</text>
+   <text x="540" y="813" font-family="Arial, sans-serif" font-size="43" font-weight="900" fill="#17233B" text-anchor="middle">3</text>
+   <text x="540" y="846" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#697184" text-anchor="middle">Still assigned</text>
+   <text x="870" y="813" font-family="Arial, sans-serif" font-size="43" font-weight="900" fill="#267057" text-anchor="middle">Live</text>
+   <text x="870" y="846" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#697184" text-anchor="middle">Route tracking</text>
+   <line x1="105" y1="878" x2="975" y2="878" stroke="#DCE0D8" stroke-width="2"/>
+   <rect x="105" y="930" width="870" height="300" rx="24" fill="#243D74" stroke="none" stroke-width="0"/>
+   <text x="145" y="981" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#B6C2DF" text-anchor="start">NEXT ASSIGNED VISIT · 70 M CHECK-IN</text>
+   <text x="145" y="1040" font-family="Arial, sans-serif" font-size="38" font-weight="900" fill="#FFFFFF" text-anchor="start">Al Madina Super Store</text>
+   <text x="145" y="1082" font-family="Arial, sans-serif" font-size="22" font-weight="500" fill="#C2CBE0" text-anchor="start">Bahadurabad, Karachi</text>
+   <rect x="145" y="1130" width="265" height="61" rx="12" fill="#D8A629" stroke="none" stroke-width="0"/>
+   <text x="278" y="1169" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#17233B" text-anchor="middle">Start assigned visit</text>
+   <rect x="430" y="1130" width="235" height="61" rx="12" fill="none" stroke="#7081A8" stroke-width="2"/>
+   <text x="548" y="1169" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#FFFFFF" text-anchor="middle">All assigned visits</text>
+   <rect x="105" y="1280" width="870" height="165" rx="22" fill="#E4F2EA" stroke="#267057" stroke-width="2"/>
+   <text x="145" y="1325" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#267057" text-anchor="start">SALESPERSON-ADDED · 1 TODAY</text>
+   <text x="145" y="1375" font-family="Arial, sans-serif" font-size="32" font-weight="900" fill="#17233B" text-anchor="start">Visit another customer</text>
+   <text x="145" y="1413" font-family="Arial, sans-serif" font-size="19" font-weight="500" fill="#4F655C" text-anchor="start">GPS, photo and audio are required</text>
+   <text x="905" y="1375" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#267057" text-anchor="end">Add visit</text>
+   <rect x="105" y="1495" width="870" height="120" rx="22" fill="#D8A629" stroke="none" stroke-width="0"/>
+   <text x="145" y="1542" font-family="Arial, sans-serif" font-size="17" font-weight="900" fill="#5F4600" text-anchor="start">QUICK ORDER</text>
+   <text x="145" y="1582" font-family="Arial, sans-serif" font-size="29" font-weight="900" fill="#17233B" text-anchor="start">Take an order</text>
+   <text x="915" y="1566" font-family="Arial, sans-serif" font-size="19" font-weight="900" fill="#17233B" text-anchor="end">Open</text>
+   <rect x="105" y="1678" width="870" height="96" rx="22" fill="#17233B" stroke="none" stroke-width="0"/>
+   <text x="192" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#D8A629" text-anchor="middle">Today</text>
+   <text x="364" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Visits</text>
+   <text x="538" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Order</text>
+   <text x="712" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Activity</text>
+   <text x="885" y="1737" font-family="Arial, sans-serif" font-size="18" font-weight="800" fill="#AAB3C5" text-anchor="middle">Profile</text>
+  </svg>

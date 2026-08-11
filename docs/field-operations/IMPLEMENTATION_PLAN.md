@@ -19,7 +19,7 @@ All routes are versioned under `/api/v1`, validate shared schemas, authorize sco
 | `GET /me/field-context` | `GetFieldContext` |
 | `POST /attendance/check-in` / `check-out` | `AttendanceService` |
 | `GET /daily-plans/:date` | `VisitPlanningService` |
-| `POST /visits/check-in` / `:id/check-out` | `VisitExecutionService` |
+| `POST /visits/submit` (multipart GPS + outcome + photo + audio) | `VisitExecutionService` |
 | `POST /sync/batch` / `GET /sync/operations/:key` | `SyncService` |
 | `GET/POST /customers` / `POST /customers/:id/approve` | `CustomerService` |
 | `GET/POST /beats` / `POST /daily-plans/publish` | `BeatPlanningService` |
@@ -39,7 +39,7 @@ Web: sign in; operations overview; organization hierarchy; employees/assignments
 2. **Identity and scope:** schema reconciliation, SSR session, effective permissions, assignment repositories, denial/audit tests.
 3. **Attendance vertical:** shifts → mobile check-in → server geofence/idempotency → manager status → audit.
 4. **Outlet and beat vertical:** scoped CRM, duplicate candidates, approval, beat editor and published plan download.
-5. **Visit vertical:** offline check-in/out, attachments, outcomes, sync/conflicts, route adherence and report.
+5. **Visit vertical:** local-only check-in draft, required attachments/outcome, explicit complete submission, safe retries/conflicts, route adherence and report.
 6. **Order vertical:** legacy catalogue/pricing adapter, server totals, draft/submit, existing-order compatibility.
 7. **Hardening:** retention jobs in existing server architecture, exports, rate limits, integration/E2E, low-end Android profiling and rollout flags.
 
@@ -54,4 +54,3 @@ Web: sign in; operations overview; organization hierarchy; employees/assignments
 ## Immediate next step
 
 Obtain the live Appwrite schema/permission export and legacy domain source. Then implement the **identity and territory scope** slice before attendance; every later workflow depends on it. No migration should run until reconciliation and a scrubbed rehearsal succeed.
-

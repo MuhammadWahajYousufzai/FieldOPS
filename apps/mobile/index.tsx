@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { registerRootComponent } from "expo";
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Text, TouchableOpacity, View } from "react-native";
 
 import FieldOpsApp, { STORAGE_KEY } from "./app/index";
 
@@ -26,20 +26,25 @@ class StartupBoundary extends Component<{ children: ReactNode }, StartupBoundary
   render() {
     if (this.state.error) {
       return (
-        <View style={startupStyles.page}>
-          <Text style={startupStyles.eyebrow}>YOUSUF RICE · FIELDOPS</Text>
-          <Text style={startupStyles.title}>FieldOPS needs a quick reset</Text>
-          <Text style={startupStyles.body}>
+        <View className="flex-1 justify-center bg-paper px-7">
+          <Text className="text-[11px] font-black tracking-[1.1px] text-muted">YOUSUF RICE · FIELDOPS</Text>
+          <Text className="mt-2.5 text-3xl font-black text-ink">FieldOPS needs a quick reset</Text>
+          <Text className="mt-3 text-base leading-6 text-[#586273]">
             The saved pilot data on this phone could not be opened. Reset it to continue.
           </Text>
-          <TouchableOpacity style={startupStyles.button} onPress={this.resetPilot}>
-            <Text style={startupStyles.buttonText}>Reset and open FieldOPS</Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Reset saved FieldOPS data and reopen the app"
+            className="mt-6 min-h-12 items-center justify-center rounded-[10px] bg-gold px-4"
+            onPress={this.resetPilot}
+          >
+            <Text className="font-black text-ink">Reset and open FieldOPS</Text>
           </TouchableOpacity>
         </View>
       );
     }
 
-    return <View key={this.state.resetKey} style={startupStyles.app}>{this.props.children}</View>;
+    return <View key={this.state.resetKey} className="flex-1">{this.props.children}</View>;
   }
 }
 
@@ -50,20 +55,5 @@ function Root() {
     </StartupBoundary>
   );
 }
-
-const startupStyles = StyleSheet.create({
-  app: { flex: 1 },
-  page: {
-    flex: 1,
-    justifyContent: "center",
-    padding: 28,
-    backgroundColor: "#F7F8F4",
-  },
-  eyebrow: { color: "#697184", fontSize: 11, fontWeight: "900", letterSpacing: 1.1 },
-  title: { color: "#17233B", fontSize: 30, fontWeight: "900", marginTop: 10 },
-  body: { color: "#586273", fontSize: 16, lineHeight: 24, marginTop: 12 },
-  button: { alignItems: "center", backgroundColor: "#D8A629", borderRadius: 10, marginTop: 24, padding: 15 },
-  buttonText: { color: "#17233B", fontWeight: "900" },
-});
 
 registerRootComponent(Root);
