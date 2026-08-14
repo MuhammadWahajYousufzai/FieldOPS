@@ -106,6 +106,15 @@ android {
         versionCode = fieldOpsVersionCode
         versionName = fieldOpsVersionName
 
+        // NDK 27 can spend unbounded time optimizing generated React Native
+        // autolinking code for 32-bit ARM at -O2. Keep the release native code
+        // optimized at -O1 so armeabi-v7a builds complete reliably.
+        externalNativeBuild {
+            cmake {
+                arguments "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O1 -g -DNDEBUG"
+            }
+        }
+
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {
