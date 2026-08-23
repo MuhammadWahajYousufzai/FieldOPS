@@ -50,6 +50,92 @@ export function hasRequiredVisitEvidence<Evidence extends { photo?: unknown; aud
   return Boolean(evidence.photo) && Boolean(evidence.audio);
 }
 
+export const MAX_VISIT_EVIDENCE_BYTES = 20 * 1024 * 1024;
+
+export const VISIT_PHOTO_MIME_TYPES = [
+  "image/heic",
+  "image/jpeg",
+  "image/png",
+] as const;
+
+export const VISIT_AUDIO_MIME_TYPES = [
+  "audio/aac",
+  "audio/m4a",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/wav",
+  "audio/webm",
+  "audio/x-m4a",
+  "audio/x-wav",
+] as const;
+
+export type VisitEvidenceKind = "photo" | "audio";
+export type VisitEvidenceFile = { size: number; type: string };
+
+const visitEvidenceMimeTypes: Record<VisitEvidenceKind, ReadonlySet<string>> = {
+  photo: new Set(VISIT_PHOTO_MIME_TYPES),
+  audio: new Set(VISIT_AUDIO_MIME_TYPES),
+};
+
+const visitEvidenceExtensions: Record<string, string> = {
+  "image/heic": ".heic",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "audio/aac": ".aac",
+  "audio/m4a": ".m4a",
+  "audio/mpeg": ".mp3",
+  "audio/mp4": ".m4a",
+  "audio/wav": ".wav",
+  "audio/webm": ".webm",
+  "audio/x-m4a": ".m4a",
+  "audio/x-wav": ".wav",
+};
+
+export function visitEvidenceValidationError(kind: VisitEvidenceKind, file: VisitEvidenceFile): string | null {
+  if (!Number.isSafeInteger(file.size) || file.size <= 0) {
+    return `The visit ${kind} is empty.`;
+  }
+  if (file.size > MAX_VISIT_EVIDENCE_BYTES) {
+    return `The visit ${kind} must be 20 MB or smaller.`;
+  }
+  if (!visitEvidenceMimeTypes[kind].has(file.type)) {
+    return `The visit ${kind} has an unsupported file type.`;
+  }
+  return null;
+}
+
+export function visitEvidenceExtension(kind: VisitEvidenceKind, mimeType: string): string {
+  return visitEvidenceMimeTypes[kind].has(mimeType)
+    ? visitEvidenceExtensions[mimeType] ?? (kind === "photo" ? ".jpg" : ".m4a")
+    : kind === "photo" ? ".jpg" : ".m4a";
+}
+
+type RefreshableVisit = {
+  routeId: string;
+  status: "planned" | "active" | "completed";
+  kind: "assigned" | "self";
+  workDate: string;
+};
+
+export function mergeRefreshedVisits<Visit extends RefreshableVisit>(
+  serverAssigned: readonly Visit[],
+  localVisits: readonly Visit[],
+  workDate: string,
+): Visit[] {
+  const localAssigned = new Map(
+    localVisits
+      .filter((visit) => visit.kind === "assigned")
+      .map((visit) => [visit.routeId, visit]),
+  );
+  const assigned = serverAssigned.map((visit) => {
+    const local = localAssigned.get(visit.routeId);
+    const status = local?.status === "active" || local?.status === "completed" ? local.status : visit.status;
+    return { ...visit, status, kind: "assigned" as const, workDate };
+  });
+  const selfVisits = localVisits.filter((visit) => visit.kind === "self" && visit.workDate === workDate);
+  return [...assigned, ...selfVisits];
+}
+
 export function parseTerritoryBoundary(value: unknown): TerritoryBoundary | null {
   let candidate = value;
   if (typeof candidate === "string") {

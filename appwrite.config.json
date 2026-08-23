@@ -8,7 +8,7 @@
       "$id": "fieldops-dashboard",
       "name": "FieldOPS Management Dashboard",
       "logging": true,
-      "timeout": 30,
+      "timeout": 60,
             "framework": "nextjs",
             "buildRuntime": "node-22",
             "adapter": "ssr",

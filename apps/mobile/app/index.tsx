@@ -5,6 +5,7 @@ import NetInfo from "@react-native-community/netinfo";
 import {
   distanceMeters,
   hasRequiredVisitEvidence,
+  mergeRefreshedVisits,
   parseTerritoryBoundary,
   pointInAnyTerritory,
   type TerritoryBoundary,
@@ -56,6 +57,7 @@ type VisitUploadOperation = {
 type OfflineOperation = JsonOperation | VisitUploadOperation;
 type QueueItem = {
   id: string;
+  employeeId: string;
   label: string;
   state: "pending" | "syncing" | "failed" | "confirmed";
   createdAt: string;
@@ -107,6 +109,9 @@ type PersistedState = {
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
 export const STORAGE_KEY = "fieldops-production-state-v3";
+const OUTBOX_STORAGE_KEY = "fieldops-production-outbox-v1";
+const RECOVERY_EMPLOYEE_STORAGE_KEY = "fieldops-recovery-employee-v1";
+const MAX_EVIDENCE_BYTES = 20 * 1024 * 1024;
 const GEOFENCE_METERS = 70;
 const emptyPermissions: PermissionState = {
   foreground: false,
@@ -251,6 +256,67 @@ function migratePersistedVisits(rawQueue: QueueItem[], rawActiveVisit: unknown) 
   return { queue, activeVisit };
 }
 
+function trimQueue(items: QueueItem[]) {
+  if (items.length <= 120) return items;
+  let confirmedToRemove = items.length - 120;
+  return items.filter((item) => {
+    if (confirmedToRemove > 0 && item.state === "confirmed") {
+      confirmedToRemove -= 1;
+      return false;
+    }
+    return true;
+  });
+}
+
+function scopeLegacyQueue(items: QueueItem[], employeeId: string) {
+  return items.map((item) => ({
+    ...item,
+    employeeId: typeof item.employeeId === "string" && item.employeeId ? item.employeeId : employeeId,
+  }));
+}
+
+function parseDurableQueue(saved: string | null, fallback: QueueItem[], activeVisit: unknown) {
+  if (!saved) return migratePersistedVisits(fallback, activeVisit);
+  try {
+    const value = JSON.parse(saved) as unknown;
+    if (!Array.isArray(value)) return migratePersistedVisits(fallback, activeVisit);
+    return migratePersistedVisits(
+      value.filter((item): item is QueueItem => Boolean(item && typeof item === "object")),
+      activeVisit,
+    );
+  } catch {
+    return migratePersistedVisits(fallback, activeVisit);
+  }
+}
+
+function visitSubmissionOutletId(operation: OfflineOperation | undefined) {
+  if (operation?.type !== "visit_submit") return "";
+  return operation.fields.outletId || operation.fields.visitId;
+}
+
+function hasQueuedVisitSubmission(queue: QueueItem[], visitId: string) {
+  return queue.some((item) => (
+    item.operation?.type === "visit_submit" && item.operation.fields.visitId === visitId
+  ));
+}
+
+function applyConfirmedVisitStatuses(outlets: Outlet[], queue: QueueItem[]) {
+  const confirmedOutletIds = new Set(queue.flatMap((item) => {
+    if (item.state !== "confirmed") return [];
+    const outletId = visitSubmissionOutletId(item.operation);
+    return outletId ? [outletId] : [];
+  }));
+  return outlets.map((outlet) => confirmedOutletIds.has(outlet.id) ? { ...outlet, status: "completed" as const } : outlet);
+}
+
+let outboxWriteMutation: Promise<void> = Promise.resolve();
+
+async function persistDurableQueue(queue: QueueItem[]) {
+  const operation = outboxWriteMutation.then(() => AsyncStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(queue)));
+  outboxWriteMutation = operation.catch(() => undefined);
+  await operation;
+}
+
 function parseState(saved: string): PersistedState | null {
   try {
     const value = JSON.parse(saved) as Partial<PersistedState>;
@@ -315,7 +381,37 @@ async function preserveEvidence(uri: string, extension: string) {
   directory.create({ intermediates: true, idempotent: true });
   const target = new File(directory, `${operationId("evidence")}.${extension}`);
   await new File(uri).copy(target);
+  const exists = target.exists;
+  const size = exists ? target.size : null;
+  if (!exists || size === null || size <= 0 || size > MAX_EVIDENCE_BYTES) {
+    if (target.exists) target.delete();
+    if (size !== null && size > MAX_EVIDENCE_BYTES) {
+      throw new Error("Evidence must be 20 MB or smaller.");
+    }
+    throw new Error("The evidence file was empty or could not be saved. Please capture it again.");
+  }
   return target.uri;
+}
+
+function validateStoredEvidence(attachment: EvidenceAttachment) {
+  const file = new File(attachment.uri);
+  if (!file.exists) throw new Error(`${attachment.name} is no longer available. Capture the evidence again.`);
+  const size = file.size;
+  if (size === null || size <= 0) throw new Error(`${attachment.name} is empty. Capture the evidence again.`);
+  if (size > MAX_EVIDENCE_BYTES) throw new Error(`${attachment.name} must be 20 MB or smaller.`);
+}
+
+function deleteLocalEvidence(operation: OfflineOperation) {
+  if (operation.type === "json") return;
+  for (const attachment of [operation.photo, operation.audio]) {
+    try {
+      const file = new File(attachment.uri);
+      if (file.exists) file.delete();
+    } catch {
+      // The server has confirmed the evidence. A failed local cleanup is safe
+      // and can be reclaimed by the operating system later.
+    }
+  }
 }
 
 export default function FieldOpsRoot() {
@@ -338,9 +434,13 @@ function FieldOpsApp() {
   const [permissionBusy, setPermissionBusy] = useState(false);
   const [permissionChecked, setPermissionChecked] = useState(false);
   const [locationPending, setLocationPending] = useState(0);
+  const [recoveryEmployeeId, setRecoveryEmployeeId] = useState("");
   const [territoryPolicy, setTerritoryPolicy] = useState<TerritoryPolicy>(unrestrictedTerritoryPolicy);
   const [territoryPosition, setTerritoryPosition] = useState<TerritoryPosition>("unrestricted");
   const queueRef = useRef<QueueItem[]>([]);
+  const sessionRef = useRef<Session | null>(null);
+  const recoveryEmployeeIdRef = useRef("");
+  const sessionEpochRef = useRef(0);
   const syncPromiseRef = useRef<Promise<void> | null>(null);
   const visitSubmittingRef = useRef(false);
   const permissionPrompted = useRef(false);
@@ -351,10 +451,21 @@ function FieldOpsApp() {
   const assignedOutlets = outlets.filter((outlet) => outlet.kind === "assigned");
   const selfVisits = outlets.filter((outlet) => outlet.kind === "self");
   const completed = assignedOutlets.filter((outlet) => outlet.status === "completed").length;
-  const pending = queue.filter((item) => item.state === "failed" || item.state === "pending" || item.state === "syncing").length + locationPending;
+  const employeeQueue = useMemo(
+    () => session ? queue.filter((item) => item.employeeId === session.employee.id) : [],
+    [queue, session?.employee.id],
+  );
+  const pending = employeeQueue.filter((item) => item.state === "failed" || item.state === "pending" || item.state === "syncing").length + locationPending;
+  const pendingVisitOutletIds = useMemo(() => new Set(employeeQueue.flatMap((item) => {
+    if (item.state === "confirmed") return [];
+    const outletId = visitSubmissionOutletId(item.operation);
+    return outletId ? [outletId] : [];
+  })), [employeeQueue]);
   const nextOutlet = useMemo(
-    () => outlets.find((outlet) => outlet.kind === "assigned" && outlet.status !== "completed"),
-    [outlets],
+    () => outlets.find((outlet) => (
+      outlet.kind === "assigned" && outlet.status !== "completed" && !pendingVisitOutletIds.has(outlet.id)
+    )),
+    [outlets, pendingVisitOutletIds],
   );
   const permissionReady = permissionState.foreground && permissionState.services;
   const trackingReady = permissionState.foreground && permissionState.services;
@@ -362,10 +473,16 @@ function FieldOpsApp() {
   const fieldActionsAllowed = territoryPosition === "unrestricted" || territoryPosition === "inside";
   const territoryMessage = territoryCopy(territoryPolicy, territoryPosition);
 
-  function setQueueNow(update: (items: QueueItem[]) => QueueItem[]) {
-    const next = update(queueRef.current).slice(-120);
+  async function setQueueDurably(update: (items: QueueItem[]) => QueueItem[]) {
+    const next = trimQueue(update(queueRef.current));
     queueRef.current = next;
     setQueue(next);
+    await persistDurableQueue(next);
+    return next;
+  }
+
+  function sessionIsCurrent(expected: Session, epoch: number) {
+    return sessionEpochRef.current === epoch && sessionRef.current?.token === expected.token;
   }
 
   function updateTerritoryPosition(latitude: number, longitude: number, policy = territoryPolicy) {
@@ -382,21 +499,46 @@ function FieldOpsApp() {
   }
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then((saved) => {
+    let cancelled = false;
+    Promise.all([
+      AsyncStorage.getItem(STORAGE_KEY),
+      AsyncStorage.getItem(OUTBOX_STORAGE_KEY),
+      AsyncStorage.getItem(RECOVERY_EMPLOYEE_STORAGE_KEY),
+    ]).then(([saved, savedOutbox, savedRecoveryEmployeeId]) => {
+      if (cancelled) return;
       if (!saved) return;
       const value = parseState(saved);
       if (!value) return;
-      setSession(value.session);
+      const legacyOwnerId = savedRecoveryEmployeeId || value.session?.employee.id || "";
+      const parsed = parseDurableQueue(savedOutbox, value.queue, value.activeVisit);
+      const persisted = { ...parsed, queue: scopeLegacyQueue(parsed.queue, legacyOwnerId) };
+      const ownerQueue = legacyOwnerId
+        ? persisted.queue.filter((item) => item.employeeId === legacyOwnerId)
+        : [];
+      const restoredOutlets = applyConfirmedVisitStatuses(value.outlets, ownerQueue);
+      const restoredActiveVisit = persisted.activeVisit
+        && hasQueuedVisitSubmission(ownerQueue, persisted.activeVisit.id)
+        ? null
+        : persisted.activeVisit;
+      const restoredSession = savedRecoveryEmployeeId ? null : value.session;
+      recoveryEmployeeIdRef.current = savedRecoveryEmployeeId ?? "";
+      setRecoveryEmployeeId(savedRecoveryEmployeeId ?? "");
+      sessionRef.current = restoredSession;
+      setSession(restoredSession);
       setWorkState(value.workState);
-      setOutlets(value.outlets);
-      setQueue(value.queue);
-      queueRef.current = value.queue;
-      setActiveVisit(value.activeVisit);
+      setOutlets(restoredOutlets);
+      setQueue(persisted.queue);
+      queueRef.current = persisted.queue;
+      setActiveVisit(restoredActiveVisit);
       setTerritoryPolicy(value.territoryPolicy);
       setTerritoryPosition(value.territoryPolicy.mode === "restricted" ? "checking" : "unrestricted");
-      if (value.activeVisit) setSelectedId(value.activeVisit.outletId);
-      else if (value.outlets[0]) setSelectedId(value.outlets[0].id);
-    }).finally(() => setHydrated(true));
+      if (restoredActiveVisit) setSelectedId(restoredActiveVisit.outletId);
+      else if (restoredOutlets[0]) setSelectedId(restoredOutlets[0].id);
+      persistDurableQueue(persisted.queue).catch(() => undefined);
+    }).finally(() => {
+      if (!cancelled) setHydrated(true);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -441,7 +583,7 @@ function FieldOpsApp() {
     const timer = setInterval(() => {
       refreshPermissions(false).catch(() => undefined);
       syncOperations()
-        .then(() => flushLocationQueue(session.token))
+        .then(() => flushLocationQueue(session.employee.id, session.token))
         .then(() => refreshLocationCount())
         .catch(() => undefined);
     }, 15_000);
@@ -456,7 +598,7 @@ function FieldOpsApp() {
     const networkSubscription = NetInfo.addEventListener((state) => {
       if (state.isConnected) {
         syncOperations()
-          .then(() => flushLocationQueue(session.token))
+          .then(() => flushLocationQueue(session.employee.id, session.token))
           .then(() => refreshLocationCount())
           .catch(() => undefined);
         refreshPermissions(false)
@@ -473,7 +615,8 @@ function FieldOpsApp() {
   }, [hydrated, session?.token, trackingReady, workState]);
 
   async function refreshLocationCount() {
-    setLocationPending(await locationQueueCount());
+    const employeeId = sessionRef.current?.employee.id;
+    setLocationPending(await locationQueueCount(employeeId));
   }
 
   async function refreshPermissions(markChecked = true) {
@@ -505,18 +648,19 @@ function FieldOpsApp() {
     }
   }
 
-  async function executeOperation(operation: OfflineOperation) {
-    if (!session) throw new Error("Sign in again before syncing.");
+  async function executeOperation(operation: OfflineOperation, authenticatedSession: Session) {
     if (operation.type === "json") {
-      return jsonRequest(operation.path, { method: "POST", body: JSON.stringify(operation.body) }, session.token);
+      return jsonRequest(operation.path, { method: "POST", body: JSON.stringify(operation.body) }, authenticatedSession.token);
     }
+    validateStoredEvidence(operation.photo);
+    validateStoredEvidence(operation.audio);
     const form = new FormData();
     for (const [key, value] of Object.entries(operation.fields)) form.append(key, value);
     form.append("photo", operation.photo as never);
     form.append("audio", operation.audio as never);
     const response = await fetchWithTimeout(`${API_BASE}${operation.path}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${session.token}` },
+      headers: { authorization: `Bearer ${authenticatedSession.token}` },
       body: form,
     }, EVIDENCE_UPLOAD_TIMEOUT_MS);
     const body = await response.json().catch(() => ({}));
@@ -525,21 +669,35 @@ function FieldOpsApp() {
   }
 
   function syncOperations(): Promise<void> {
-    if (!session) return Promise.resolve();
+    const authenticatedSession = sessionRef.current;
+    if (!authenticatedSession) return Promise.resolve();
+    const sessionEpoch = sessionEpochRef.current;
     if (syncPromiseRef.current) return syncPromiseRef.current;
     const operation = (async () => {
       const candidates = [...queueRef.current]
-        .filter((item) => item.operation && item.state !== "confirmed")
+        .filter((item) => (
+          item.employeeId === authenticatedSession.employee.id
+          && item.operation
+          && item.state !== "confirmed"
+        ))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       for (const item of candidates) {
-        setQueueNow((items) => items.map((entry) => entry.id === item.id ? { ...entry, state: "syncing" } : entry));
+        if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+        await setQueueDurably((items) => items.map((entry) => entry.id === item.id ? { ...entry, state: "syncing" } : entry));
         try {
-          await executeOperation(item.operation!);
-          setQueueNow((items) => items.map((entry) => entry.id === item.id
-            ? { ...entry, state: "confirmed", operation: undefined, error: undefined }
+          await executeOperation(item.operation!, authenticatedSession);
+          if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+          await setQueueDurably((items) => items.map((entry) => entry.id === item.id
+            ? { ...entry, state: "confirmed", error: undefined }
             : entry));
+          if (item.operation?.type === "visit_submit") {
+            const outletId = item.operation.fields.outletId || item.operation.fields.visitId;
+            setOutlets((items) => items.map((outlet) => outlet.id === outletId ? { ...outlet, status: "completed" } : outlet));
+            deleteLocalEvidence(item.operation);
+          }
         } catch (error) {
-          setQueueNow((items) => items.map((entry) => entry.id === item.id ? {
+          if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+          await setQueueDurably((items) => items.map((entry) => entry.id === item.id ? {
             ...entry,
             state: "failed",
             attempts: entry.attempts + 1,
@@ -557,55 +715,59 @@ function FieldOpsApp() {
     });
   }
 
-  function enqueue(label: string, operation: OfflineOperation) {
+  async function enqueue(label: string, operation: OfflineOperation) {
+    const employeeId = sessionRef.current?.employee.id;
+    if (!employeeId) throw new Error("Sign in again before saving this work.");
     const item: QueueItem = {
       id: operationId("event"),
+      employeeId,
       label,
       state: "pending",
       createdAt: new Date().toISOString(),
       attempts: 0,
       operation,
     };
-    setQueueNow((items) => [...items, item]);
+    await setQueueDurably((items) => [...items, item]);
     setTimeout(() => syncOperations().catch(() => undefined), 0);
+    return item;
   }
 
   async function refreshContext(showMessage = true) {
-    if (!session) return;
+    const authenticatedSession = sessionRef.current;
+    if (!authenticatedSession) return;
+    const sessionEpoch = sessionEpochRef.current;
     setRefreshing(true);
     try {
-      const context = await jsonRequest("/context", {}, session.token);
+      const context = await jsonRequest("/context", {}, authenticatedSession.token);
+      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
       const today = String(context.date ?? pakistanWorkDate());
-      const localSelfVisits = outlets.filter((item) => item.kind === "self" && item.workDate === today);
-      const localAssigned = new Map(outlets.filter((item) => item.kind === "assigned").map((item) => [item.routeId, item]));
-      const assigned = (context.route as Outlet[]).map((item) => {
-        const local = localAssigned.get(item.routeId);
-        const localStatus = local?.status === "active" || local?.status === "completed" ? local.status : item.status;
-        return { ...item, status: localStatus, kind: "assigned" as const, workDate: today };
-      });
-      const merged = [...assigned, ...localSelfVisits];
       const nextPolicy = normalizeTerritoryPolicy(context.territoryPolicy);
-      setOutlets(merged);
+      setOutlets((current) => mergeRefreshedVisits(context.route as Outlet[], current, today));
       setTerritoryPolicy(nextPolicy);
       setTerritoryPosition(nextPolicy.mode === "restricted" ? "checking" : "unrestricted");
       const hasPendingAttendance = queueRef.current.some((item) => (
+        item.employeeId === authenticatedSession.employee.id
+        &&
         item.operation?.type === "json"
         && item.operation.path === "/attendance"
         && item.state !== "confirmed"
       ));
       if (!hasPendingAttendance) setWorkState(context.workState ?? (context.shiftActive ? "active" : "not_started"));
-      setSelectedId((current) => merged.some((item) => item.id === current) ? current : (merged[0]?.id ?? ""));
+      setSelectedId((current) => current || String(context.route[0]?.id ?? ""));
 
       const foreground = await Location.getForegroundPermissionsAsync();
       if (foreground.granted && await Location.hasServicesEnabledAsync()) {
         const point = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
         updateTerritoryPosition(point.coords.latitude, point.coords.longitude, nextPolicy);
       }
       if (showMessage) Alert.alert("Visits refreshed", `${context.route.length} assigned visits downloaded.`);
     } catch (error) {
-      if (showMessage) Alert.alert("Working offline", error instanceof Error ? error.message : "Could not refresh assigned visits.");
+      if (showMessage && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
+        Alert.alert("Working offline", error instanceof Error ? error.message : "Could not refresh assigned visits.");
+      }
     } finally {
-      setRefreshing(false);
+      if (sessionIsCurrent(authenticatedSession, sessionEpoch)) setRefreshing(false);
     }
   }
 
@@ -613,7 +775,29 @@ function FieldOpsApp() {
     const result = await jsonRequest("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
-    });
+    }) as Session;
+    const recoveryOwner = recoveryEmployeeIdRef.current;
+    if (recoveryOwner && result.employee.id !== recoveryOwner) {
+      throw new Error("This phone has unsynced work for another employee. Sign in with the same account to recover and upload it first.");
+    }
+    if (recoveryOwner) {
+      // Persist the replacement session before removing the recovery marker.
+      // If the app closes between these writes, it will require the same
+      // employee to authenticate again instead of exposing the saved draft.
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
+        session: result,
+        workState,
+        outlets,
+        queue: queueRef.current,
+        activeVisit,
+        territoryPolicy,
+      } satisfies PersistedState));
+      await AsyncStorage.removeItem(RECOVERY_EMPLOYEE_STORAGE_KEY);
+      recoveryEmployeeIdRef.current = "";
+      setRecoveryEmployeeId("");
+    }
+    sessionEpochRef.current += 1;
+    sessionRef.current = result;
     setSession(result);
     permissionPrompted.current = false;
     setScreen("today");
@@ -629,11 +813,14 @@ function FieldOpsApp() {
   }
 
   async function captureLiveHeartbeat(force = false, permissions: PermissionState = permissionState) {
-    if (!session || workState !== "active") return;
+    const authenticatedSession = sessionRef.current;
+    if (!authenticatedSession || workState !== "active") return;
+    const sessionEpoch = sessionEpochRef.current;
     if (!permissions.foreground || !permissions.services) return;
     if (heartbeatRunningRef.current) return;
     if (!force && Date.now() - lastHeartbeatAtRef.current < 45_000) {
-      await flushLocationQueue(session.token);
+      await flushLocationQueue(authenticatedSession.employee.id, authenticatedSession.token);
+      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
       await refreshLocationCount();
       return;
     }
@@ -641,9 +828,11 @@ function FieldOpsApp() {
     heartbeatRunningRef.current = true;
     try {
       const point = await gps(Location.Accuracy.High);
-      await queueLocationObjects([point], "foreground");
+      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+      await queueLocationObjects(authenticatedSession.employee.id, [point], "foreground");
       lastHeartbeatAtRef.current = Date.now();
-      await flushLocationQueue(session.token);
+      await flushLocationQueue(authenticatedSession.employee.id, authenticatedSession.token);
+      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
       await refreshLocationCount();
     } finally {
       heartbeatRunningRef.current = false;
@@ -664,8 +853,8 @@ function FieldOpsApp() {
       const point = await gps(Location.Accuracy.High);
       const capturedAt = new Date(point.timestamp).toISOString();
       setWorkState("active");
-      await queueLocationObjects([point], "foreground");
-      enqueue("Start work", { type: "json", path: "/attendance", body: {
+      await queueLocationObjects(session.employee.id, [point], "foreground");
+      await enqueue("Start work", { type: "json", path: "/attendance", body: {
         action: "check_in",
         latitude: point.coords.latitude,
         longitude: point.coords.longitude,
@@ -673,7 +862,7 @@ function FieldOpsApp() {
         capturedAt,
         idempotencyKey: operationId("start"),
       } });
-      flushLocationQueue(session.token).then(() => refreshLocationCount()).catch(() => undefined);
+      flushLocationQueue(session.employee.id, session.token).then(() => refreshLocationCount()).catch(() => undefined);
       await refreshLocationCount();
     } catch (error) {
       setWorkState("not_started");
@@ -690,8 +879,8 @@ function FieldOpsApp() {
     try {
       const point = await gps(Location.Accuracy.High);
       const capturedAt = new Date(point.timestamp).toISOString();
-      await queueLocationObjects([point], "foreground");
-      enqueue("Finish today’s work", { type: "json", path: "/attendance", body: {
+      await queueLocationObjects(session.employee.id, [point], "foreground");
+      await enqueue("Finish today’s work", { type: "json", path: "/attendance", body: {
         action: "check_out",
         latitude: point.coords.latitude,
         longitude: point.coords.longitude,
@@ -700,7 +889,7 @@ function FieldOpsApp() {
         idempotencyKey: operationId("finish"),
       } });
       setWorkState("finished");
-      await flushLocationQueue(session.token);
+      await flushLocationQueue(session.employee.id, session.token);
       await refreshLocationCount();
     } catch (error) {
       Alert.alert("GPS required to finish", error instanceof Error ? error.message : "Turn on GPS and try again.");
@@ -709,6 +898,10 @@ function FieldOpsApp() {
 
   async function startVisit(outlet: Outlet) {
     if (!session) return;
+    if (pendingVisitOutletIds.has(outlet.id)) {
+      Alert.alert("Visit upload is pending", "This visit is safely queued and will become completed after server confirmation. Open Activity to retry it now.");
+      return;
+    }
     if (activeVisit) {
       Alert.alert("Finish the current visit", "Only one visit can be in progress at a time.");
       return;
@@ -806,57 +999,74 @@ function FieldOpsApp() {
   }
 
   async function takePhoto() {
-    let permission = await ImagePicker.getCameraPermissionsAsync();
-    if (!permission.granted) permission = await ImagePicker.requestCameraPermissionsAsync();
-    await refreshPermissions(false);
-    if (!permission.granted) {
-      Alert.alert("Camera permission required", "Allow camera access to attach the required visit evidence.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open settings", onPress: () => Linking.openSettings() },
-      ]);
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.72 });
-    if (!result.canceled) {
+    try {
+      let permission = await ImagePicker.getCameraPermissionsAsync();
+      if (!permission.granted) permission = await ImagePicker.requestCameraPermissionsAsync();
+      await refreshPermissions(false);
+      if (!permission.granted) {
+        Alert.alert("Camera permission required", "Allow camera access to attach the required visit evidence.", [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open settings", onPress: () => Linking.openSettings() },
+        ]);
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.72 });
+      if (result.canceled) return;
       const asset = result.assets[0];
+      if (!asset?.uri) throw new Error("The camera did not return a photo. Please try again.");
       const uri = await preserveEvidence(asset.uri, "jpg");
       setActiveVisit((current) => current ? { ...current, photo: {
         uri,
-        name: asset.fileName ?? `visit-${current.id}.jpg`,
-        type: asset.mimeType ?? "image/jpeg",
+        name: `visit-${current.id}.jpg`,
+        type: "image/jpeg",
       } } : current);
+    } catch (error) {
+      Alert.alert("Photo not saved", error instanceof Error ? error.message : "Could not save this photo. Please try again.");
     }
   }
 
   async function toggleRecording() {
     if (recording) {
-      await audioRecorder.stop();
-      const uri = audioRecorder.uri;
-      setRecording(false);
-      if (uri) {
+      try {
+        await audioRecorder.stop();
+        const uri = audioRecorder.uri;
+        if (!uri) throw new Error("The recorder did not return an audio file. Please record the note again.");
         const preservedUri = await preserveEvidence(uri, "m4a");
         setActiveVisit((current) => current ? { ...current, audio: {
           uri: preservedUri,
           name: `visit-${current.id}.m4a`,
           type: "audio/m4a",
         } } : current);
+      } catch (error) {
+        try { await audioRecorder.stop(); } catch { /* Already stopped or unavailable. */ }
+        Alert.alert("Audio not saved", error instanceof Error ? error.message : "Could not save this audio note. Please try again.");
+      } finally {
+        setRecording(false);
+        try { await setAudioModeAsync({ allowsRecording: false }); } catch { /* Reset is best effort after stopping. */ }
       }
       return;
     }
-    let permission = await getRecordingPermissionsAsync();
-    if (!permission.granted) permission = await requestRecordingPermissionsAsync();
-    await refreshPermissions(false);
-    if (!permission.granted) {
-      Alert.alert("Microphone permission required", "Allow microphone access to record the required visit note.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open settings", onPress: () => Linking.openSettings() },
-      ]);
-      return;
+    try {
+      let permission = await getRecordingPermissionsAsync();
+      if (!permission.granted) permission = await requestRecordingPermissionsAsync();
+      await refreshPermissions(false);
+      if (!permission.granted) {
+        Alert.alert("Microphone permission required", "Allow microphone access to record the required visit note.", [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open settings", onPress: () => Linking.openSettings() },
+        ]);
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      setRecording(true);
+    } catch (error) {
+      try { await audioRecorder.stop(); } catch { /* The recorder may not have started. */ }
+      try { await setAudioModeAsync({ allowsRecording: false }); } catch { /* Reset is best effort. */ }
+      setRecording(false);
+      Alert.alert("Recording did not start", error instanceof Error ? error.message : "Could not start the microphone. Please try again.");
     }
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-    await audioRecorder.prepareToRecordAsync();
-    audioRecorder.record();
-    setRecording(true);
   }
 
   async function finishVisit() {
@@ -875,6 +1085,8 @@ function FieldOpsApp() {
     }
     visitSubmittingRef.current = true;
     try {
+      validateStoredEvidence(activeVisit.photo);
+      validateStoredEvidence(activeVisit.audio);
       const point = await gps();
       requireTerritory(point.coords.latitude, point.coords.longitude);
       const distance = Math.round(distanceMeters(
@@ -885,7 +1097,7 @@ function FieldOpsApp() {
         Alert.alert("Return to the visit location", `You are ${distance} m away. Finish the visit within ${GEOFENCE_METERS} m.`);
         return;
       }
-      enqueue(`${selected.name} · complete visit`, {
+      await enqueue(`${selected.name} · complete visit`, {
         type: "visit_submit",
         path: "/visits/submit",
         fields: {
@@ -902,10 +1114,9 @@ function FieldOpsApp() {
         photo: activeVisit.photo,
         audio: activeVisit.audio,
       });
-      setOutlets((items) => items.map((item) => item.id === selected.id ? { ...item, status: "completed" } : item));
       setActiveVisit(null);
       setScreen("route");
-      Alert.alert("Visit submitted", "The complete visit, photo, audio note, and GPS were submitted together. If offline, this user-submitted record will retry safely.");
+      Alert.alert("Visit saved", "The photo, audio note, and GPS are safely queued. The visit will show completed after the server confirms the upload.");
     } catch (error) {
       Alert.alert("Visit not finished", error instanceof Error ? error.message : "Turn on GPS and try again.");
     } finally {
@@ -919,7 +1130,7 @@ function FieldOpsApp() {
       const point = await gps(Location.Accuracy.Balanced);
       requireTerritory(point.coords.latitude, point.coords.longitude);
       const capturedAt = new Date(point.timestamp).toISOString();
-      enqueue(`Order · ${order.customerName}`, { type: "json", path: "/orders", body: {
+      await enqueue(`Order · ${order.customerName}`, { type: "json", path: "/orders", body: {
         ...order,
         latitude: point.coords.latitude,
         longitude: point.coords.longitude,
@@ -947,17 +1158,85 @@ function FieldOpsApp() {
 
   async function retryEverything() {
     await syncOperations();
-    if (session) await flushLocationQueue(session.token);
+    if (session) await flushLocationQueue(session.employee.id, session.token);
     await refreshLocationCount();
     await refreshContext(false);
   }
 
   async function signOut() {
+    const authenticatedSession = sessionRef.current;
+    if (!authenticatedSession) return;
+    if (recording) {
+      Alert.alert("Stop the recording first", "Stop and save the audio note before signing out.");
+      return;
+    }
+    const employeeId = authenticatedSession.employee.id;
+    const unconfirmed = queueRef.current.filter((item) => (
+      item.employeeId === employeeId && item.state !== "confirmed"
+    )).length;
+    const queuedLocations = await locationQueueCount(employeeId);
+    if (activeVisit || unconfirmed > 0 || queuedLocations > 0) {
+      try {
+        await persistDurableQueue(queueRef.current);
+        await AsyncStorage.multiSet([
+          [RECOVERY_EMPLOYEE_STORAGE_KEY, employeeId],
+          [STORAGE_KEY, JSON.stringify({
+            session: null,
+            workState,
+            outlets,
+            queue: queueRef.current,
+            activeVisit,
+            territoryPolicy,
+          } satisfies PersistedState)],
+        ]);
+      } catch {
+        Alert.alert("Could not protect saved work", "FieldOPS could not update local storage. Please try again before signing out.");
+        return;
+      }
+      recoveryEmployeeIdRef.current = employeeId;
+      setRecoveryEmployeeId(employeeId);
+      sessionEpochRef.current += 1;
+      sessionRef.current = null;
+      syncPromiseRef.current = null;
+      heartbeatRunningRef.current = false;
+      setSession(null);
+      setLocationPending(0);
+      setRefreshing(false);
+      setScreen("today");
+      Alert.alert(
+        "Work kept safely",
+        "Sign in again with the same account to continue this visit and upload the saved work.",
+      );
+      return;
+    }
+    try {
+      await setQueueDurably(() => []);
+      await AsyncStorage.removeItem(RECOVERY_EMPLOYEE_STORAGE_KEY);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
+        session: null,
+        workState: "not_started",
+        outlets: [],
+        queue: [],
+        activeVisit: null,
+        territoryPolicy: unrestrictedTerritoryPolicy,
+      } satisfies PersistedState));
+    } catch {
+      Alert.alert("Could not sign out safely", "FieldOPS could not update local storage. Please try again.");
+      return;
+    }
+    sessionEpochRef.current += 1;
+    sessionRef.current = null;
+    syncPromiseRef.current = null;
+    heartbeatRunningRef.current = false;
+    recoveryEmployeeIdRef.current = "";
     setSession(null);
+    setRecoveryEmployeeId("");
     setOutlets([]);
-    setQueueNow(() => []);
+    setSelectedId("");
     setWorkState("not_started");
     setActiveVisit(null);
+    setLocationPending(0);
+    setRefreshing(false);
     setTerritoryPolicy(unrestrictedTerritoryPolicy);
     setTerritoryPosition("unrestricted");
     setScreen("today");
@@ -970,7 +1249,7 @@ function FieldOpsApp() {
       </View>
     </SafeAreaView>;
   }
-  if (!session) return <Login onSubmit={signIn} />;
+  if (!session) return <Login onSubmit={signIn} recoveryRequired={Boolean(recoveryEmployeeId)} />;
   if (!permissionChecked || !permissionReady) {
     return <PermissionGate
       state={permissionState}
@@ -1036,6 +1315,7 @@ function FieldOpsApp() {
           {screen === "visit" && selected && <Visit
             outlet={selected}
             activeVisit={activeVisit?.outletId === selected.id}
+            submissionPending={pendingVisitOutletIds.has(selected.id)}
             accessAllowed={fieldActionsAllowed}
             territoryMessage={territoryMessage}
             outcome={activeVisit?.outcome ?? "Order placed"}
@@ -1057,7 +1337,7 @@ function FieldOpsApp() {
             onSubmit={createOrder}
           />}
           {screen === "sync" && <SyncQueue
-            queue={queue}
+            queue={employeeQueue}
             locationPending={locationPending}
             onRetry={retryEverything}
           />}
@@ -1076,7 +1356,13 @@ function FieldOpsApp() {
   </SafeAreaView>;
 }
 
-function Login({ onSubmit }: { onSubmit: (email: string, password: string) => Promise<void> }) {
+function Login({
+  onSubmit,
+  recoveryRequired,
+}: {
+  onSubmit: (email: string, password: string) => Promise<void>;
+  recoveryRequired: boolean;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1094,6 +1380,11 @@ function Login({ onSubmit }: { onSubmit: (email: string, password: string) => Pr
         </View>
         <View className="gap-3.5 rounded-[18px] bg-white p-5">
           <Eyebrow>SALESPERSON SIGN IN</Eyebrow>
+          {recoveryRequired && <View className="rounded-[9px] bg-[#FFF4D6] p-3">
+            <Text className="font-bold leading-5 text-[#6B4D00]">
+              Saved work is waiting on this phone. Sign in with the same employee account to recover and upload it.
+            </Text>
+          </View>}
           <TextInput
             accessibilityLabel="Work email"
             className="min-h-12 rounded-[9px] border border-line bg-white px-3 text-base text-ink"
@@ -1535,6 +1826,7 @@ function RouteMap({ outlets, territories }: { outlets: Outlet[]; territories: Te
 function Visit({
   outlet,
   activeVisit,
+  submissionPending,
   accessAllowed,
   territoryMessage,
   outcome,
@@ -1551,6 +1843,7 @@ function Visit({
 }: {
   outlet: Outlet;
   activeVisit: boolean;
+  submissionPending: boolean;
   accessAllowed: boolean;
   territoryMessage: string;
   outcome: string;
@@ -1574,10 +1867,11 @@ function Visit({
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
       <Eyebrow>VISIT STATUS</Eyebrow>
       <Text className="text-xl font-black text-ink">
-        {activeVisit ? "Visit in progress" : outlet.status === "completed" ? "Visit completed" : `Ready for ${GEOFENCE_METERS} m check-in`}
+        {activeVisit ? "Visit in progress" : submissionPending ? "Upload awaiting confirmation" : outlet.status === "completed" ? "Visit completed" : `Ready for ${GEOFENCE_METERS} m check-in`}
       </Text>
       {!accessAllowed && <WarningNotice title="Visit unavailable here" body={territoryMessage} />}
-      {!selfCreated && !activeVisit && outlet.status !== "completed" && <Button label="GPS check in" disabled={!accessAllowed} onPress={onStart} />}
+      {submissionPending && <BodyText>The photo and audio are safe on this phone. Open Activity to retry the upload.</BodyText>}
+      {!selfCreated && !activeVisit && !submissionPending && outlet.status !== "completed" && <Button label="GPS check in" disabled={!accessAllowed} onPress={onStart} />}
     </View>
     {activeVisit && <>
       <WarningNotice

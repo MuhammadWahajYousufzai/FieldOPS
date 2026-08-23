@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminStorage } from "@fieldops/appwrite/server";
 import { requireManager } from "../../../../lib/auth";
 
-const bucketId = process.env.APPWRITE_EVIDENCE_BUCKET_ID ?? "visit-evidence";
+const bucketId = process.env.APPWRITE_EVIDENCE_BUCKET_ID?.trim() || "visit-evidence";
 
 export async function GET(_request: Request, context: { params: Promise<{ fileId: string }> }) {
   if (!await requireManager()) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });

@@ -6,9 +6,10 @@ export const LOCATION_QUEUE_KEY = "fieldops-location-outbox-v1";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
 let queueMutation: Promise<void> = Promise.resolve();
-let activeFlush: Promise<number> | null = null;
+const activeFlushes = new Map<string, Promise<number>>();
 
 export type QueuedLocation = {
+  employeeId: string;
   idempotencyKey: string;
   capturedAt: string;
   latitude: number;
@@ -28,7 +29,17 @@ async function readQueue(): Promise<QueuedLocation[]> {
   try {
     const saved = await AsyncStorage.getItem(LOCATION_QUEUE_KEY);
     const value = saved ? JSON.parse(saved) : [];
-    return Array.isArray(value) ? value : [];
+    if (!Array.isArray(value)) return [];
+    // Version 1 points created before employee scoping are intentionally
+    // discarded. Sending one of those points after another user signs in
+    // would attribute GPS evidence to the wrong employee.
+    return value.filter((point): point is QueuedLocation => (
+      Boolean(point)
+      && typeof point === "object"
+      && typeof point.employeeId === "string"
+      && point.employeeId.length > 0
+      && typeof point.idempotencyKey === "string"
+    ));
   } catch {
     return [];
   }
@@ -43,13 +54,20 @@ async function mutateQueue(update: (current: QueuedLocation[]) => QueuedLocation
   await operation;
 }
 
-export async function locationQueueCount() {
-  return (await readQueue()).length;
+export async function locationQueueCount(employeeId?: string) {
+  if (!employeeId) return 0;
+  return (await readQueue()).filter((point) => point.employeeId === employeeId).length;
 }
 
-export async function queueLocationObjects(locations: Location.LocationObject[], source: QueuedLocation["source"] = "foreground") {
+export async function queueLocationObjects(
+  employeeId: string,
+  locations: Location.LocationObject[],
+  source: QueuedLocation["source"] = "foreground",
+) {
+  if (!employeeId) throw new Error("A signed-in employee is required before saving GPS points.");
   if (locations.length === 0) return;
   const additions = locations.map((location) => ({
+    employeeId,
     idempotencyKey: pointId(location.timestamp),
     capturedAt: new Date(location.timestamp).toISOString(),
     latitude: location.coords.latitude,
@@ -60,14 +78,15 @@ export async function queueLocationObjects(locations: Location.LocationObject[],
     heading: location.coords.heading ?? null,
     source,
   }));
-  await mutateQueue((current) => [...current, ...additions].slice(-20_000));
+  await mutateQueue((current) => [...current, ...additions]);
 }
 
-export async function flushLocationQueue(token?: string): Promise<number> {
-  if (!token) return 0;
-  if (activeFlush) return activeFlush;
-  activeFlush = (async () => {
-    const queue = await readQueue();
+export async function flushLocationQueue(employeeId?: string, token?: string): Promise<number> {
+  if (!employeeId || !token) return 0;
+  const inFlight = activeFlushes.get(employeeId);
+  if (inFlight) return inFlight;
+  const activeFlush = (async () => {
+    const queue = (await readQueue()).filter((point) => point.employeeId === employeeId);
     if (queue.length === 0) return 0;
     const batch = queue.slice(0, 100);
     try {
@@ -79,15 +98,18 @@ export async function flushLocationQueue(token?: string): Promise<number> {
       if (!response.ok) return 0;
       const result = await response.json() as { confirmed?: string[] };
       const confirmed = new Set(result.confirmed ?? batch.map((point) => point.idempotencyKey));
-      await mutateQueue((latest) => latest.filter((point) => !confirmed.has(point.idempotencyKey)));
+      await mutateQueue((latest) => latest.filter((point) => (
+        point.employeeId !== employeeId || !confirmed.has(point.idempotencyKey)
+      )));
       return confirmed.size;
     } catch {
       return 0;
     }
   })();
+  activeFlushes.set(employeeId, activeFlush);
   try {
     return await activeFlush;
   } finally {
-    activeFlush = null;
+    if (activeFlushes.get(employeeId) === activeFlush) activeFlushes.delete(employeeId);
   }
 }

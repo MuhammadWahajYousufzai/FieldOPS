@@ -2,20 +2,28 @@ import { createHash } from "node:crypto";
 import { Models, Query } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import { NextResponse } from "next/server";
-import { evaluateGeofence, hasRequiredVisitEvidence } from "@fieldops/domain";
+import {
+  evaluateGeofence,
+  visitEvidenceExtension,
+  visitEvidenceValidationError,
+  type VisitEvidenceKind,
+} from "@fieldops/domain";
 import { createAdminStorage, createAdminTablesDb } from "@fieldops/appwrite/server";
 import { mobileActor, number, text, workDate } from "../../../../../lib/mobile-auth";
 import { evaluateTerritoryAccess, territoryAccessForEmployee } from "../../../../../lib/territory-access";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
-const bucketId = process.env.APPWRITE_EVIDENCE_BUCKET_ID ?? "visit-evidence";
+const bucketId = process.env.APPWRITE_EVIDENCE_BUCKET_ID?.trim() || "visit-evidence";
+const INCOMPLETE_FILE_STALE_MS = 2 * 60 * 1000;
 type DataRow = Models.Row & Record<string, unknown>;
 
 const stableId = (prefix: string, value: string) => `${prefix}_${createHash("sha256").update(value).digest("hex").slice(0, 24)}`;
 
-function safeName(name: string, fallback: string) {
+function safeEvidenceName(name: string, fallbackStem: string, extension: string) {
   const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-120);
-  return cleaned || fallback;
+  const stem = cleaned.replace(/\.[^.]*$/, "").replace(/[.-]+$/, "").slice(0, 120 - extension.length);
+  const safeStem = stem || fallbackStem.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 120 - extension.length);
+  return `${safeStem}${extension}`;
 }
 
 function isNotFound(error: unknown) {
@@ -40,13 +48,121 @@ function validPoint(point: { latitude: number | null; longitude: number | null; 
     && Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180 && point.accuracy >= 0;
 }
 
-async function evidenceTypes(db: ReturnType<typeof createAdminTablesDb>, visitId: string) {
-  const result = await db.listRows({
-    databaseId,
-    tableId: "visit_evidence",
-    queries: [Query.equal("visit_id", visitId), Query.limit(10)],
+function storedFileMatches(
+  stored: Models.File,
+  expected: { evidenceId: string; size: number; signature: string },
+) {
+  return stored.$id === expected.evidenceId
+    && stored.bucketId === bucketId
+    && stored.chunksUploaded === stored.chunksTotal
+    && stored.sizeOriginal === expected.size
+    && stored.signature.toLowerCase() === expected.signature;
+}
+
+function isExactIncompleteFile(stored: Models.File, evidenceId: string) {
+  const updatedAt = new Date(stored.$updatedAt).valueOf();
+  return stored.$id === evidenceId
+    && stored.bucketId === bucketId
+    && stored.chunksUploaded < stored.chunksTotal
+    && Number.isFinite(updatedAt)
+    && Date.now() - updatedAt >= INCOMPLETE_FILE_STALE_MS;
+}
+
+function sameFileSnapshot(left: Models.File, right: Models.File) {
+  return left.$id === right.$id
+    && left.bucketId === right.bucketId
+    && left.$createdAt === right.$createdAt
+    && left.$updatedAt === right.$updatedAt
+    && left.chunksUploaded === right.chunksUploaded
+    && left.chunksTotal === right.chunksTotal;
+}
+
+async function ensureEvidenceFile(
+  storage: ReturnType<typeof createAdminStorage>,
+  upload: { evidenceId: string; buffer: Buffer; filename: string; size: number; signature: string },
+) {
+  const createFile = () => storage.createFile({
+    bucketId,
+    fileId: upload.evidenceId,
+    file: InputFile.fromBuffer(upload.buffer, upload.filename),
+    permissions: [],
   });
-  return new Set(result.rows.map((row) => String(row.type)));
+
+  try {
+    return storedFileMatches(await createFile(), upload);
+  } catch (error) {
+    if (!isConflict(error)) throw error;
+  }
+
+  let stored: Models.File | null;
+  try {
+    stored = await storage.getFile({ bucketId, fileId: upload.evidenceId });
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+    stored = null;
+  }
+  if (stored && storedFileMatches(stored, upload)) return true;
+  if (stored) {
+    if (!isExactIncompleteFile(stored, upload.evidenceId)) return false;
+
+    // Wait beyond the site request limit, then re-read immediately before
+    // deletion so an active concurrent upload is never replaced.
+    let latest: Models.File | null;
+    try {
+      latest = await storage.getFile({ bucketId, fileId: upload.evidenceId });
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+      latest = null;
+    }
+    if (latest && storedFileMatches(latest, upload)) return true;
+    if (latest) {
+      if (!isExactIncompleteFile(latest, upload.evidenceId) || !sameFileSnapshot(stored, latest)) return false;
+      try {
+        await storage.deleteFile({ bucketId, fileId: upload.evidenceId });
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }
+  }
+
+  // Retry exactly once. If another request wins the race, verify its completed
+  // deterministic file instead of attempting another delete or upload.
+  try {
+    return storedFileMatches(await createFile(), upload);
+  } catch (error) {
+    if (!isConflict(error)) throw error;
+    try {
+      return storedFileMatches(
+        await storage.getFile({ bucketId, fileId: upload.evidenceId }),
+        upload,
+      );
+    } catch (getError) {
+      if (!isNotFound(getError)) throw getError;
+      return false;
+    }
+  }
+}
+
+function evidenceRowMatches(
+  row: DataRow,
+  expected: { evidenceId: string; visitId: string; employeeId: string; outletId: string; kind: VisitEvidenceKind },
+) {
+  return row.$id === expected.evidenceId
+    && String(row.visit_id) === expected.visitId
+    && String(row.employee_id) === expected.employeeId
+    && String(row.outlet_id) === expected.outletId
+    && String(row.type) === expected.kind
+    && String(row.file_id) === expected.evidenceId;
+}
+
+function locationRowMatches(
+  row: DataRow,
+  expected: { locationId: string; visitId: string; employeeId: string; source: string },
+) {
+  return row.$id === expected.locationId
+    && String(row.visit_id) === expected.visitId
+    && String(row.employee_id) === expected.employeeId
+    && String(row.source) === expected.source;
 }
 
 export async function POST(request: Request) {
@@ -60,11 +176,13 @@ export async function POST(request: Request) {
   if (!visitId || !idempotencyKey) {
     return NextResponse.json({ error: "Visit ID and submission ID are required." }, { status: 400 });
   }
-  if (!(photo instanceof File) || photo.size === 0 || !(audio instanceof File) || audio.size === 0) {
+  if (!(photo instanceof File) || !(audio instanceof File)) {
     return NextResponse.json({ error: "A visit photo and audio note are both required." }, { status: 422 });
   }
-  if (!photo.type.startsWith("image/") || !audio.type.startsWith("audio/")) {
-    return NextResponse.json({ error: "The visit evidence must contain one image and one audio file." }, { status: 422 });
+  const evidenceError = visitEvidenceValidationError("photo", photo)
+    ?? visitEvidenceValidationError("audio", audio);
+  if (evidenceError) {
+    return NextResponse.json({ error: evidenceError }, { status: 422 });
   }
 
   const db = createAdminTablesDb();
@@ -84,13 +202,9 @@ export async function POST(request: Request) {
   if (existing && existing.employee_id !== actor.employee.$id) {
     return NextResponse.json({ error: "This visit belongs to another salesperson." }, { status: 403 });
   }
-  if (existing?.status === "completed") {
-    const types = await evidenceTypes(db, existing.$id);
-    if (hasRequiredVisitEvidence({ photo: types.has("photo"), audio: types.has("audio") })) {
-      return NextResponse.json({ ok: true, visitId: existing.$id, evidenceCount: types.size });
-    }
+  if (existing && text(existing.idempotency_key, 64) && text(existing.idempotency_key, 64) !== idempotencyKey) {
+    return NextResponse.json({ error: "This visit was created by a different submission." }, { status: 409 });
   }
-
   const selfInitiated = existing
     ? existing.visit_type === "self_initiated" || !existing.route_assignment_id
     : text(form.get("visitType"), 24) === "self_initiated";
@@ -179,18 +293,22 @@ export async function POST(request: Request) {
 
   const rowId = existing?.$id ?? visitId;
   const storage = createAdminStorage();
-  const uploads = [["photo", photo], ["audio", audio]] as const;
-  for (const [kind, value] of uploads) {
+  const uploads = await Promise.all(([["photo", photo], ["audio", audio]] as const).map(async ([kind, value]) => {
+    const buffer = Buffer.from(await value.arrayBuffer());
     const evidenceId = stableId("evidence", `${rowId}:${kind}`);
-    try {
-      await storage.createFile({
-        bucketId,
-        fileId: evidenceId,
-        file: InputFile.fromBuffer(Buffer.from(await value.arrayBuffer()), safeName(value.name, `${kind}-${rowId}`)),
-        permissions: [],
-      });
-    } catch (error) {
-      if (!isConflict(error)) throw error;
+    return {
+      kind,
+      value,
+      buffer,
+      size: buffer.length,
+      evidenceId,
+      filename: safeEvidenceName(value.name, `${kind}-${rowId}`, visitEvidenceExtension(kind, value.type)),
+      signature: createHash("md5").update(buffer).digest("hex"),
+    };
+  }));
+  for (const upload of uploads) {
+    if (!(await ensureEvidenceFile(storage, upload))) {
+      return NextResponse.json({ error: `Stored ${upload.kind} evidence conflicts with this submission.` }, { status: 409 });
     }
   }
 
@@ -203,17 +321,16 @@ export async function POST(request: Request) {
     completion_distance_m: completionGeofence.distanceMeters,
     status: "completed",
   };
-  for (const [kind, value] of uploads) {
-    const evidenceId = stableId("evidence", `${rowId}:${kind}`);
+  for (const upload of uploads) {
     try {
-      await db.createRow({ databaseId, tableId: "visit_evidence", rowId: evidenceId, data: {
+      await db.createRow({ databaseId, tableId: "visit_evidence", rowId: upload.evidenceId, data: {
         visit_id: rowId,
         employee_id: actor.employee.$id,
         outlet_id: outletId,
-        type: kind,
-        file_id: evidenceId,
-        filename: safeName(value.name, `${kind}-${rowId}`),
-        mime_type: value.type,
+        type: upload.kind,
+        file_id: upload.evidenceId,
+        filename: upload.filename,
+        mime_type: upload.value.type,
         captured_at: completionAt,
         latitude: completionPoint.latitude,
         longitude: completionPoint.longitude,
@@ -221,6 +338,16 @@ export async function POST(request: Request) {
       }, permissions: [] });
     } catch (error) {
       if (!isConflict(error)) throw error;
+      const stored = await db.getRow({ databaseId, tableId: "visit_evidence", rowId: upload.evidenceId }) as DataRow;
+      if (!evidenceRowMatches(stored, {
+        evidenceId: upload.evidenceId,
+        visitId: rowId,
+        employeeId: actor.employee.$id,
+        outletId,
+        kind: upload.kind,
+      })) {
+        return NextResponse.json({ error: `Stored ${upload.kind} evidence belongs to another visit.` }, { status: 409 });
+      }
     }
   }
 
@@ -230,7 +357,7 @@ export async function POST(request: Request) {
   if (existing) {
     await db.updateRow({ databaseId, tableId: "visits", rowId, data: completeData });
   } else {
-    await db.createRow({ databaseId, tableId: "visits", rowId, data: {
+    const createData = {
       employee_id: actor.employee.$id,
       outlet_id: outletId,
       ...(assignment ? { route_assignment_id: assignment.$id } : {}),
@@ -248,7 +375,19 @@ export async function POST(request: Request) {
       idempotency_key: idempotencyKey,
       device_captured_at: checkInAt,
       ...completeData,
-    }, permissions: [] });
+    };
+    try {
+      await db.createRow({ databaseId, tableId: "visits", rowId, data: createData, permissions: [] });
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+      const competing = await db.getRow({ databaseId, tableId: "visits", rowId }) as DataRow;
+      if (competing.$id !== rowId
+        || String(competing.employee_id) !== actor.employee.$id
+        || String(competing.idempotency_key) !== idempotencyKey) {
+        return NextResponse.json({ error: "The visit ID is already used by another submission." }, { status: 409 });
+      }
+      await db.updateRow({ databaseId, tableId: "visits", rowId, data: completeData });
+    }
   }
 
   const locationPoints = [
@@ -256,8 +395,9 @@ export async function POST(request: Request) {
     { key: "check-out", capturedAt: completionAt, latitude: completionPoint.latitude, longitude: completionPoint.longitude, accuracy: completionPoint.accuracy, source: "visit_check_out" },
   ];
   for (const point of locationPoints) {
+    const locationId = stableId("location", `${rowId}:${point.key}`);
     try {
-      await db.createRow({ databaseId, tableId: "location_points", rowId: stableId("location", `${rowId}:${point.key}`), data: {
+      await db.createRow({ databaseId, tableId: "location_points", rowId: locationId, data: {
         employee_id: actor.employee.$id,
         visit_id: rowId,
         captured_at: point.capturedAt,
@@ -271,6 +411,15 @@ export async function POST(request: Request) {
       }, permissions: [] });
     } catch (error) {
       if (!isConflict(error)) throw error;
+      const stored = await db.getRow({ databaseId, tableId: "location_points", rowId: locationId }) as DataRow;
+      if (!locationRowMatches(stored, {
+        locationId,
+        visitId: rowId,
+        employeeId: actor.employee.$id,
+        source: point.source,
+      })) {
+        return NextResponse.json({ error: "Stored visit location belongs to another submission." }, { status: 409 });
+      }
     }
   }
 
@@ -279,8 +428,8 @@ export async function POST(request: Request) {
       databaseId,
       tableId: "route_assignments",
       rowId: assignment.$id,
-      data: { status: "completed", completed_at: now },
-    }).catch(() => undefined);
+      data: { status: "completed", completed_at: completionAt },
+    });
   }
   return NextResponse.json({ ok: true, visitId: rowId, evidenceCount: 2 }, { status: existing ? 200 : 201 });
 }

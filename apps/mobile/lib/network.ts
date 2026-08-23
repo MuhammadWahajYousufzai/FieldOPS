@@ -1,5 +1,8 @@
 export const JSON_REQUEST_TIMEOUT_MS = 12_000;
-export const EVIDENCE_UPLOAD_TIMEOUT_MS = 27_000;
+// Evidence requests can contain both a field photo and an audio note. Give
+// slower mobile connections enough time while still finishing before the
+// 60-second Appwrite Sites request limit.
+export const EVIDENCE_UPLOAD_TIMEOUT_MS = 55_000;
 
 export async function fetchWithTimeout(
   input: string,
