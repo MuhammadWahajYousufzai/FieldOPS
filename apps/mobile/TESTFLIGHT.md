@@ -26,13 +26,13 @@ The committed workspace is `apps/mobile/ios/YousufRiceFieldOps.xcworkspace` and
 the scheme is `YousufRiceFieldOps`. The `ci_post_clone.sh` hook installs the
 locked monorepo dependencies and CocoaPods; `ci_pre_xcodebuild.sh` synchronizes
 the native marketing version from `app.json` and assigns an Xcode Cloud build
-number no lower than 18. Configure an Archive action for iOS with App Store
+number no lower than 19. Configure an Archive action for iOS with App Store
 Connect distribution and a TestFlight internal-testing post-action.
 
 Xcode Cloud does not need an App Store Connect API key. It does require this
 repository to be committed and pushed to a supported Git provider before the
 workflow can be connected.
 
-The current release line is version `1.0.4`, starting at build `18`. For future
+The current release line is version `1.0.4`, starting at build `19`. For future
 releases, update `expo.version` and `ios.buildNumber` in `app.json` together with
 the native target settings before pushing the Xcode Cloud build.

@@ -35,7 +35,7 @@
     "ios": {
       "bundleIdentifier": "pk.yousufrice.fieldops",
       "appleTeamId": "V4AYP7YKGS",
-      "buildNumber": "18",
+      "buildNumber": "19",
       "icon": "./assets/icon.png",
       "supportsTablet": false,
       "infoPlist": {
@@ -43,7 +43,8 @@
         "NSLocationWhenInUseUsageDescription": "FieldOPS records route updates and visit evidence while the app is open during active work.",
         "NSCameraUsageDescription": "FieldOPS uses the camera to capture timestamped outlet visit evidence.",
         "NSPhotoLibraryUsageDescription": "FieldOPS uses the photo library only when a salesperson attaches visit evidence.",
-        "NSMicrophoneUsageDescription": "FieldOPS uses the microphone to record the required audio note for a completed visit."
+        "NSMicrophoneUsageDescription": "FieldOPS uses the microphone to record the required audio note for a completed visit.",
+        "NSMotionUsageDescription": "FieldOPS uses device motion signals only to support reliable location updates during active field work."
       }
     },
     "android": {
