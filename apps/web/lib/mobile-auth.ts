@@ -7,18 +7,21 @@ export async function mobileActor(request: Request) {
   const header = request.headers.get("authorization") ?? "";
   const session = header.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!session) return null;
+  let user;
   try {
-    const user = await createSessionAccount(session, request.headers.get("user-agent") ?? undefined).get();
-    const result = await createAdminTablesDb().listRows({
-      databaseId,
-      tableId: "employees",
-      queries: [Query.equal("user_id", user.$id), Query.equal("status", "active"), Query.limit(1)],
-    });
-    const employee = result.rows[0];
-    return employee ? { user, employee, session } : null;
-  } catch {
-    return null;
+    user = await createSessionAccount(session, request.headers.get("user-agent") ?? undefined).get();
+  } catch (error) {
+    const status = typeof error === "object" && error !== null && "code" in error ? Number(error.code) : 0;
+    if (status === 401) return null;
+    throw error;
   }
+  const result = await createAdminTablesDb().listRows({
+    databaseId,
+    tableId: "employees",
+    queries: [Query.equal("user_id", user.$id), Query.equal("status", "active"), Query.limit(1)],
+  });
+  const employee = result.rows[0];
+  return employee ? { user, employee, session } : null;
 }
 
 export function workDate(date = new Date()) {
@@ -31,6 +34,9 @@ export function workDate(date = new Date()) {
 }
 
 export function number(value: unknown) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  if (typeof value !== "number" && typeof value !== "string") return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }

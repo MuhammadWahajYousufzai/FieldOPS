@@ -36,7 +36,7 @@ export async function dashboardManagerUserId(): Promise<string> {
     if (!role) continue;
     const assignmentResult = await db.listRows({ databaseId, tableId: "employee_assignments", queries: [Query.equal("role_id", role.$id), Query.limit(25)] });
     for (const assignment of assignmentResult.rows) {
-      if (assignment.effective_to) continue;
+      if (!assignmentIsEffective(assignment, Date.now())) continue;
       const employee = await db.getRow({ databaseId, tableId: "employees", rowId: String(assignment.employee_id) });
       if (employee.status === "active" && employee.user_id) return String(employee.user_id);
     }
@@ -49,11 +49,22 @@ export async function managerForUser(user: { $id: string; name: string }) {
   const db = createAdminTablesDb();
   const employeeResult = await db.listRows({ databaseId, tableId: "employees", queries: [Query.equal("user_id", user.$id), Query.limit(1)] });
   const employee = employeeResult.rows[0];
-  if (!employee) return null;
+  if (!employee || employee.status !== "active") return null;
   const assignmentResult = await db.listRows({ databaseId, tableId: "employee_assignments", queries: [Query.equal("employee_id", employee.$id), Query.limit(25)] });
+  const now = Date.now();
   for (const assignment of assignmentResult.rows) {
     const role = await db.getRow({ databaseId, tableId: "roles", rowId: String(assignment.role_id) });
-    if (["super_admin", "executive", "manager"].includes(String(role.code)) && !assignment.effective_to) return { user, employee, role };
+    if (role.active === true
+      && ["super_admin", "executive", "manager"].includes(String(role.code))
+      && assignmentIsEffective(assignment, now)) return { user, employee, role };
   }
   return null;
+}
+
+function assignmentIsEffective(assignment: Record<string, unknown>, now: number) {
+  const startsAt = new Date(String(assignment.effective_from ?? "")).valueOf();
+  if (!Number.isFinite(startsAt) || startsAt > now) return false;
+  if (!assignment.effective_to) return true;
+  const endsAt = new Date(String(assignment.effective_to)).valueOf();
+  return Number.isFinite(endsAt) && endsAt > now;
 }

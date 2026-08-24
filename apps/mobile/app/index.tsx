@@ -5,9 +5,11 @@ import NetInfo from "@react-native-community/netinfo";
 import {
   distanceMeters,
   hasRequiredVisitEvidence,
+  MAX_PLACE_MARK_ACCURACY_METERS,
   mergeRefreshedVisits,
   parseTerritoryBoundary,
   pointInAnyTerritory,
+  retryDelayMs,
   type TerritoryBoundary,
 } from "@fieldops/domain";
 import {
@@ -15,7 +17,10 @@ import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
   useAudioRecorder,
+  useAudioRecorderState,
 } from "expo-audio";
 import { Directory, File, Paths } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -35,14 +40,17 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import {
+  clearRejectedLocationPoints,
   flushLocationQueue,
   locationQueueCount,
+  locationQueueStats,
   queueLocationObjects,
 } from "../lib/background-location";
 import { fetchWithTimeout } from "../lib/network";
 
 type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "sync" | "profile";
 type VisitStatus = "planned" | "active" | "completed";
+type PlaceApprovalStatus = "not_applicable" | "pending_review" | "approved" | "rejected";
 type WorkState = "not_started" | "active" | "finished";
 type Session = { token: string; expiresAt: string; employee: { id: string; name: string } };
 type JsonOperation = { type: "json"; path: string; body: Record<string, unknown> };
@@ -63,6 +71,10 @@ type QueueItem = {
   createdAt: string;
   attempts: number;
   error?: string;
+  errorKind?: "connection" | "auth" | "validation" | "server";
+  httpStatus?: number;
+  lastAttemptAt?: string;
+  nextAttemptAt?: string;
   operation?: OfflineOperation;
 };
 type Outlet = {
@@ -79,6 +91,8 @@ type Outlet = {
   kind: "assigned" | "self";
   workDate: string;
   territoryId?: string;
+  placeApprovalStatus?: PlaceApprovalStatus;
+  approvedOutletId?: string;
 };
 type TerritoryInfo = { id: string; code: string; name: string; boundary: TerritoryBoundary | null };
 type TerritoryPolicy = { mode: "unrestricted" | "restricted"; assignedCount: number; territories: TerritoryInfo[] };
@@ -98,6 +112,16 @@ type PermissionState = {
   microphone: boolean;
   services: boolean;
 };
+type ServerActivity = {
+  id: string;
+  entityId: string;
+  kind: "visit" | "order" | "work" | "place";
+  title: string;
+  detail: string;
+  status: "recorded" | "pending_review" | "approved" | "rejected";
+  occurredAt: string;
+  amount?: number;
+};
 type PersistedState = {
   session: Session | null;
   workState: WorkState;
@@ -105,6 +129,9 @@ type PersistedState = {
   queue: QueueItem[];
   activeVisit: ActiveVisit | null;
   territoryPolicy: TerritoryPolicy;
+  contextDate: string;
+  serverActivity: ServerActivity[];
+  lastSyncAt: string;
 };
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
@@ -113,6 +140,7 @@ const OUTBOX_STORAGE_KEY = "fieldops-production-outbox-v1";
 const RECOVERY_EMPLOYEE_STORAGE_KEY = "fieldops-recovery-employee-v1";
 const MAX_EVIDENCE_BYTES = 20 * 1024 * 1024;
 const GEOFENCE_METERS = 70;
+const GPS_FIX_TIMEOUT_MS = 18_000;
 const emptyPermissions: PermissionState = {
   foreground: false,
   camera: false,
@@ -120,6 +148,13 @@ const emptyPermissions: PermissionState = {
   services: false,
 };
 const unrestrictedTerritoryPolicy: TerritoryPolicy = { mode: "unrestricted", assignedCount: 0, territories: [] };
+
+class RequestError extends Error {
+  constructor(message: string, readonly status = 0) {
+    super(message);
+    this.name = "RequestError";
+  }
+}
 
 function classes(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -344,10 +379,18 @@ function parseState(saved: string): PersistedState | null {
         ...outlet,
         kind: outlet.kind === "self" ? "self" : "assigned",
         workDate: outlet.workDate || pakistanWorkDate(),
+        ...(outlet.kind === "self" ? {
+          placeApprovalStatus: (["approved", "rejected", "pending_review"] as const).includes(outlet.placeApprovalStatus as "approved" | "rejected" | "pending_review")
+            ? outlet.placeApprovalStatus
+            : "pending_review",
+        } : {}),
       })),
       queue: persisted.queue,
       activeVisit: persisted.activeVisit,
       territoryPolicy: normalizeTerritoryPolicy(value.territoryPolicy),
+      contextDate: typeof value.contextDate === "string" ? value.contextDate : "",
+      serverActivity: Array.isArray(value.serverActivity) ? value.serverActivity : [],
+      lastSyncAt: typeof value.lastSyncAt === "string" ? value.lastSyncAt : "",
     };
   } catch {
     return null;
@@ -363,15 +406,13 @@ function positionForPoint(policy: TerritoryPolicy, latitude: number, longitude: 
 
 function territoryCopy(policy: TerritoryPolicy, position: TerritoryPosition) {
   const names = policy.territories.map((territory) => territory.name).join(" or ");
-  if (position === "unrestricted") {
-    return "No territory is assigned. Visits and orders are available wherever today’s work is active.";
-  }
-  if (position === "checking") return "Checking your current GPS position against assigned territory boundaries.";
-  if (position === "inside") return `Inside ${names || "an assigned territory"}. Visits and orders are available.`;
+  if (position === "unrestricted") return "Location ready. You can visit customers anywhere while your work session is active.";
+  if (position === "checking") return "Finding your location. Keep the phone still for a moment.";
+  if (position === "inside") return `Location ready. You’re inside ${names || "your work area"}.`;
   if (position === "boundary_missing") {
-    return "An assigned territory has no usable map boundary. Ask a manager to draw and save it.";
+    return "Your manager needs to finish the work-area map before visits can start.";
   }
-  return `Outside ${names || "your assigned territory"}. Visits and orders are disabled at this location.`;
+  return `You’re outside ${names || "your work area"}. Move inside the assigned area, then check again.`;
 }
 
 type JsonRequestConfig = {
@@ -394,8 +435,32 @@ async function jsonRequest(
     },
   }, { timeoutMessage });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || "The FieldOPS server could not complete this request.");
+  if (!response.ok) throw new RequestError(body.error || "The FieldOPS server could not complete this request.", response.status);
   return body;
+}
+
+async function revokeMobileSession(session: Session) {
+  await fetchWithTimeout(`${API_BASE}/auth/logout`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${session.token}` },
+  }, {
+    timeoutMs: 3_000,
+    timeoutMessage: "Session revocation timed out.",
+  }).catch(() => undefined);
+}
+
+async function withGpsTimeout<T>(operation: Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Location is taking too long. Move into an open area, then check again.")), GPS_FIX_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function preserveEvidence(uri: string, extension: string) {
@@ -426,13 +491,18 @@ function validateStoredEvidence(attachment: EvidenceAttachment) {
 function deleteLocalEvidence(operation: OfflineOperation) {
   if (operation.type === "json") return;
   for (const attachment of [operation.photo, operation.audio]) {
-    try {
-      const file = new File(attachment.uri);
-      if (file.exists) file.delete();
-    } catch {
-      // The server has confirmed the evidence. A failed local cleanup is safe
-      // and can be reclaimed by the operating system later.
-    }
+    deleteStoredAttachment(attachment);
+  }
+}
+
+function deleteStoredAttachment(attachment?: EvidenceAttachment) {
+  if (!attachment) return;
+  try {
+    const file = new File(attachment.uri);
+    if (file.exists) file.delete();
+  } catch {
+    // Best effort: confirmed or discarded evidence can be reclaimed later by
+    // the operating system if the file is temporarily unavailable.
   }
 }
 
@@ -450,20 +520,31 @@ function FieldOpsApp() {
   const [activeVisit, setActiveVisit] = useState<ActiveVisit | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const audioRecorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, directory: "document" });
+  const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
   const [recording, setRecording] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [permissionState, setPermissionState] = useState<PermissionState>(emptyPermissions);
   const [permissionBusy, setPermissionBusy] = useState(false);
   const [permissionChecked, setPermissionChecked] = useState(false);
   const [locationPending, setLocationPending] = useState(0);
+  const [locationRejected, setLocationRejected] = useState(0);
+  const [locationSyncError, setLocationSyncError] = useState("");
   const [recoveryEmployeeId, setRecoveryEmployeeId] = useState("");
   const [territoryPolicy, setTerritoryPolicy] = useState<TerritoryPolicy>(unrestrictedTerritoryPolicy);
-  const [territoryPosition, setTerritoryPosition] = useState<TerritoryPosition>("unrestricted");
+  const [contextDate, setContextDate] = useState("");
+  const [territoryPosition, setTerritoryPosition] = useState<TerritoryPosition>("checking");
+  const [locationChecking, setLocationChecking] = useState(false);
+  const [lastLocationCheck, setLastLocationCheck] = useState<{ accuracy: number; checkedAt: string } | null>(null);
+  const [networkOnline, setNetworkOnline] = useState<boolean | null>(null);
+  const [serverActivity, setServerActivity] = useState<ServerActivity[]>([]);
+  const [lastSyncAt, setLastSyncAt] = useState("");
   const queueRef = useRef<QueueItem[]>([]);
   const sessionRef = useRef<Session | null>(null);
   const recoveryEmployeeIdRef = useRef("");
   const sessionEpochRef = useRef(0);
   const syncPromiseRef = useRef<Promise<void> | null>(null);
+  const syncRequestedRef = useRef(false);
+  const syncForceRequestedRef = useRef(false);
   const visitSubmittingRef = useRef(false);
   const permissionPrompted = useRef(false);
   const heartbeatRunningRef = useRef(false);
@@ -477,7 +558,7 @@ function FieldOpsApp() {
     () => session ? queue.filter((item) => item.employeeId === session.employee.id) : [],
     [queue, session?.employee.id],
   );
-  const pending = employeeQueue.filter((item) => item.state === "failed" || item.state === "pending" || item.state === "syncing").length + locationPending;
+  const pending = employeeQueue.filter((item) => item.state === "failed" || item.state === "pending" || item.state === "syncing").length + locationPending + locationRejected;
   const pendingVisitOutletIds = useMemo(() => new Set(employeeQueue.flatMap((item) => {
     if (item.state === "confirmed") return [];
     const outletId = visitSubmissionOutletId(item.operation);
@@ -492,8 +573,11 @@ function FieldOpsApp() {
   const permissionReady = permissionState.foreground && permissionState.services;
   const trackingReady = permissionState.foreground && permissionState.services;
   const workActuallyRunning = workState === "active" && trackingReady;
-  const fieldActionsAllowed = territoryPosition === "unrestricted" || territoryPosition === "inside";
-  const territoryMessage = territoryCopy(territoryPolicy, territoryPosition);
+  const territoryPolicyReady = contextDate === pakistanWorkDate();
+  const fieldActionsAllowed = territoryPolicyReady && (territoryPosition === "unrestricted" || territoryPosition === "inside");
+  const territoryMessage = territoryPolicyReady
+    ? territoryCopy(territoryPolicy, territoryPosition)
+    : "Today’s work access has not downloaded yet. Tap Update while online before starting a visit or order.";
 
   async function setQueueDurably(update: (items: QueueItem[]) => QueueItem[]) {
     const next = trimQueue(update(queueRef.current));
@@ -514,6 +598,9 @@ function FieldOpsApp() {
   }
 
   function requireTerritory(latitude: number, longitude: number) {
+    if (!territoryPolicyReady) {
+      throw new Error("Update today’s work access before recording field work. Your saved uploads remain safe while offline.");
+    }
     const position = updateTerritoryPosition(latitude, longitude);
     if (position !== "inside" && position !== "unrestricted") {
       throw new Error(territoryCopy(territoryPolicy, position));
@@ -528,9 +615,24 @@ function FieldOpsApp() {
       AsyncStorage.getItem(RECOVERY_EMPLOYEE_STORAGE_KEY),
     ]).then(([saved, savedOutbox, savedRecoveryEmployeeId]) => {
       if (cancelled) return;
-      if (!saved) return;
-      const value = parseState(saved);
-      if (!value) return;
+      const value = saved ? parseState(saved) : null;
+      if (!value) {
+        const parsed = parseDurableQueue(savedOutbox, [], null);
+        const unconfirmedOwners = [...new Set(parsed.queue
+          .filter((item) => item.state !== "confirmed" && item.employeeId)
+          .map((item) => item.employeeId))];
+        const recoveryOwner = savedRecoveryEmployeeId || (unconfirmedOwners.length === 1 ? unconfirmedOwners[0]! : "");
+        const recoveredQueue = scopeLegacyQueue(parsed.queue, recoveryOwner);
+        queueRef.current = recoveredQueue;
+        setQueue(recoveredQueue);
+        if (recoveryOwner) {
+          recoveryEmployeeIdRef.current = recoveryOwner;
+          setRecoveryEmployeeId(recoveryOwner);
+          AsyncStorage.setItem(RECOVERY_EMPLOYEE_STORAGE_KEY, recoveryOwner).catch(() => undefined);
+        }
+        persistDurableQueue(recoveredQueue).catch(() => undefined);
+        return;
+      }
       const legacyOwnerId = savedRecoveryEmployeeId || value.session?.employee.id || "";
       const parsed = parseDurableQueue(savedOutbox, value.queue, value.activeVisit);
       const persisted = { ...parsed, queue: scopeLegacyQueue(parsed.queue, legacyOwnerId) };
@@ -553,6 +655,9 @@ function FieldOpsApp() {
       queueRef.current = persisted.queue;
       setActiveVisit(restoredActiveVisit);
       setTerritoryPolicy(value.territoryPolicy);
+      setContextDate(value.contextDate);
+      setServerActivity(value.serverActivity);
+      setLastSyncAt(value.lastSyncAt);
       setTerritoryPosition(value.territoryPolicy.mode === "restricted" ? "checking" : "unrestricted");
       if (restoredActiveVisit) setSelectedId(restoredActiveVisit.outletId);
       else if (restoredOutlets[0]) setSelectedId(restoredOutlets[0].id);
@@ -572,8 +677,11 @@ function FieldOpsApp() {
       queue,
       activeVisit,
       territoryPolicy,
+      contextDate,
+      serverActivity,
+      lastSyncAt,
     })).catch(() => undefined);
-  }, [activeVisit, hydrated, outlets, queue, session, territoryPolicy, workState]);
+  }, [activeVisit, contextDate, hydrated, lastSyncAt, outlets, queue, serverActivity, session, territoryPolicy, workState]);
 
   useEffect(() => {
     if (!hydrated || !session) return;
@@ -593,6 +701,11 @@ function FieldOpsApp() {
   }, [hydrated, session?.token]);
 
   useEffect(() => {
+    if (!hydrated || !session || !permissionChecked || !permissionReady || !territoryPolicyReady || territoryPosition !== "checking") return;
+    checkMyLocation(false, territoryPolicy).catch(() => undefined);
+  }, [contextDate, hydrated, permissionChecked, permissionReady, session?.token, territoryPolicy, territoryPosition]);
+
+  useEffect(() => {
     if (!session || workState !== "active") return;
     if (!trackingReady) return;
     captureLiveHeartbeat(true).catch(() => undefined);
@@ -604,25 +717,31 @@ function FieldOpsApp() {
     if (!hydrated || !session) return;
     const timer = setInterval(() => {
       refreshPermissions(false).catch(() => undefined);
-      syncOperations()
-        .then(() => flushLocationQueue(session.employee.id, session.token))
-        .then(() => refreshLocationCount())
-        .catch(() => undefined);
+      Promise.all([
+        syncOperations(),
+        flushLocationQueue(session.employee.id, session.token),
+      ]).then(() => refreshLocationCount()).catch(() => undefined);
     }, 15_000);
     const appSubscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         refreshPermissions(false)
           .then((permissions) => captureLiveHeartbeat(true, permissions))
           .catch(() => undefined);
+        Promise.all([
+          syncOperations(),
+          flushLocationQueue(session.employee.id, session.token),
+        ]).then(() => refreshLocationCount()).catch(() => undefined);
         refreshContext(false).catch(() => undefined);
       }
     });
     const networkSubscription = NetInfo.addEventListener((state) => {
-      if (state.isConnected) {
-        syncOperations()
-          .then(() => flushLocationQueue(session.employee.id, session.token))
-          .then(() => refreshLocationCount())
-          .catch(() => undefined);
+      const online = Boolean(state.isConnected && state.isInternetReachable !== false);
+      setNetworkOnline(online);
+      if (online) {
+        Promise.all([
+          syncOperations({ force: true }),
+          flushLocationQueue(session.employee.id, session.token),
+        ]).then(() => refreshLocationCount()).catch(() => undefined);
         refreshPermissions(false)
           .then((permissions) => captureLiveHeartbeat(true, permissions))
           .catch(() => undefined);
@@ -638,7 +757,27 @@ function FieldOpsApp() {
 
   async function refreshLocationCount() {
     const employeeId = sessionRef.current?.employee.id;
-    setLocationPending(await locationQueueCount(employeeId));
+    const stats = await locationQueueStats(employeeId);
+    setLocationPending(stats.pending);
+    setLocationRejected(stats.rejected);
+    setLocationSyncError(stats.error);
+  }
+
+  function removeRejectedRoutePoints() {
+    const employeeId = sessionRef.current?.employee.id;
+    if (!employeeId || locationRejected === 0) return;
+    Alert.alert(
+      "Remove invalid route points?",
+      `${locationRejected} ${locationRejected === 1 ? "point was" : "points were"} rejected by the server and cannot be uploaded. Confirm to remove only those invalid points from this phone.`,
+      [
+        { text: "Keep", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => {
+          clearRejectedLocationPoints(employeeId).then(() => refreshLocationCount()).catch(() => {
+            Alert.alert("Could not remove points", "Try again from Activity.");
+          });
+        } },
+      ],
+    );
   }
 
   async function refreshPermissions(markChecked = true) {
@@ -664,6 +803,8 @@ function FieldOpsApp() {
     try {
       await Location.requestForegroundPermissionsAsync();
       await refreshPermissions();
+    } catch (error) {
+      Alert.alert("Location setup did not finish", error instanceof Error ? error.message : "Open phone settings and allow location for FieldOPS.");
     } finally {
       setPermissionBusy(false);
       setPermissionChecked(true);
@@ -672,7 +813,11 @@ function FieldOpsApp() {
 
   async function executeOperation(operation: OfflineOperation, authenticatedSession: Session) {
     if (operation.type === "json") {
-      return jsonRequest(operation.path, { method: "POST", body: JSON.stringify(operation.body) }, { token: authenticatedSession.token });
+      const confirmation = await jsonRequest(operation.path, { method: "POST", body: JSON.stringify(operation.body) }, { token: authenticatedSession.token });
+      if (confirmation?.ok !== true) {
+        throw new RequestError("The server did not confirm this saved work. FieldOPS will keep it and retry.", 502);
+      }
+      return confirmation;
     }
     validateStoredEvidence(operation.photo);
     validateStoredEvidence(operation.audio);
@@ -686,55 +831,148 @@ function FieldOpsApp() {
       body: form,
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || "Visit evidence could not be uploaded.");
+    if (!response.ok) throw new RequestError(body.error || "Visit evidence could not be uploaded.", response.status);
+    if (body.ok !== true) {
+      throw new RequestError("The server did not confirm the visit evidence. FieldOPS will keep it and retry.", 502);
+    }
     return body;
   }
 
-  function syncOperations(): Promise<void> {
+  function syncOperations(options: { force?: boolean; onlyId?: string } = {}): Promise<void> {
     const authenticatedSession = sessionRef.current;
     if (!authenticatedSession) return Promise.resolve();
     const sessionEpoch = sessionEpochRef.current;
-    if (syncPromiseRef.current) return syncPromiseRef.current;
+    if (syncPromiseRef.current) {
+      syncRequestedRef.current = true;
+      if (options.force) syncForceRequestedRef.current = true;
+      return syncPromiseRef.current;
+    }
     const operation = (async () => {
-      const candidates = [...queueRef.current]
-        .filter((item) => (
-          item.employeeId === authenticatedSession.employee.id
-          && item.operation
-          && item.state !== "confirmed"
-        ))
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-      for (const item of candidates) {
-        if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
-        await setQueueDurably((items) => items.map((entry) => entry.id === item.id ? { ...entry, state: "syncing" } : entry));
-        try {
-          await executeOperation(item.operation!, authenticatedSession);
-          if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
-          await setQueueDurably((items) => items.map((entry) => entry.id === item.id
-            ? { ...entry, state: "confirmed", error: undefined }
-            : entry));
-          if (item.operation?.type === "visit_submit") {
-            const outletId = item.operation.fields.outletId || item.operation.fields.visitId;
-            setOutlets((items) => items.map((outlet) => outlet.id === outletId ? { ...outlet, status: "completed" } : outlet));
-            deleteLocalEvidence(item.operation);
-          }
-        } catch (error) {
-          if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+      let force = Boolean(options.force);
+      let onlyId = options.onlyId;
+      let confirmedAny = false;
+      do {
+        syncRequestedRef.current = false;
+        syncForceRequestedRef.current = false;
+        const now = Date.now();
+        const candidates = [...queueRef.current]
+          .filter((item) => (
+            item.employeeId === authenticatedSession.employee.id
+            && item.operation
+            && item.state !== "confirmed"
+            && (!onlyId || item.id === onlyId)
+            && (force || !item.nextAttemptAt || new Date(item.nextAttemptAt).valueOf() <= now)
+          ))
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+        const processItem = async (item: QueueItem) => {
+          if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return "auth" as const;
+          const lastAttemptAt = new Date().toISOString();
           await setQueueDurably((items) => items.map((entry) => entry.id === item.id ? {
             ...entry,
-            state: "failed",
-            attempts: entry.attempts + 1,
-            error: error instanceof Error ? error.message : "Will retry when connected.",
+            state: "syncing",
+            lastAttemptAt,
+            error: undefined,
+            errorKind: undefined,
+            httpStatus: undefined,
           } : entry));
-          // One slow or rejected operation must never block later visits,
-          // orders, or attendance records that are safe to retry independently.
-          continue;
+          try {
+            await executeOperation(item.operation!, authenticatedSession);
+            if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return "auth" as const;
+            await setQueueDurably((items) => items.map((entry) => entry.id === item.id
+              ? { ...entry, state: "confirmed", error: undefined, errorKind: undefined, httpStatus: undefined, nextAttemptAt: undefined }
+              : entry));
+            confirmedAny = true;
+            setLastSyncAt(new Date().toISOString());
+            if (item.operation?.type === "visit_submit") {
+              const outletId = item.operation.fields.outletId || item.operation.fields.visitId;
+              setOutlets((items) => items.map((outlet) => outlet.id === outletId ? {
+                ...outlet,
+                status: "completed",
+                ...(outlet.kind === "self" ? { placeApprovalStatus: "pending_review" as const } : {}),
+              } : outlet));
+              deleteLocalEvidence(item.operation);
+            }
+            return "confirmed" as const;
+          } catch (error) {
+            if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return "auth" as const;
+            const status = error instanceof RequestError ? error.status : 0;
+            const errorKind: QueueItem["errorKind"] = status === 401
+              ? "auth"
+              : [400, 403, 404, 409, 422].includes(status)
+                ? "validation"
+                : status >= 500
+                  ? "server"
+                  : "connection";
+            await setQueueDurably((items) => items.map((entry) => {
+              if (entry.id !== item.id) return entry;
+              const attempts = entry.attempts + 1;
+              const delay = errorKind === "validation" || errorKind === "auth"
+                ? 5 * 60_000
+                : retryDelayMs(attempts);
+              return {
+                ...entry,
+                state: "failed",
+                attempts,
+                errorKind,
+                ...(status ? { httpStatus: status } : {}),
+                lastAttemptAt,
+                nextAttemptAt: new Date(Date.now() + delay).toISOString(),
+                error: error instanceof Error ? error.message : "Connection interrupted. FieldOPS will retry.",
+              };
+            }));
+            return errorKind;
+          }
+        };
+
+        const attendance = candidates.filter((item) => item.operation?.type === "json" && item.operation.path === "/attendance");
+        let attendanceBlocked = false;
+        for (const item of attendance) {
+          const result = await processItem(item);
+          if (result === "auth" || result === "connection" || result === "server") {
+            attendanceBlocked = true;
+            break;
+          }
         }
+        if (!attendanceBlocked) {
+          const remaining = candidates.filter((item) => !attendance.includes(item));
+          let cursor = 0;
+          let uploadsBlocked = false;
+          const worker = async () => {
+            while (cursor < remaining.length && !uploadsBlocked) {
+              const item = remaining[cursor];
+              cursor += 1;
+              if (item) {
+                const result = await processItem(item);
+                if (result === "auth" || result === "connection" || result === "server") uploadsBlocked = true;
+              }
+            }
+          };
+          await Promise.all([worker(), worker()]);
+        }
+        force = syncForceRequestedRef.current;
+        onlyId = undefined;
+      } while (syncRequestedRef.current && sessionIsCurrent(authenticatedSession, sessionEpoch));
+      if (confirmedAny && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
+        await refreshContext(false).catch(() => undefined);
       }
     })();
     syncPromiseRef.current = operation;
     return operation.finally(() => {
       if (syncPromiseRef.current === operation) syncPromiseRef.current = null;
     });
+  }
+
+  async function retryQueueItem(id: string) {
+    await setQueueDurably((items) => items.map((item) => item.id === id ? {
+      ...item,
+      state: "pending",
+      nextAttemptAt: undefined,
+      error: undefined,
+      errorKind: undefined,
+      httpStatus: undefined,
+    } : item));
+    await syncOperations({ force: true, onlyId: id });
   }
 
   async function enqueue(label: string, operation: OfflineOperation) {
@@ -765,7 +1003,10 @@ function FieldOpsApp() {
       const today = String(context.date ?? pakistanWorkDate());
       const nextPolicy = normalizeTerritoryPolicy(context.territoryPolicy);
       setOutlets((current) => mergeRefreshedVisits(context.route as Outlet[], current, today));
+      setServerActivity(Array.isArray(context.recentActivity) ? context.recentActivity as ServerActivity[] : []);
+      setLastSyncAt(new Date().toISOString());
       setTerritoryPolicy(nextPolicy);
+      setContextDate(today);
       setTerritoryPosition(nextPolicy.mode === "restricted" ? "checking" : "unrestricted");
       const hasPendingAttendance = queueRef.current.some((item) => (
         item.employeeId === authenticatedSession.employee.id
@@ -776,14 +1017,11 @@ function FieldOpsApp() {
       ));
       if (!hasPendingAttendance) setWorkState(context.workState ?? (context.shiftActive ? "active" : "not_started"));
       setSelectedId((current) => current || String(context.route[0]?.id ?? ""));
-
-      const foreground = await Location.getForegroundPermissionsAsync();
-      if (foreground.granted && await Location.hasServicesEnabledAsync()) {
-        const point = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
-        updateTerritoryPosition(point.coords.latitude, point.coords.longitude, nextPolicy);
+      checkMyLocation(false, nextPolicy).catch(() => undefined);
+      if (showMessage) {
+        const assignedCount = (context.route as Outlet[]).filter((outlet) => outlet.kind !== "self").length;
+        Alert.alert("Today updated", `${assignedCount} assigned ${assignedCount === 1 ? "visit" : "visits"} and your latest activity are ready.`);
       }
-      if (showMessage) Alert.alert("Visits refreshed", `${context.route.length} assigned visits downloaded.`);
     } catch (error) {
       if (showMessage && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
         Alert.alert("Working offline", error instanceof Error ? error.message : "Could not refresh assigned visits.");
@@ -815,10 +1053,18 @@ function FieldOpsApp() {
         queue: queueRef.current,
         activeVisit,
         territoryPolicy,
+        contextDate,
+        serverActivity,
+        lastSyncAt,
       } satisfies PersistedState));
       await AsyncStorage.removeItem(RECOVERY_EMPLOYEE_STORAGE_KEY);
       recoveryEmployeeIdRef.current = "";
       setRecoveryEmployeeId("");
+    }
+    if (!recoveryOwner) {
+      setContextDate("");
+      setTerritoryPolicy(unrestrictedTerritoryPolicy);
+      setTerritoryPosition("checking");
     }
     sessionEpochRef.current += 1;
     sessionRef.current = result;
@@ -827,12 +1073,39 @@ function FieldOpsApp() {
     setScreen("today");
   }
 
-  async function gps(accuracy = Location.Accuracy.High) {
+  async function getGpsFix(accuracy = Location.Accuracy.High) {
     const permission = await Location.getForegroundPermissionsAsync();
-    if (!permission.granted) throw new Error("Location permission is off. Open Settings and allow location access.");
-    if (!await Location.hasServicesEnabledAsync()) throw new Error("GPS is off. Turn on Location Services to continue.");
-    const point = await Location.getCurrentPositionAsync({ accuracy });
+    if (!permission.granted) throw new Error("Location access is off. Allow location in phone settings, then try again.");
+    if (!await Location.hasServicesEnabledAsync()) throw new Error("Phone location is off. Turn on Location Services, then try again.");
+    return withGpsTimeout(Location.getCurrentPositionAsync({ accuracy }));
+  }
+
+  async function checkMyLocation(showError = true, policy = territoryPolicy) {
+    setLocationChecking(true);
+    if (policy.mode === "restricted") setTerritoryPosition("checking");
+    try {
+      const point = await getGpsFix(Location.Accuracy.Balanced);
+      updateTerritoryPosition(point.coords.latitude, point.coords.longitude, policy);
+      setLastLocationCheck({ accuracy: Math.round(point.coords.accuracy ?? 0), checkedAt: new Date().toISOString() });
+      return point;
+    } catch (error) {
+      await refreshPermissions(false).catch(() => undefined);
+      if (showError) {
+        Alert.alert("Location not ready", error instanceof Error ? error.message : "Check phone location and try again.", [
+          { text: "Close", style: "cancel" },
+          { text: "Open settings", onPress: () => Linking.openSettings() },
+        ]);
+      }
+      throw error;
+    } finally {
+      setLocationChecking(false);
+    }
+  }
+
+  async function gps(accuracy = Location.Accuracy.High) {
+    const point = await getGpsFix(accuracy);
     updateTerritoryPosition(point.coords.latitude, point.coords.longitude);
+    setLastLocationCheck({ accuracy: Math.round(point.coords.accuracy ?? 0), checkedAt: new Date().toISOString() });
     return point;
   }
 
@@ -982,6 +1255,11 @@ function FieldOpsApp() {
     }
     try {
       const point = await gps();
+      const markAccuracy = point.coords.accuracy;
+      if (typeof markAccuracy !== "number" || !Number.isFinite(markAccuracy) || markAccuracy < 0 || markAccuracy > MAX_PLACE_MARK_ACCURACY_METERS) {
+        const accuracyLabel = typeof markAccuracy === "number" && Number.isFinite(markAccuracy) ? `${Math.round(markAccuracy)} m` : "an unknown distance";
+        throw new Error(`The GPS signal is weak right now (about ±${accuracyLabel}). Step near the shop entrance or into an open area, wait for the accuracy number to improve, then mark again.`);
+      }
       requireTerritory(point.coords.latitude, point.coords.longitude);
       const visitId = operationId("visit");
       const visit: Outlet = {
@@ -997,6 +1275,7 @@ function FieldOpsApp() {
         notes: "",
         kind: "self",
         workDate: pakistanWorkDate(new Date(point.timestamp)),
+        placeApprovalStatus: "pending_review",
       };
       setOutlets((items) => [...items, visit]);
       setActiveVisit({
@@ -1009,7 +1288,7 @@ function FieldOpsApp() {
           customerAddress,
           checkInLatitude: String(point.coords.latitude),
           checkInLongitude: String(point.coords.longitude),
-          checkInAccuracy: String(point.coords.accuracy ?? 0),
+          checkInAccuracy: String(markAccuracy),
           checkInCapturedAt: new Date(point.timestamp).toISOString(),
         },
         outcome: "Order placed",
@@ -1023,6 +1302,7 @@ function FieldOpsApp() {
   }
 
   async function takePhoto() {
+    const previousPhoto = activeVisit?.photo;
     try {
       let permission = await ImagePicker.getCameraPermissionsAsync();
       if (!permission.granted) permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -1044,6 +1324,7 @@ function FieldOpsApp() {
         name: `visit-${current.id}.jpg`,
         type: "image/jpeg",
       } } : current);
+      if (previousPhoto?.uri !== uri) deleteStoredAttachment(previousPhoto);
     } catch (error) {
       Alert.alert("Photo not saved", error instanceof Error ? error.message : "Could not save this photo. Please try again.");
     }
@@ -1051,6 +1332,7 @@ function FieldOpsApp() {
 
   async function toggleRecording() {
     if (recording) {
+      const previousAudio = activeVisit?.audio;
       try {
         await audioRecorder.stop();
         const uri = audioRecorder.uri;
@@ -1061,6 +1343,7 @@ function FieldOpsApp() {
           name: `visit-${current.id}.m4a`,
           type: "audio/m4a",
         } } : current);
+        if (previousAudio?.uri !== preservedUri) deleteStoredAttachment(previousAudio);
       } catch (error) {
         try { await audioRecorder.stop(); } catch { /* Already stopped or unavailable. */ }
         Alert.alert("Audio not saved", error instanceof Error ? error.message : "Could not save this audio note. Please try again.");
@@ -1121,7 +1404,7 @@ function FieldOpsApp() {
         Alert.alert("Return to the visit location", `You are ${distance} m away. Finish the visit within ${GEOFENCE_METERS} m.`);
         return;
       }
-      await enqueue(`${selected.name} · complete visit`, {
+      await enqueue(`${selected.name} · ${selected.kind === "self" ? "send place report" : "complete visit"}`, {
         type: "visit_submit",
         path: "/visits/submit",
         fields: {
@@ -1140,12 +1423,42 @@ function FieldOpsApp() {
       });
       setActiveVisit(null);
       setScreen("route");
-      Alert.alert("Visit saved", "The photo, audio note, and GPS are safely queued. The visit will show completed after the server confirms the upload.");
+      Alert.alert(
+        selected.kind === "self" ? "Place report saved" : "Visit saved",
+        selected.kind === "self"
+          ? "The marked point, photo, and voice report are safe. After upload, an admin will review the name and add it as a permanent place."
+          : "The photo, voice report, and GPS are safe. The visit completes after server confirmation.",
+      );
     } catch (error) {
       Alert.alert("Visit not finished", error instanceof Error ? error.message : "Turn on GPS and try again.");
     } finally {
       visitSubmittingRef.current = false;
     }
+  }
+
+  function discardActiveVisit() {
+    if (!activeVisit || !selected || activeVisit.outletId !== selected.id) return;
+    if (recording) {
+      Alert.alert("Stop the recording first", "Stop the voice recording before discarding this draft.");
+      return;
+    }
+    Alert.alert(
+      selected.kind === "self" ? "Discard this marked place?" : "Discard this visit draft?",
+      "The unsent point, photo, voice report, and notes will be removed from this phone.",
+      [
+        { text: "Keep draft", style: "cancel" },
+        { text: "Discard", style: "destructive", onPress: () => {
+          deleteStoredAttachment(activeVisit.photo);
+          deleteStoredAttachment(activeVisit.audio);
+          setActiveVisit(null);
+          setOutlets((items) => selected.kind === "self"
+            ? items.filter((item) => item.id !== selected.id)
+            : items.map((item) => item.id === selected.id ? { ...item, status: "planned" } : item));
+          setSelectedId("");
+          setScreen("route");
+        } },
+      ],
+    );
   }
 
   async function createOrder(order: OrderDraft) {
@@ -1181,8 +1494,10 @@ function FieldOpsApp() {
   }
 
   async function retryEverything() {
-    await syncOperations();
-    if (session) await flushLocationQueue(session.employee.id, session.token);
+    await Promise.all([
+      syncOperations({ force: true }),
+      session ? flushLocationQueue(session.employee.id, session.token) : Promise.resolve(0),
+    ]);
     await refreshLocationCount();
     await refreshContext(false);
   }
@@ -1211,12 +1526,16 @@ function FieldOpsApp() {
             queue: queueRef.current,
             activeVisit,
             territoryPolicy,
+            contextDate,
+            serverActivity,
+            lastSyncAt,
           } satisfies PersistedState)],
         ]);
       } catch {
         Alert.alert("Could not protect saved work", "FieldOPS could not update local storage. Please try again before signing out.");
         return;
       }
+      await revokeMobileSession(authenticatedSession);
       recoveryEmployeeIdRef.current = employeeId;
       setRecoveryEmployeeId(employeeId);
       sessionEpochRef.current += 1;
@@ -1225,6 +1544,9 @@ function FieldOpsApp() {
       heartbeatRunningRef.current = false;
       setSession(null);
       setLocationPending(0);
+      setLocationRejected(0);
+      setLocationSyncError("");
+      setNetworkOnline(null);
       setRefreshing(false);
       setScreen("today");
       Alert.alert(
@@ -1243,11 +1565,15 @@ function FieldOpsApp() {
         queue: [],
         activeVisit: null,
         territoryPolicy: unrestrictedTerritoryPolicy,
+        contextDate: "",
+        serverActivity: [],
+        lastSyncAt: "",
       } satisfies PersistedState));
     } catch {
       Alert.alert("Could not sign out safely", "FieldOPS could not update local storage. Please try again.");
       return;
     }
+    await revokeMobileSession(authenticatedSession);
     sessionEpochRef.current += 1;
     sessionRef.current = null;
     syncPromiseRef.current = null;
@@ -1260,9 +1586,15 @@ function FieldOpsApp() {
     setWorkState("not_started");
     setActiveVisit(null);
     setLocationPending(0);
+    setLocationRejected(0);
+    setLocationSyncError("");
+    setNetworkOnline(null);
     setRefreshing(false);
     setTerritoryPolicy(unrestrictedTerritoryPolicy);
-    setTerritoryPosition("unrestricted");
+    setContextDate("");
+    setTerritoryPosition("checking");
+    setServerActivity([]);
+    setLastSyncAt("");
     setScreen("today");
   }
 
@@ -1274,7 +1606,7 @@ function FieldOpsApp() {
     </SafeAreaView>;
   }
   if (!session) return <Login onSubmit={signIn} recoveryRequired={Boolean(recoveryEmployeeId)} />;
-  if (!permissionChecked || !permissionReady) {
+  if (!permissionChecked) {
     return <PermissionGate
       state={permissionState}
       busy={permissionBusy}
@@ -1289,17 +1621,25 @@ function FieldOpsApp() {
       <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
         <View className="gap-4 px-5 py-5">
           <Header
+            screen={screen}
             pending={pending}
             refreshing={refreshing}
             onSync={() => setScreen("sync")}
             onRefresh={() => refreshContext()}
           />
-          <TerritoryBanner
+          {screen !== "sync" && screen !== "profile" && <TerritoryBanner
             policy={territoryPolicy}
+            policyReady={territoryPolicyReady}
             position={territoryPosition}
             message={territoryMessage}
-            onRefresh={() => refreshContext(false)}
-          />
+            permissionState={permissionState}
+            checking={locationChecking || (!territoryPolicyReady && refreshing)}
+            lastCheck={lastLocationCheck}
+            onCheck={() => {
+              if (territoryPolicyReady) checkMyLocation().catch(() => undefined);
+              else refreshContext().catch(() => undefined);
+            }}
+          />}
           {screen === "today" && <Today
             workState={workState}
             trackingReady={trackingReady}
@@ -1311,7 +1651,7 @@ function FieldOpsApp() {
             territoryMessage={territoryMessage}
             onStartWork={startWork}
             onFinishWork={finishWork}
-            onFixGps={() => Linking.openSettings()}
+            onFixGps={() => permissionReady ? checkMyLocation().catch(() => undefined) : Linking.openSettings()}
             onStartVisit={() => nextOutlet && startVisit(nextOutlet)}
             onNewVisit={() => setScreen("new_visit")}
             onRoute={() => setScreen("route")}
@@ -1339,6 +1679,7 @@ function FieldOpsApp() {
           {screen === "visit" && selected && <Visit
             outlet={selected}
             activeVisit={activeVisit?.outletId === selected.id}
+            checkInAccuracy={activeVisit?.outletId === selected.id ? Number(activeVisit.checkIn?.checkInAccuracy) : undefined}
             submissionPending={pendingVisitOutletIds.has(selected.id)}
             accessAllowed={fieldActionsAllowed}
             territoryMessage={territoryMessage}
@@ -1349,10 +1690,12 @@ function FieldOpsApp() {
             photo={activeVisit?.photo}
             audio={activeVisit?.audio}
             recording={Boolean(recording)}
+            recordingSeconds={Math.floor(audioRecorderState.durationMillis / 1000)}
             onStart={() => startVisit(selected)}
             onPhoto={takePhoto}
             onAudio={toggleRecording}
             onFinish={finishVisit}
+            onDiscard={discardActiveVisit}
           />}
           {screen === "order" && <Order
             outlets={assignedOutlets}
@@ -1363,7 +1706,15 @@ function FieldOpsApp() {
           {screen === "sync" && <SyncQueue
             queue={employeeQueue}
             locationPending={locationPending}
+            locationRejected={locationRejected}
+            locationSyncError={locationSyncError}
+            activity={serverActivity}
+            online={networkOnline}
+            lastSyncAt={lastSyncAt}
             onRetry={retryEverything}
+            onRetryItem={retryQueueItem}
+            onClearRejectedLocations={removeRejectedRoutePoints}
+            onRefresh={() => refreshContext(false)}
           />}
           {screen === "profile" && <Profile
             session={session}
@@ -1375,7 +1726,7 @@ function FieldOpsApp() {
           />}
         </View>
       </ScrollView>
-      <Nav screen={screen} setScreen={setScreen} />
+      <Nav screen={screen} pending={pending} setScreen={setScreen} />
     </View>
   </SafeAreaView>;
 }
@@ -1466,18 +1817,18 @@ function PermissionGate({
   return <SafeAreaView className="flex-1 bg-paper" edges={["top", "bottom"]}>
     <ScrollView className="flex-1">
       <View className="min-h-screen justify-center gap-4 px-6 py-10">
-        <Eyebrow>FIRST STEP</Eyebrow>
-        <ScreenTitle>Allow location</ScreenTitle>
+        <Eyebrow>ONE-TIME SETUP</Eyebrow>
+        <ScreenTitle>Turn on location</ScreenTitle>
         <BodyText>
-          FieldOPS needs current location for visit boundaries, work-route updates and GPS evidence. Camera and microphone are requested only when used.
+          Location proves you are at the customer when you check in or mark a new place. You can still open Activity and sync saved work if location is turned off later.
         </BodyText>
         <View className="rounded-2xl border border-line bg-white px-4">
-          <PermissionRow label="Location while using the app" ready={state.foreground} />
-          <PermissionRow label="GPS / Location Services" ready={state.services} />
-          <PermissionRow label="Camera evidence" ready={state.camera} later />
-          <PermissionRow label="Audio evidence" ready={state.microphone} later />
+          <PermissionRow label="Allow FieldOPS location" ready={state.foreground} />
+          <PermissionRow label="Phone location switched on" ready={state.services} />
+          <PermissionRow label="Camera for storefront photo" ready={state.camera} later />
+          <PermissionRow label="Microphone for voice report" ready={state.microphone} later />
         </View>
-        <Button label={busy ? "Checking location…" : "Allow location"} disabled={busy} onPress={onRequest} />
+        <Button label={busy ? "Checking…" : "Allow location & continue"} disabled={busy} onPress={onRequest} />
         <GhostButton dark label="Open phone settings" onPress={onSettings} />
         <GhostButton dark label="Sign out" onPress={onLogout} />
       </View>
@@ -1496,37 +1847,45 @@ function PermissionRow({ label, ready, later = false }: { label: string; ready: 
 }
 
 function Header({
+  screen,
   pending,
   refreshing,
   onSync,
   onRefresh,
 }: {
+  screen: Screen;
   pending: number;
   refreshing: boolean;
   onSync: () => void;
   onRefresh: () => void;
 }) {
-  return <View className="flex-row items-start justify-between gap-2.5">
-    <View className="flex-1">
-      <Eyebrow>YOUSUF RICE · FIELDOPS</Eyebrow>
-      <Text className="mt-1 text-[26px] font-extrabold text-ink">Today’s field work</Text>
+  const section = screen === "sync" ? "Activity" : screen === "profile" ? "Profile" : "Field work";
+  return <View className="flex-row items-center gap-2">
+    <View className="min-w-0 flex-1 flex-row items-center gap-2.5">
+      <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-ink">
+        <Text className="text-xs font-black tracking-wider text-gold">YR</Text>
+      </View>
+      <View className="min-w-0 flex-1">
+        <Text className="text-[17px] font-black text-ink">FieldOPS</Text>
+        <Text className="mt-0.5 text-[11px] font-bold text-muted" numberOfLines={1}>{section} · {new Date().toLocaleDateString("en-PK", { weekday: "short", day: "numeric", month: "short" })}</Text>
+      </View>
     </View>
     <View className="flex-row gap-1.5">
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel="Refresh today’s assignments and territory"
-        className="min-h-12 min-w-12 items-center justify-center rounded-full bg-[#E6ECF8] px-3"
+        className="min-h-11 min-w-11 items-center justify-center rounded-full bg-[#E6ECF8] px-2"
         onPress={onRefresh}
       >
-        <Text className="text-[11px] font-black text-field">{refreshing ? "Loading" : "Refresh"}</Text>
+        <Text className="text-[11px] font-black text-field">{refreshing ? "Updating" : "Update"}</Text>
       </TouchableOpacity>
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={`Open activity. ${pending} records pending`}
-        className="min-h-12 min-w-12 items-center justify-center rounded-full bg-[#FFF1D0] px-3"
+        className="min-h-11 min-w-11 items-center justify-center rounded-full bg-[#FFF1D0] px-2"
         onPress={onSync}
       >
-        <Text className="text-[11px] font-black text-[#805C00]">{pending} pending</Text>
+        <Text className="text-[11px] font-black text-[#805C00]">{pending > 0 ? `${pending} wait` : "Saved"}</Text>
       </TouchableOpacity>
     </View>
   </View>;
@@ -1534,42 +1893,73 @@ function Header({
 
 function TerritoryBanner({
   policy,
+  policyReady,
   position,
   message,
-  onRefresh,
+  permissionState,
+  checking,
+  lastCheck,
+  onCheck,
 }: {
   policy: TerritoryPolicy;
+  policyReady: boolean;
   position: TerritoryPosition;
   message: string;
-  onRefresh: () => void;
+  permissionState: PermissionState;
+  checking: boolean;
+  lastCheck: { accuracy: number; checkedAt: string } | null;
+  onCheck: () => void;
 }) {
-  const allowed = position === "inside" || position === "unrestricted";
+  const permissionProblem = !permissionState.foreground || !permissionState.services;
+  const effectivePosition = checking ? "checking" : position;
+  const allowed = policyReady && !permissionProblem && (effectivePosition === "inside" || effectivePosition === "unrestricted");
+  const waiting = !policyReady || effectivePosition === "checking";
+  const title = !policyReady
+    ? "Update today’s work access"
+    : permissionProblem
+    ? !permissionState.foreground ? "Allow location to begin" : "Turn on phone location"
+    : effectivePosition === "inside" || effectivePosition === "unrestricted"
+      ? "You’re ready here"
+      : effectivePosition === "checking"
+        ? "Finding your location…"
+        : effectivePosition === "boundary_missing"
+          ? "Work-area map needed"
+          : "Move into your work area";
+  const detail = !policyReady
+    ? message
+    : permissionProblem
+    ? !permissionState.foreground
+      ? "FieldOPS needs your current location to mark visits and verify evidence. Saved uploads remain available in Activity."
+      : "Turn on Location Services. Saved uploads remain available in Activity."
+    : message;
   return <View
     accessibilityRole="summary"
     className={classes(
       "rounded-xl border-l-4 p-4",
-      allowed ? "border-success bg-[#E9F5EF]" : position === "checking" ? "border-gold bg-[#FFF1D0]" : "border-danger bg-[#FCEDEA]",
+      allowed ? "border-success bg-[#E9F5EF]" : waiting ? "border-gold bg-[#FFF1D0]" : "border-danger bg-[#FCEDEA]",
     )}
   >
     <View className="flex-row items-start justify-between gap-3">
       <View className="flex-1">
-        <Text className={classes("text-[10px] font-black tracking-wider", allowed ? "text-success" : "text-danger")}>
-          {policy.mode === "unrestricted" ? "NO TERRITORY RESTRICTION" : `${policy.assignedCount} TERRITOR${policy.assignedCount === 1 ? "Y" : "IES"} ASSIGNED`}
+        <Text className={classes("text-[10px] font-black tracking-wider", allowed ? "text-success" : waiting ? "text-[#805C00]" : "text-danger")}>
+          {!policyReady ? "WORK ACCESS NEEDED" : permissionProblem ? "LOCATION SETUP" : policy.mode === "unrestricted" ? "LOCATION READY" : `${policy.assignedCount} WORK AREA${policy.assignedCount === 1 ? "" : "S"}`}
         </Text>
-        <Text className="mt-1 text-lg font-black text-ink">
-          {position === "inside" ? "Inside territory" : position === "unrestricted" ? "Field access open" : position === "checking" ? "Checking field access" : "Field actions blocked"}
-        </Text>
+        <Text className="mt-1 text-lg font-black text-ink">{title}</Text>
       </View>
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel="Check territory access again"
+        accessibilityLabel="Check my current location"
         className="min-h-12 justify-center rounded-lg border border-ink px-3"
-        onPress={onRefresh}
+        onPress={onCheck}
+        disabled={checking}
       >
-        <Text className="font-extrabold text-ink">Check GPS</Text>
+        <Text className="font-extrabold text-ink">{checking ? "Checking…" : !policyReady ? "Update" : permissionProblem ? "Fix location" : "Check again"}</Text>
       </TouchableOpacity>
     </View>
-    <Text className="mt-2 leading-5 text-[#586273]">{message}</Text>
+    <Text className="mt-2 leading-5 text-[#586273]">{detail}</Text>
+    {lastCheck && policyReady && !permissionProblem && <Text className="mt-2 text-[11px] font-bold text-[#607063]">
+      Checked {new Date(lastCheck.checkedAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })} · accuracy about {lastCheck.accuracy} m
+    </Text>}
   </View>;
 }
 
@@ -1615,12 +2005,12 @@ function Today({
         ? "Work stopped"
         : "Ready to start";
   const detail = workState === "active" && !trackingReady
-        ? "GPS or location access is off"
+        ? "Location is paused — saved work can still sync"
     : running
-      ? "Route recording every minute"
+      ? "Location is ready for visits and route updates"
       : workState === "finished"
         ? "Your last session is saved. Start again whenever needed"
-        : "GPS starts with your work";
+        : "We’ll check your location when you start";
   const actionEnabled = running && fieldActionsAllowed;
   return <>
     <View className={classes(
@@ -1628,7 +2018,7 @@ function Today({
       running ? "border-l-[#52B889]" : workState === "active" ? "border-l-[#D05242]" : "border-l-[#95A0B5]",
     )}>
       <View className="flex-1">
-        <Text className="text-[10px] font-black text-[#AAB3C5]">TODAY · WORK STATUS</Text>
+        <Text className="text-[10px] font-black tracking-wider text-[#AAB3C5]">TODAY’S SESSION</Text>
         <Text className="mt-1 text-lg font-black text-white">{title}</Text>
         <Text className="mt-1 text-[11px] text-[#BAC4D8]">{detail}</Text>
       </View>
@@ -1645,19 +2035,20 @@ function Today({
     </View>
 
     {nextOutlet ? <View className="rounded-2xl bg-field p-5">
-      <Text className="text-[10px] font-black tracking-wider text-[#B6C2DF]">NEXT ASSIGNED VISIT · {GEOFENCE_METERS} M CHECK-IN</Text>
+      <Text className="text-[10px] font-black tracking-wider text-[#B6C2DF]">NEXT ASSIGNED VISIT</Text>
       <Text className="mt-2.5 text-2xl font-black text-white">{nextOutlet.name}</Text>
       <Text className="mt-1.5 text-[#C2CBE0]">{nextOutlet.address}</Text>
       <View className="mt-5 flex-row flex-wrap gap-2.5">
-        <Button label="Start assigned visit" disabled={!actionEnabled} onPress={onStartVisit} />
+        <Button label="Check in at this shop" disabled={!actionEnabled} onPress={onStartVisit} />
         <GhostButton label="All assigned visits" onPress={onRoute} />
       </View>
       {!fieldActionsAllowed && <Text className="mt-3 leading-5 text-[#FFF1D0]">{territoryMessage}</Text>}
-    </View> : <EmptyState title="No assigned visits waiting" body="You can still add your own customer visit while work, GPS, and territory access are active." />}
+      <Text className="mt-3 text-xs leading-4 text-[#C2CBE0]">Stand at the shop. FieldOPS will confirm you’re within {GEOFENCE_METERS} m.</Text>
+    </View> : <EmptyState title="No assigned visits waiting" body="You can still mark a new customer place while your work session and location are ready." />}
 
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel="Add an unplanned customer visit"
+      accessibilityLabel="Mark a new customer place"
       accessibilityState={{ disabled: !actionEnabled }}
       className={classes(
         "min-h-24 flex-row items-center justify-between rounded-[14px] border border-success bg-[#E4F2EA] p-[18px]",
@@ -1667,11 +2058,11 @@ function Today({
       onPress={onNewVisit}
     >
       <View className="flex-1">
-        <Text className="text-[10px] font-black tracking-wider text-success">SALESPERSON-ADDED · {selfVisitCount} TODAY</Text>
-        <Text className="mt-1 text-xl font-black text-ink">Visit another customer</Text>
-        <Text className="mt-1 text-xs text-[#4F655C]">GPS, photo and audio are required</Text>
+        <Text className="text-[10px] font-black tracking-wider text-success">NEW PLACE · {selfVisitCount} MARKED TODAY</Text>
+        <Text className="mt-1 text-xl font-black text-ink">Mark a customer place</Text>
+        <Text className="mt-1 text-xs text-[#4F655C]">You set the point · admin approves the final name</Text>
       </View>
-      <Text className="font-black text-success">Add visit</Text>
+      <Text className="font-black text-success">Mark</Text>
     </TouchableOpacity>
 
     <TouchableOpacity
@@ -1693,8 +2084,8 @@ function Today({
     </TouchableOpacity>
 
     <InfoNotice
-      title="Offline-safe route"
-      body="Assigned completion remains separate from your own visits. GPS, evidence, orders, and status stay on this phone until the server confirms them."
+      title="A new place takes four clear steps"
+      body="Mark the spot, add a photo, record your voice sales report, then send it. An admin reviews the name before the point becomes a permanent outlet."
     />
   </>;
 }
@@ -1717,9 +2108,9 @@ function Route({
   onNewVisit: () => void;
 }) {
   return <>
-    <ScreenTitle>Today’s visits</ScreenTitle>
-    <BodyText>Management assignments stay separate from customer visits you add yourself.</BodyText>
-    <Button label="Add unplanned customer visit" disabled={!canAddVisit} onPress={onNewVisit} />
+    <ScreenTitle>Places & visits</ScreenTitle>
+    <BodyText>Assigned shops and new places you mark stay separate, so you always know what management planned.</BodyText>
+    <Button label="Mark a new customer place" disabled={!canAddVisit} onPress={onNewVisit} />
     <SectionTitle>Assigned by management</SectionTitle>
     {assigned.length > 0 && <RouteMap outlets={assigned} territories={territoryPolicy.territories} />}
     {assigned.length === 0 && <EmptyState title="No assigned visits" body="You can still add your own visit above when field access is available." />}
@@ -1741,9 +2132,9 @@ function Route({
       <Status status={outlet.status} />
     </View>)}
 
-    <SectionTitle>Added by you</SectionTitle>
+    <SectionTitle>Places marked by you</SectionTitle>
     {selfVisits.length === 0
-      ? <View className="rounded-[10px] border border-dashed border-line p-4"><BodyText>No unplanned visits recorded today.</BodyText></View>
+      ? <View className="rounded-[10px] border border-dashed border-line p-4"><BodyText>No new places marked today.</BodyText></View>
       : selfVisits.map((outlet) => <TouchableOpacity
         key={outlet.id}
         accessibilityRole="button"
@@ -1751,12 +2142,12 @@ function Route({
         className="mb-2 min-h-16 flex-row items-center gap-3 rounded-xl bg-[#F0F7F3] p-3.5"
         onPress={() => onSelect(outlet.id)}
       >
-        <View className="h-8 w-8 items-center justify-center rounded-full bg-success"><Text className="text-xs font-black text-white">SELF</Text></View>
+        <View className="h-8 w-8 items-center justify-center rounded-full bg-success"><Text className="text-sm font-black text-white">+</Text></View>
         <View className="flex-1">
           <Text className="font-extrabold text-ink">{outlet.name}</Text>
           <Text className="mt-1 text-xs text-muted">{outlet.address}</Text>
         </View>
-        <Status status={outlet.status} />
+        <PlaceReviewStatus status={outlet.placeApprovalStatus} visitStatus={outlet.status} />
       </TouchableOpacity>)}
   </>;
 }
@@ -1779,19 +2170,20 @@ function NewVisit({
   const [busy, setBusy] = useState(false);
   const enabled = running && accessAllowed;
   return <>
-    <Eyebrow>SALESPERSON-ADDED VISIT</Eyebrow>
-    <ScreenTitle>Visit another customer</ScreenTitle>
+    <Eyebrow>NEW CUSTOMER PLACE</Eyebrow>
+    <ScreenTitle>Mark where you are</ScreenTitle>
     <BodyText>
-      Starting captures this GPS point. Finishing requires you to remain within {GEOFENCE_METERS} m and attach photo and audio evidence.
+      The point is the exact location where you tap the button below. It never moves. Admin can correct the place name when approving it.
     </BodyText>
+    <ProcessSteps current={1} labels={["Mark point", "Take photo", "Voice report", "Admin review"]} />
     {!enabled && <WarningNotice
-      title={!running ? "Start work and GPS first" : "Visit unavailable here"}
-      body={!running ? "Unplanned visits begin only while route tracking is active." : territoryMessage}
+      title={!running ? "Start your work session first" : "You can’t mark a place here yet"}
+      body={!running ? "Start work and make sure location is ready before marking a new place." : territoryMessage}
     />}
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
-      <InputLabel>CUSTOMER OR SHOP NAME · REQUIRED</InputLabel>
+      <InputLabel>PLACE OR SHOP NAME · REQUIRED</InputLabel>
       <TextInput
-        accessibilityLabel="Customer or shop name"
+        accessibilityLabel="Place or shop name"
         className="min-h-12 rounded-[9px] border border-line bg-white px-3 text-base text-ink"
         value={customerName}
         onChangeText={setCustomerName}
@@ -1799,17 +2191,17 @@ function NewVisit({
         placeholderTextColor="#697184"
         autoFocus
       />
-      <InputLabel>ADDRESS OR AREA · OPTIONAL</InputLabel>
+      <InputLabel>ADDRESS OR LANDMARK · OPTIONAL</InputLabel>
       <TextInput
         accessibilityLabel="Customer address or area"
         className="min-h-12 rounded-[9px] border border-line bg-white px-3 text-base text-ink"
         value={customerAddress}
         onChangeText={setCustomerAddress}
-        placeholder="GPS saves the exact point"
+        placeholder="Example: Tariq Road, near the pharmacy"
         placeholderTextColor="#697184"
       />
       <Button
-        label={busy ? "Capturing GPS…" : "Start visit at this location"}
+        label={busy ? "Marking this spot…" : "Mark this spot & start report"}
         disabled={busy || !enabled}
         onPress={async () => {
           if (!customerName.trim()) {
@@ -1850,6 +2242,7 @@ function RouteMap({ outlets, territories }: { outlets: Outlet[]; territories: Te
 function Visit({
   outlet,
   activeVisit,
+  checkInAccuracy,
   submissionPending,
   accessAllowed,
   territoryMessage,
@@ -1860,13 +2253,16 @@ function Visit({
   photo,
   audio,
   recording,
+  recordingSeconds,
   onStart,
   onPhoto,
   onAudio,
   onFinish,
+  onDiscard,
 }: {
   outlet: Outlet;
   activeVisit: boolean;
+  checkInAccuracy?: number;
   submissionPending: boolean;
   accessAllowed: boolean;
   territoryMessage: string;
@@ -1877,32 +2273,55 @@ function Visit({
   photo?: EvidenceAttachment;
   audio?: EvidenceAttachment;
   recording: boolean;
+  recordingSeconds: number;
   onStart: () => void;
   onPhoto: () => void;
   onAudio: () => void;
   onFinish: () => void;
+  onDiscard: () => void;
 }) {
   const outcomes = ["Order placed", "Order discussed", "No order", "Shop closed", "Owner unavailable"];
   const selfCreated = outlet.kind === "self";
+  const voicePlayer = useAudioPlayer(audio?.uri ?? null);
+  const voiceStatus = useAudioPlayerStatus(voicePlayer);
+  const statusTitle = activeVisit
+    ? "Report in progress"
+    : submissionPending
+      ? "Waiting to upload"
+      : selfCreated && outlet.placeApprovalStatus === "approved"
+        ? "Approved as a permanent place"
+        : selfCreated && outlet.placeApprovalStatus === "rejected"
+          ? "Admin asked for a new submission"
+          : selfCreated && outlet.status === "completed"
+            ? "Awaiting admin review"
+            : outlet.status === "completed"
+              ? "Visit completed"
+              : `Ready to check in within ${GEOFENCE_METERS} m`;
   return <>
-    <Eyebrow>{selfCreated ? "SALESPERSON-ADDED VISIT" : "MANAGEMENT-ASSIGNED VISIT"}</Eyebrow>
+    <Eyebrow>{selfCreated ? "PLACE MARKED BY YOU" : "MANAGEMENT-ASSIGNED VISIT"}</Eyebrow>
     <ScreenTitle>{outlet.name}</ScreenTitle>
     <BodyText>{outlet.address}</BodyText>
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
       <Eyebrow>VISIT STATUS</Eyebrow>
-      <Text className="text-xl font-black text-ink">
-        {activeVisit ? "Visit in progress" : submissionPending ? "Upload awaiting confirmation" : outlet.status === "completed" ? "Visit completed" : `Ready for ${GEOFENCE_METERS} m check-in`}
-      </Text>
+      <Text className="text-xl font-black text-ink">{statusTitle}</Text>
+      {activeVisit && typeof checkInAccuracy === "number" && Number.isFinite(checkInAccuracy) && <Text className="text-sm font-extrabold text-success">
+        GPS point locked · actual accuracy ±{Math.round(checkInAccuracy)} m
+      </Text>}
       {!accessAllowed && <WarningNotice title="Visit unavailable here" body={territoryMessage} />}
-      {submissionPending && <BodyText>The photo and audio are safe on this phone. Open Activity to retry the upload.</BodyText>}
-      {!selfCreated && !activeVisit && !submissionPending && outlet.status !== "completed" && <Button label="GPS check in" disabled={!accessAllowed} onPress={onStart} />}
+      {submissionPending && <BodyText>The marked point, photo, and voice report are safe on this phone. Activity shows upload progress.</BodyText>}
+      {!selfCreated && !activeVisit && !submissionPending && outlet.status !== "completed" && <Button label="Check in at this shop" disabled={!accessAllowed} onPress={onStart} />}
     </View>
+    {selfCreated && !activeVisit && !submissionPending && outlet.status === "completed" && <PlaceReviewNotice outlet={outlet} />}
     {activeVisit && <>
-      <WarningNotice
-        title="Required before finishing"
-        body={`This visit stays only on this phone until you submit it. Stay within ${GEOFENCE_METERS} m, remain inside an assigned territory if one applies, take one photo, and record one audio note.`}
+      <ProcessSteps
+        current={!photo ? 2 : !audio ? 3 : 4}
+        labels={selfCreated ? ["Point marked", "Take photo", "Voice report", "Send to admin"] : ["Checked in", "Take photo", "Voice report", "Send visit"]}
       />
-      <SectionTitle>Visit outcome</SectionTitle>
+      <WarningNotice
+        title={selfCreated ? "Finish the place report here" : "Finish this visit here"}
+        body={`Stay within ${GEOFENCE_METERS} m of the starting point. Add one clear storefront photo and a short voice sales report before sending.`}
+      />
+      <SectionTitle>Sales outcome</SectionTitle>
       <View className="flex-row flex-wrap gap-2">
         {outcomes.map((item) => <Choice
           key={item}
@@ -1916,18 +2335,32 @@ function Visit({
         className="min-h-[88px] rounded-[9px] border border-line bg-white px-3 py-3 text-base text-ink"
         value={notes}
         onChangeText={setNotes}
-        placeholder="Visit notes"
+        placeholder="Add useful details for your manager"
         placeholderTextColor="#697184"
         multiline
         textAlignVertical="top"
       />
       <View className="flex-row gap-2.5">
-        <EvidenceButton label={photo ? "Photo saved" : "Take required photo"} active={Boolean(photo)} onPress={onPhoto} />
-        <EvidenceButton label={recording ? "Stop recording" : audio ? "Audio saved" : "Record required audio"} active={Boolean(audio || recording)} onPress={onAudio} />
+        <EvidenceButton label={photo ? "Retake photo" : "Take storefront photo"} active={Boolean(photo)} onPress={onPhoto} />
+        <EvidenceButton label={recording ? `Stop · ${recordingSeconds}s` : audio ? "Retake voice report" : "Record voice report"} active={Boolean(audio || recording)} onPress={onAudio} />
       </View>
       {photo && <Image accessibilityLabel="Visit evidence preview" source={{ uri: photo.uri }} className="h-[220px] w-full rounded-xl" />}
-      {audio && <Text className="rounded-lg bg-[#E9F5EF] p-3 font-extrabold text-[#205E49]">Audio note is saved on this phone</Text>}
-      <Button label="Submit complete visit" disabled={!accessAllowed || !photo || !audio || recording} onPress={onFinish} />
+      {audio && <View className="flex-row items-center justify-between gap-3 rounded-lg bg-[#E9F5EF] p-3">
+        <View className="flex-1">
+          <Text className="font-extrabold text-[#205E49]">Voice sales report saved</Text>
+          <Text className="mt-1 text-xs text-[#4F655C]">Listen once before sending if needed.</Text>
+        </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={voiceStatus.playing ? "Pause voice report" : "Play voice report"}
+          className="min-h-11 min-w-16 items-center justify-center rounded-lg border border-success px-3"
+          onPress={() => voiceStatus.playing ? voicePlayer.pause() : voicePlayer.play()}
+        >
+          <Text className="font-black text-success">{voiceStatus.playing ? "Pause" : "Play"}</Text>
+        </TouchableOpacity>
+      </View>}
+      <Button label={selfCreated ? "Send for admin review" : "Complete visit"} disabled={!accessAllowed || !photo || !audio || recording} onPress={onFinish} />
+      <DangerOutlineButton label={selfCreated ? "Discard marked-place draft" : "Discard visit draft"} onPress={onDiscard} />
     </>}
   </>;
 }
@@ -2040,70 +2473,160 @@ function Order({
   </>;
 }
 
-function SyncQueue({ queue, locationPending, onRetry }: { queue: QueueItem[]; locationPending: number; onRetry: () => void }) {
+function SyncQueue({
+  queue,
+  locationPending,
+  locationRejected,
+  locationSyncError,
+  activity,
+  online,
+  lastSyncAt,
+  onRetry,
+  onRetryItem,
+  onClearRejectedLocations,
+  onRefresh,
+}: {
+  queue: QueueItem[];
+  locationPending: number;
+  locationRejected: number;
+  locationSyncError: string;
+  activity: ServerActivity[];
+  online: boolean | null;
+  lastSyncAt: string;
+  onRetry: () => void;
+  onRetryItem: (id: string) => void;
+  onClearRejectedLocations: () => void;
+  onRefresh: () => void;
+}) {
+  const [filter, setFilter] = useState<"all" | "places" | "sales">("all");
   const pendingOperations = queue.filter((item) => item.state !== "confirmed");
-  const failed = pendingOperations.filter((item) => item.state === "failed").length;
+  const failed = pendingOperations.filter((item) => item.state === "failed").length + locationRejected + (locationSyncError ? 1 : 0);
+  const authFailed = pendingOperations.some((item) => item.errorKind === "auth");
   const syncing = pendingOperations.some((item) => item.state === "syncing");
-  const pending = pendingOperations.length + locationPending;
-  const recent = [...queue].reverse().slice(0, 12);
+  const pending = pendingOperations.length + locationPending + locationRejected;
+  const visibleActivity = activity.filter((item) => (
+    filter === "all" || (filter === "places" ? item.kind === "place" || item.kind === "visit" : item.kind === "order")
+  ));
+  const awaitingReview = activity.filter((item) => item.status === "pending_review").length;
+  const approvedPlaces = activity.filter((item) => item.kind === "place" && item.status === "approved").length;
+  const syncTitle = online === false
+    ? "Offline — work is safe"
+    : pending === 0
+      ? "Everything is up to date"
+      : syncing
+        ? "Sending your work now"
+        : `${pending} ${pending === 1 ? "item" : "items"} waiting`;
   return <>
     <View className="gap-2">
-      <Eyebrow>SYNC CENTER</Eyebrow>
-      <ScreenTitle>Your work is protected</ScreenTitle>
-      <BodyText>Visits, evidence, orders, attendance, and route points remain on this phone until the server confirms each record.</BodyText>
+      <Eyebrow>ACTIVITY & SYNC</Eyebrow>
+      <ScreenTitle>Your field timeline</ScreenTitle>
+      <BodyText>See what happened today, what reached the office, and which new places are waiting for admin review.</BodyText>
     </View>
     <View className="overflow-hidden rounded-2xl bg-ink p-5">
       <View className="flex-row items-start justify-between gap-4">
         <View className="flex-1">
-          <Text className="text-xs font-black uppercase tracking-widest text-[#93A4C4]">Automatic sync</Text>
-          <Text className="mt-2 text-2xl font-black text-white">
-            {pending === 0 ? "Everything is up to date" : syncing ? "Syncing securely" : `${pending} ${pending === 1 ? "record" : "records"} waiting`}
+          <Text className="text-xs font-black uppercase tracking-widest text-[#93A4C4]">
+            {online === null ? "CHECKING CONNECTION" : online ? "ONLINE · AUTO SYNC ON" : "NO INTERNET · AUTO RETRY ON"}
           </Text>
+          <Text className="mt-2 text-2xl font-black text-white">{syncTitle}</Text>
           <Text className="mt-2 leading-5 text-[#C9D3E6]">
-            {failed > 0 ? `${failed} ${failed === 1 ? "record needs" : "records need"} another attempt.` : "FieldOPS retries automatically whenever a connection is available."}
+            {authFailed
+              ? "Your session expired. Saved work is safe—open Profile, sign out, then sign in with the same account."
+              : failed > 0
+              ? `${failed} ${failed === 1 ? "upload needs" : "uploads need"} attention. Open the details below to retry.`
+              : lastSyncAt
+                ? `Last office update ${new Date(lastSyncAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })}.`
+                : "FieldOPS sends saved work automatically when the internet is available."}
           </Text>
         </View>
         <View className={classes("h-12 min-w-12 items-center justify-center rounded-full px-3", pending === 0 ? "bg-[#1E5A49]" : "bg-[#253A63]")}>
           <Text className="font-black text-white">{pending}</Text>
         </View>
       </View>
-      {pending > 0 && <View className="mt-5"><Button label={syncing ? "Syncing now…" : "Sync now"} onPress={onRetry} disabled={syncing} /></View>}
-    </View>
-    <View className="flex-row items-center justify-between rounded-2xl border border-line bg-white p-4">
-      <View className="flex-1 pr-4">
-        <Text className="font-black text-ink">Route tracking</Text>
-        <Text className="mt-1 text-xs leading-4 text-muted">GPS points waiting for server confirmation</Text>
-      </View>
-      <View className="h-11 min-w-11 items-center justify-center rounded-xl bg-[#E8EEF9] px-3">
-        <Text className="text-xl font-black text-field">{locationPending}</Text>
+      <View className="mt-5 flex-row gap-2">
+        <View className="flex-1"><Button label={syncing ? "Sending…" : "Sync now"} onPress={onRetry} disabled={syncing || online === false} /></View>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh activity from office" className="min-h-12 flex-1 items-center justify-center rounded-xl border border-[#7081A8] px-3" onPress={onRefresh}>
+          <Text className="font-black text-white">Refresh activity</Text>
+        </TouchableOpacity>
       </View>
     </View>
-    {recent.length === 0
-      ? <EmptyState title="Ready for field work" body="New activity will appear here with a clear server-confirmation status." />
+    <View className="flex-row justify-between border-y border-line py-4">
+      <Stat value={`${activity.length}`} label="Today’s events" />
+      <Stat value={`${awaitingReview}`} label="Awaiting admin" />
+      <Stat value={`${approvedPlaces}`} label="Places approved" />
+    </View>
+
+    <View className="flex-row flex-wrap gap-2">
+      <Choice label="All activity" selected={filter === "all"} onPress={() => setFilter("all")} />
+      <Choice label="Visits & places" selected={filter === "places"} onPress={() => setFilter("places")} />
+      <Choice label="Sales" selected={filter === "sales"} onPress={() => setFilter("sales")} />
+    </View>
+    {visibleActivity.length === 0
+      ? <EmptyState title="No activity in this view" body={filter === "all" ? "Start work or record a visit. Confirmed events will stay visible here after they upload." : "Choose All activity or record new field work."} />
       : <View className="overflow-hidden rounded-2xl border border-line bg-white">
-        <View className="border-b border-line px-4 py-3">
-          <Text className="text-xs font-black uppercase tracking-widest text-muted">Recent activity</Text>
-        </View>
-        {recent.map((item) => <View key={item.id} className="min-h-[72px] flex-row items-start gap-3 border-b border-line px-4 py-4 last:border-b-0">
+        {visibleActivity.map((item) => <View key={item.id} className="min-h-[78px] flex-row items-start gap-3 border-b border-line px-4 py-4 last:border-b-0">
           <View className={classes(
-            "mt-1 h-3 w-3 rounded-full border-2 border-white",
-            item.state === "confirmed" ? "bg-success" : item.state === "failed" ? "bg-danger" : "bg-gold",
-          )} />
+            "h-9 w-9 items-center justify-center rounded-full",
+            item.status === "approved" ? "bg-[#DFF3E9]" : item.status === "rejected" ? "bg-[#FCEDEA]" : item.status === "pending_review" ? "bg-[#FFF1D0]" : "bg-[#E8EEF9]",
+          )}><Text className="text-xs font-black text-ink">{item.kind === "place" ? "PIN" : item.kind === "visit" ? "VIS" : item.kind === "order" ? "PKR" : "DAY"}</Text></View>
           <View className="flex-1">
             <View className="flex-row items-start justify-between gap-3">
-              <Text className="flex-1 font-extrabold text-ink">{item.label}</Text>
+              <Text className="flex-1 font-extrabold text-ink">{item.title}</Text>
               <Text className={classes(
                 "text-[10px] font-black uppercase tracking-wider",
-                item.state === "confirmed" ? "text-success" : item.state === "failed" ? "text-danger" : "text-[#8A6500]",
-              )}>{item.state === "confirmed" ? "Synced" : item.state === "syncing" ? "Sending" : item.state === "failed" ? "Retrying" : "Queued"}</Text>
+                item.status === "approved" ? "text-success" : item.status === "rejected" ? "text-danger" : item.status === "pending_review" ? "text-[#8A6500]" : "text-field",
+              )}>{item.status === "pending_review" ? "Admin review" : item.status === "approved" ? "Approved" : item.status === "rejected" ? "Rejected" : "Recorded"}</Text>
             </View>
-            <Text className="mt-1 text-xs leading-4 text-muted">
-              {item.state === "confirmed"
-                ? "Confirmed and saved by FieldOPS"
-                : item.state === "syncing"
-                  ? "Secure upload in progress"
-                  : item.error ?? "Safely stored on this phone and queued"}
+            <Text className="mt-1 text-xs leading-4 text-muted">{item.detail}</Text>
+            <Text className="mt-1.5 text-[10px] font-bold text-muted">
+              {new Date(item.occurredAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })}
+              {item.amount !== undefined ? ` · PKR ${item.amount.toLocaleString()}` : ""}
             </Text>
+          </View>
+        </View>)}
+      </View>}
+
+    <SectionTitle>Upload details</SectionTitle>
+    <View className="flex-row items-center justify-between rounded-2xl border border-line bg-white p-4">
+      <View className="flex-1 pr-4">
+          <Text className="font-black text-ink">Route points</Text>
+          <Text className="mt-1 text-xs leading-4 text-muted">
+            {locationRejected > 0
+              ? `${locationRejected} invalid ${locationRejected === 1 ? "point needs" : "points need"} your confirmation before removal`
+              : "Saved location updates waiting to reach the office"}
+          </Text>
+        </View>
+      <View className={classes("h-11 min-w-11 items-center justify-center rounded-xl px-3", locationRejected > 0 ? "bg-[#FCEDEA]" : "bg-[#E8EEF9]")}>
+        <Text className={classes("text-xl font-black", locationRejected > 0 ? "text-danger" : "text-field")}>{locationPending + locationRejected}</Text>
+      </View>
+    </View>
+    {locationRejected > 0 && <View className="rounded-xl border border-[#E9B8AF] bg-[#FCEDEA] p-4">
+      <Text className="font-black text-danger">Invalid route data was isolated</Text>
+      <Text className="mt-1 text-xs leading-5 text-[#7A4238]">These points no longer block valid route uploads. Remove only the rejected copies after confirming this message.</Text>
+      <View className="mt-3 items-start"><CompactAction label="Remove invalid points" onPress={onClearRejectedLocations} /></View>
+    </View>}
+    {locationSyncError && <View className="rounded-xl border border-[#E9B8AF] bg-[#FCEDEA] p-4">
+      <Text className="font-black text-danger">Route upload needs attention</Text>
+      <Text className="mt-1 text-xs leading-5 text-[#7A4238]">{locationSyncError.includes("401") ? "Your session expired. Sign out from Profile, then sign in with the same account; the route is safe." : `${locationSyncError} FieldOPS will retry automatically.`}</Text>
+    </View>}
+    {pendingOperations.length === 0
+      ? <InfoNotice title="No uploads waiting" body="Everything currently saved on this phone has reached the server." />
+      : <View className="overflow-hidden rounded-2xl border border-line bg-white">
+        {pendingOperations.map((item) => <View key={item.id} className="border-b border-line p-4 last:border-b-0">
+          <View className="flex-row items-start justify-between gap-3">
+            <View className="flex-1">
+              <Text className="font-extrabold text-ink">{item.label}</Text>
+              <Text className={classes("mt-1 text-xs font-bold", item.state === "failed" ? "text-danger" : "text-muted")}>
+                {item.state === "syncing"
+                  ? "Sending now…"
+                  : item.state === "failed"
+                    ? item.errorKind === "validation" || item.errorKind === "auth" ? "Needs attention" : "Retry scheduled"
+                    : "Queued safely on this phone"}
+              </Text>
+              {item.error && <Text className="mt-1 text-xs leading-4 text-muted">{item.error}</Text>}
+              {item.attempts > 0 && <Text className="mt-1 text-[10px] font-bold text-muted">{item.attempts} {item.attempts === 1 ? "attempt" : "attempts"}</Text>}
+            </View>
+            {item.state === "failed" && <CompactAction label="Retry" onPress={() => onRetryItem(item.id)} />}
           </View>
         </View>)}
       </View>}
@@ -2146,27 +2669,32 @@ function Profile({
   </>;
 }
 
-function Nav({ screen, setScreen }: { screen: Screen; setScreen: (screen: Screen) => void }) {
-  const items: { key: Screen; label: string }[] = [
-    { key: "today", label: "Today" },
-    { key: "route", label: "Visits" },
-    { key: "order", label: "Order" },
-    { key: "sync", label: "Activity" },
-    { key: "profile", label: "Profile" },
+function Nav({ screen, pending, setScreen }: { screen: Screen; pending: number; setScreen: (screen: Screen) => void }) {
+  const items: { key: Screen; label: string; icon: string }[] = [
+    { key: "today", label: "Today", icon: "●" },
+    { key: "route", label: "Visits", icon: "⌖" },
+    { key: "order", label: "Order", icon: "▤" },
+    { key: "sync", label: "Activity", icon: "↻" },
+    { key: "profile", label: "Profile", icon: "○" },
   ];
+  const selectedKey: Screen = screen === "visit" || screen === "new_visit" ? "route" : screen;
   return <View accessibilityRole="tablist" className="mx-3.5 mb-2 flex-row rounded-2xl border border-[#253652] bg-ink p-1.5">
     {items.map((item) => <TouchableOpacity
       key={item.key}
       accessibilityRole="tab"
       accessibilityLabel={item.label}
-      accessibilityState={{ selected: screen === item.key }}
+      accessibilityState={{ selected: selectedKey === item.key }}
       className={classes(
         "min-h-12 flex-1 items-center justify-center rounded-xl border",
-        screen === item.key ? "border-[#4F7CE8] bg-[#254A9A]" : "border-transparent",
+        selectedKey === item.key ? "border-[#4F7CE8] bg-[#254A9A]" : "border-transparent",
       )}
       onPress={() => setScreen(item.key)}
     >
-      <Text className={classes("text-[11px] font-extrabold", screen === item.key ? "text-white" : "text-[#AAB3C5]")}>{item.label}</Text>
+      <View className="relative">
+        <Text className={classes("text-center text-sm font-black", selectedKey === item.key ? "text-white" : "text-[#AAB3C5]")}>{item.icon}</Text>
+        {item.key === "sync" && pending > 0 && <View className="absolute -right-3 -top-1 min-w-4 items-center rounded-full bg-gold px-1"><Text className="text-[8px] font-black text-ink">{pending > 9 ? "9+" : pending}</Text></View>}
+      </View>
+      <Text className={classes("mt-0.5 text-[9px] font-extrabold", selectedKey === item.key ? "text-white" : "text-[#AAB3C5]")}>{item.label}</Text>
     </TouchableOpacity>)}
   </View>;
 }
@@ -2201,6 +2729,17 @@ function GhostButton({ label, onPress, dark = false }: { label: string; onPress:
   </TouchableOpacity>;
 }
 
+function DangerOutlineButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return <TouchableOpacity
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    className="min-h-12 items-center justify-center rounded-[9px] border border-danger bg-white px-4 py-3"
+    onPress={onPress}
+  >
+    <Text className="font-black text-danger">{label}</Text>
+  </TouchableOpacity>;
+}
+
 function CompactButton({ label, disabled, onPress }: { label: string; disabled: boolean; onPress: () => void }) {
   return <TouchableOpacity
     accessibilityRole="button"
@@ -2211,6 +2750,17 @@ function CompactButton({ label, disabled, onPress }: { label: string; disabled: 
     onPress={onPress}
   >
     <Text className="text-[10px] font-extrabold text-field">{label}</Text>
+  </TouchableOpacity>;
+}
+
+function CompactAction({ label, onPress }: { label: string; onPress: () => void }) {
+  return <TouchableOpacity
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    className="min-h-11 items-center justify-center rounded-lg border border-field bg-[#EEF3FC] px-3"
+    onPress={onPress}
+  >
+    <Text className="text-xs font-black text-field">{label}</Text>
   </TouchableOpacity>;
 }
 
@@ -2279,6 +2829,53 @@ function Status({ status }: { status: VisitStatus }) {
     "text-[9px] font-black uppercase",
     status === "completed" ? "text-success" : status === "active" ? "text-[#9A6300]" : "text-muted",
   )}>{status}</Text>;
+}
+
+function PlaceReviewStatus({ status, visitStatus }: { status?: PlaceApprovalStatus; visitStatus: VisitStatus }) {
+  if (visitStatus === "active") return <Status status="active" />;
+  const label = status === "approved" ? "Approved" : status === "rejected" ? "Rejected" : visitStatus === "completed" ? "Admin review" : "Draft";
+  return <Text className={classes(
+    "text-[9px] font-black uppercase",
+    status === "approved" ? "text-success" : status === "rejected" ? "text-danger" : "text-[#8A6500]",
+  )}>{label}</Text>;
+}
+
+function PlaceReviewNotice({ outlet }: { outlet: Outlet }) {
+  if (outlet.placeApprovalStatus === "approved") {
+    return <InfoNotice
+      title="Permanent place approved"
+      body={`${outlet.name} is now saved at your verified point. Admin can correct the official name later without moving the location.`}
+    />;
+  }
+  if (outlet.placeApprovalStatus === "rejected") {
+    return <WarningNotice
+      title="A new report is needed"
+      body="Admin could not approve this place. Check Activity for the review note, then mark the customer again with clear evidence."
+    />;
+  }
+  return <WarningNotice
+    title="Waiting for admin review"
+    body="Your point, photo, and voice sales report reached the office. Admin will confirm the territory and official name before saving this as a permanent outlet."
+  />;
+}
+
+function ProcessSteps({ current, labels }: { current: number; labels: string[] }) {
+  return <View accessibilityRole="summary" className="flex-row rounded-2xl border border-line bg-white px-2 py-4">
+    {labels.map((label, index) => {
+      const step = index + 1;
+      const done = step < current;
+      const active = step === current;
+      return <View key={label} className="flex-1 items-center px-0.5">
+        <View className={classes(
+          "h-7 w-7 items-center justify-center rounded-full border",
+          done ? "border-success bg-success" : active ? "border-field bg-field" : "border-line bg-white",
+        )}>
+          <Text className={classes("text-[10px] font-black", done || active ? "text-white" : "text-muted")}>{done ? "✓" : step}</Text>
+        </View>
+        <Text className={classes("mt-2 text-center text-[9px] font-extrabold leading-3", active ? "text-field" : "text-muted")}>{label}</Text>
+      </View>;
+    })}
+  </View>;
 }
 
 function Eyebrow({ children }: { children: React.ReactNode }) {

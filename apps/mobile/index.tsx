@@ -36,7 +36,7 @@ class StartupBoundary extends Component<{ children: ReactNode }, StartupBoundary
           <Text className="text-[11px] font-black tracking-[1.1px] text-muted">YOUSUF RICE · FIELDOPS</Text>
           <Text className="mt-2.5 text-3xl font-black text-ink">FieldOPS needs a quick reset</Text>
           <Text className="mt-3 text-base leading-6 text-[#586273]">
-            The saved pilot data on this phone could not be opened. Reset it to continue.
+            The saved screen state could not be opened. Reset it to continue; queued uploads are stored separately and will be kept.
           </Text>
           <TouchableOpacity
             accessibilityRole="button"

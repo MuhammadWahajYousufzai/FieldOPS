@@ -26,11 +26,13 @@ const tables = [
       ["status", "varchar", 24, true], ["territory_id", "varchar", 36, true],
       ["assigned_employee_id", "varchar", 36, false], ["visit_frequency", "varchar", 32, true],
       ["notes", "text", false], ["created_by", "varchar", 36, true],
+      ["origin_visit_id", "varchar", 36, false], ["source", "varchar", 24, false],
     ],
     indexes: [
       ["outlet_code", "unique", ["code"]], ["outlet_status", "key", ["status"]],
       ["outlet_employee", "key", ["assigned_employee_id", "status"]],
       ["outlet_territory", "key", ["territory_id", "status"]],
+      ["outlet_origin_visit", "unique", ["origin_visit_id"]],
     ],
   },
   {
@@ -82,12 +84,16 @@ const tables = [
       ["outcome", "varchar", 48, false], ["notes", "text", false],
       ["order_amount", "float", false], ["status", "varchar", 24, true],
       ["idempotency_key", "varchar", 64, true], ["device_captured_at", "datetime", true],
+      ["place_approval_status", "varchar", 24, false], ["candidate_territory_id", "varchar", 36, false],
+      ["approved_outlet_id", "varchar", 36, false], ["reviewed_by", "varchar", 36, false],
+      ["reviewed_at", "datetime", false], ["review_note", "text", false],
     ],
     indexes: [
       ["visit_idempotency", "unique", ["idempotency_key"]],
       ["visit_employee_date", "key", ["employee_id", "work_date"]],
       ["visit_outlet_date", "key", ["outlet_id", "work_date"]],
       ["visit_date_status", "key", ["work_date", "status"]],
+      ["visit_place_review", "key", ["place_approval_status", "work_date"]],
     ],
   },
   {

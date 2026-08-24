@@ -4,6 +4,8 @@ import { InputFile } from "node-appwrite/file";
 import { NextResponse } from "next/server";
 import {
   evaluateGeofence,
+  MAX_PLACE_MARK_ACCURACY_METERS,
+  pointInTerritory,
   visitEvidenceExtension,
   visitEvidenceValidationError,
   type VisitEvidenceKind,
@@ -230,6 +232,9 @@ export async function POST(request: Request) {
   if (!validPoint(checkInPoint) || !checkInAt) {
     return NextResponse.json({ error: "The visit check-in GPS point is incomplete." }, { status: 422 });
   }
+  if (selfInitiated && checkInPoint.accuracy > MAX_PLACE_MARK_ACCURACY_METERS) {
+    return NextResponse.json({ error: "The marked place has a weak GPS reading. Move near the shop entrance or into an open area, wait for the accuracy number to improve, and mark it again." }, { status: 422 });
+  }
   if (!validPoint(completionPoint) || !completionAt) {
     return NextResponse.json({ error: "The visit completion GPS point is incomplete." }, { status: 422 });
   }
@@ -264,6 +269,10 @@ export async function POST(request: Request) {
   if (!checkInTerritoryDecision.allowed) return NextResponse.json({ error: checkInTerritoryDecision.reason }, { status: 403 });
   const completionTerritoryDecision = evaluateTerritoryAccess(completionTerritory, completionPoint);
   if (!completionTerritoryDecision.allowed) return NextResponse.json({ error: completionTerritoryDecision.reason }, { status: 403 });
+  const candidateTerritories = checkInTerritory.territories.filter((territory) => (
+    territory.boundary && pointInTerritory(checkInPoint, territory.boundary)
+  ));
+  const candidateTerritoryId = candidateTerritories.length === 1 ? candidateTerritories[0]!.id : "";
 
   let assignment: DataRow | null = null;
   let outletPoint = { latitude: checkInPoint.latitude, longitude: checkInPoint.longitude };
@@ -362,6 +371,8 @@ export async function POST(request: Request) {
       outlet_id: outletId,
       ...(assignment ? { route_assignment_id: assignment.$id } : {}),
       visit_type: selfInitiated ? "self_initiated" : "assigned",
+      place_approval_status: selfInitiated ? "pending_review" : "not_applicable",
+      ...(selfInitiated && candidateTerritoryId ? { candidate_territory_id: candidateTerritoryId } : {}),
       ...(customerName ? { customer_name: customerName } : {}),
       ...(customerAddress ? { customer_address: customerAddress } : {}),
       work_date: date,
@@ -431,5 +442,27 @@ export async function POST(request: Request) {
       data: { status: "completed", completed_at: completionAt },
     });
   }
-  return NextResponse.json({ ok: true, visitId: rowId, evidenceCount: 2 }, { status: existing ? 200 : 201 });
+  if (selfInitiated) {
+    const auditId = stableId("audit", `${rowId}:place-submitted`);
+    try {
+      await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, data: {
+        actor_user_id: actor.user.$id,
+        action: "place.submitted",
+        entity_type: "visit",
+        entity_id: rowId,
+        occurred_at: now,
+        after_json: JSON.stringify({ customerName, customerAddress, latitude: checkInPoint.latitude, longitude: checkInPoint.longitude, candidateTerritoryId }),
+        reason: "Salesperson marked a new customer place with photo and voice evidence",
+        correlation_id: idempotencyKey,
+      }, permissions: [] });
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+    }
+  }
+  return NextResponse.json({
+    ok: true,
+    visitId: rowId,
+    evidenceCount: 2,
+    placeApprovalStatus: selfInitiated ? String(existing?.place_approval_status || "pending_review") : "not_applicable",
+  }, { status: existing ? 200 : 201 });
 }

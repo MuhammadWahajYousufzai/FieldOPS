@@ -22,6 +22,7 @@ export function canAccessTerritory(
 export type Coordinate = { latitude: number; longitude: number };
 export type LngLat = [longitude: number, latitude: number];
 export type TerritoryBoundary = { type: "Polygon"; coordinates: LngLat[][] };
+export const MAX_PLACE_MARK_ACCURACY_METERS = 50;
 const EARTH_RADIUS_METERS = 6_371_000;
 
 export function distanceMeters(a: Coordinate, b: Coordinate): number {
@@ -111,6 +112,7 @@ export function visitEvidenceExtension(kind: VisitEvidenceKind, mimeType: string
 }
 
 type RefreshableVisit = {
+  id: string;
   routeId: string;
   status: "planned" | "active" | "completed";
   kind: "assigned" | "self";
@@ -118,7 +120,7 @@ type RefreshableVisit = {
 };
 
 export function mergeRefreshedVisits<Visit extends RefreshableVisit>(
-  serverAssigned: readonly Visit[],
+  serverVisits: readonly Visit[],
   localVisits: readonly Visit[],
   workDate: string,
 ): Visit[] {
@@ -127,13 +129,25 @@ export function mergeRefreshedVisits<Visit extends RefreshableVisit>(
       .filter((visit) => visit.kind === "assigned")
       .map((visit) => [visit.routeId, visit]),
   );
-  const assigned = serverAssigned.map((visit) => {
+  const localSelf = new Map(
+    localVisits
+      .filter((visit) => visit.kind === "self" && visit.workDate === workDate)
+      .map((visit) => [visit.id, visit]),
+  );
+  const assigned = serverVisits.filter((visit) => visit.kind === "assigned").map((visit) => {
     const local = localAssigned.get(visit.routeId);
     const status = local?.status === "active" || local?.status === "completed" ? local.status : visit.status;
     return { ...visit, status, kind: "assigned" as const, workDate };
   });
-  const selfVisits = localVisits.filter((visit) => visit.kind === "self" && visit.workDate === workDate);
-  return [...assigned, ...selfVisits];
+  const serverSelf = serverVisits.filter((visit) => visit.kind === "self").map((visit) => ({
+    ...localSelf.get(visit.id),
+    ...visit,
+    kind: "self" as const,
+    workDate,
+  }));
+  const serverSelfIds = new Set(serverSelf.map((visit) => visit.id));
+  const localOnlySelf = [...localSelf.values()].filter((visit) => !serverSelfIds.has(visit.id));
+  return [...assigned, ...serverSelf, ...localOnlySelf];
 }
 
 export function parseTerritoryBoundary(value: unknown): TerritoryBoundary | null {

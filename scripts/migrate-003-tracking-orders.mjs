@@ -60,6 +60,8 @@ for (const index of [
   ["location_idempotency", "unique", ["idempotency_key"]],
   ["location_work_date", "key", ["work_date", "captured_at"]],
   ["location_captured", "key", ["captured_at"]],
+  ["location_date_received", "key", ["work_date", "received_at"]],
+  ["location_employee_received", "key", ["employee_id", "work_date", "received_at"]],
 ]) await createIndex("location_points", index);
 
 if (!(await exists(() => db.getTable({ databaseId, tableId: "orders" })))) {

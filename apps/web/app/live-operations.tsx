@@ -52,6 +52,16 @@ export function LiveOperations({
   const [lastUpdatedAt, setLastUpdatedAt] = useState(generatedAt);
   const [clock, setClock] = useState(() => new Date(generatedAt).valueOf());
   const requestRunning = useRef(false);
+  const backlogCursor = useRef("");
+
+  useEffect(() => {
+    backlogCursor.current = "";
+    setEmployees(initialEmployees);
+    setAttendance(initialAttendance);
+    setLocations(initialLocations);
+    setLastUpdatedAt(generatedAt);
+    setConnection(pollingEnabled ? "updating" : "history");
+  }, [date, generatedAt, initialAttendance, initialEmployees, initialLocations, pollingEnabled, selectedEmployee]);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent<number>(liveGpsCountEvent, { detail: locations.length }));
@@ -62,7 +72,9 @@ export function LiveOperations({
     return () => window.clearInterval(timer);
   }, []);
 
-  const latestCapturedAt = useMemo(() => locations.reduce((latest, point) => point.capturedAt > latest ? point.capturedAt : latest, ""), [locations]);
+  // Poll by server receipt time so an old point uploaded after reconnect is not
+  // hidden behind a newer device capture timestamp that is already on screen.
+  const latestReceivedAt = useMemo(() => locations.reduce((latest, point) => point.receivedAt > latest ? point.receivedAt : latest, ""), [locations]);
 
   useEffect(() => {
     if (!pollingEnabled) return;
@@ -75,11 +87,13 @@ export function LiveOperations({
       const timeout = window.setTimeout(() => controller.abort(), 8_000);
       try {
         const params = new URLSearchParams({ date, employee: selectedEmployee });
-        if (latestCapturedAt) params.set("since", latestCapturedAt);
+        if (latestReceivedAt) params.set("since", latestReceivedAt);
+        if (backlogCursor.current) params.set("cursor", backlogCursor.current);
         const response = await fetch(`/api/live-operations?${params}`, { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error(`Live update returned ${response.status}`);
         const payload = await response.json() as LiveOperationsPayload;
         if (!active) return;
+        backlogCursor.current = payload.nextCursor ?? "";
         setEmployees(payload.employees);
         setAttendance(payload.attendance);
         setLocations((current) => mergeLocations(current, payload.points));
@@ -103,7 +117,7 @@ export function LiveOperations({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [date, latestCapturedAt, pollingEnabled, selectedEmployee]);
+  }, [date, latestReceivedAt, pollingEnabled, selectedEmployee]);
 
   const employeeById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
   const locationsByEmployee = useMemo(() => {

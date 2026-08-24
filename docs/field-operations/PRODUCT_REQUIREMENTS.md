@@ -16,14 +16,14 @@ A manager can define a scoped territory and beat, assign a representative, and p
 | Access control | Foundation | Server verifies granular permission and assignment at event time |
 | Employee profiles | Missing | Work email, manager, status, role/territory history |
 | Attendance | Missing | Idempotent check-in/out, accuracy, geofence, shift/privacy rules |
-| Outlet CRM | Missing | Search, scoped assignment, duplicate hints, approval state |
+| Outlet CRM | Review workflow | Salesperson marks an immutable point with photo/voice evidence; manager approves the official name or corrects it later |
 | Beats/plans | Missing | Recurrence, ordered outlets, daily plan, missed/rescheduled status |
 | Visits | Geofence rule | Offline-safe check-in/out and outcomes with authoritative sync state |
 | Location | Foundation | Active-shift queue, last-known point, retention configuration |
 | Field orders | Missing | Existing-product adapter, server totals, idempotent draft/submit |
 | Manager dashboard | UI foundation | Permission-scoped live status and visit/sales filters |
 | Reports | UI foundation | Reusable scoped query layer and CSV export audit event |
-| Offline sync | Retry contract | Persistent outbox, attachments, visible errors, manual retry/conflicts |
+| Offline sync | Implemented core | Persistent outbox, attachment retries, explicit confirmations, visible errors, manual retry and late-point live-feed recovery |
 | Audit logs | Missing | Immutable logs for listed sensitive actions |
 
 ## User-critical acceptance criteria
@@ -38,6 +38,7 @@ A manager can define a scoped territory and beat, assign a representative, and p
 8. Existing product/customer/order IDs are preserved through adapters after legacy reconciliation.
 9. Every permission change, reassignment, export and financial override produces an immutable audit event.
 10. Low-end Android core flows remain usable without a network after daily data download.
+11. A salesperson-marked point never changes during approval or name correction, and no permanent outlet is created before manager approval.
 
 ## Deferred from Phase 1
 

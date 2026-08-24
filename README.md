@@ -20,3 +20,4 @@ corepack pnpm dev
 
 Copy `.env.example` to `.env.local` only after Appwrite infrastructure is available. No migration is automatically executed.
 
+For an existing installation, run the versioned migrations in order. The salesperson-marked place approval release requires `scripts/migrate-007-place-approvals.mjs` before the matching server code is deployed; rehearse migrations on a scrubbed snapshot first.

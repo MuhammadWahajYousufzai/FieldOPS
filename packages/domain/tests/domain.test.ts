@@ -100,6 +100,26 @@ describe("visit refresh", () => {
     const activeAssigned = { ...assigned, status: "active" as const };
     expect(mergeRefreshedVisits([assigned], [activeAssigned], "2026-08-19")[0]?.status).toBe("active");
   });
+
+  it("updates a salesperson-added visit when admin review reaches the server", () => {
+    const local = {
+      routeId: "",
+      id: "visit-local-1",
+      status: "completed" as const,
+      kind: "self" as const,
+      workDate: "2026-08-19",
+      placeApprovalStatus: "pending_review" as const,
+      name: "Shop entered in field",
+    };
+    const reviewed = {
+      ...local,
+      placeApprovalStatus: "approved" as const,
+      name: "Admin-corrected shop name",
+    };
+
+    expect(mergeRefreshedVisits([assigned, reviewed], [assigned, local], "2026-08-19"))
+      .toContainEqual(reviewed);
+  });
 });
 
 describe("territory boundaries", () => {

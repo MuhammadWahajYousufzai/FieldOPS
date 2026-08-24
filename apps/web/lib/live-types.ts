@@ -24,6 +24,7 @@ export type LiveAttendance = {
 
 export type LiveOperationsPayload = {
   serverTime: string;
+  nextCursor?: string;
   employees: LiveEmployee[];
   attendance: LiveAttendance[];
   points: LiveLocationPoint[];

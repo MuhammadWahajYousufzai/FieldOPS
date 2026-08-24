@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
+import { createKeyedSingleFlight, drainLocationOutbox } from "./location-outbox";
 import { fetchWithTimeout } from "./network";
 
 export const LOCATION_QUEUE_KEY = "fieldops-location-outbox-v1";
@@ -10,7 +11,8 @@ const LEGACY_TRACKING_SESSION_KEY = "fieldops-tracking-session-v1";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
 let queueMutation: Promise<void> = Promise.resolve();
-const activeFlushes = new Map<string, Promise<number>>();
+const locationFlushes = createKeyedSingleFlight<string, number>();
+const lastLocationSyncErrors = new Map<string, string>();
 
 /**
  * Earlier TestFlight builds registered a persistent Expo background-location
@@ -50,6 +52,8 @@ export type QueuedLocation = {
   speed: number | null;
   heading: number | null;
   source: "foreground";
+  syncRejectedAt?: string;
+  syncError?: string;
 };
 
 function pointId(timestamp: number) {
@@ -90,6 +94,20 @@ export async function locationQueueCount(employeeId?: string) {
   return (await readQueue()).filter((point) => point.employeeId === employeeId).length;
 }
 
+export async function locationQueueStats(employeeId?: string) {
+  if (!employeeId) return { pending: 0, rejected: 0, error: "" };
+  const points = (await readQueue()).filter((point) => point.employeeId === employeeId);
+  return {
+    pending: points.filter((point) => !point.syncRejectedAt).length,
+    rejected: points.filter((point) => Boolean(point.syncRejectedAt)).length,
+    error: lastLocationSyncErrors.get(employeeId) ?? "",
+  };
+}
+
+export async function clearRejectedLocationPoints(employeeId: string) {
+  await mutateQueue((current) => current.filter((point) => point.employeeId !== employeeId || !point.syncRejectedAt));
+}
+
 export async function queueLocationObjects(
   employeeId: string,
   locations: Location.LocationObject[],
@@ -114,33 +132,32 @@ export async function queueLocationObjects(
 
 export async function flushLocationQueue(employeeId?: string, token?: string): Promise<number> {
   if (!employeeId || !token) return 0;
-  const inFlight = activeFlushes.get(employeeId);
-  if (inFlight) return inFlight;
-  const activeFlush = (async () => {
-    const queue = (await readQueue()).filter((point) => point.employeeId === employeeId);
-    if (queue.length === 0) return 0;
-    const batch = queue.slice(0, 100);
-    try {
-      const response = await fetchWithTimeout(`${API_BASE}/locations/batch`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ points: batch }),
-      });
-      if (!response.ok) return 0;
-      const result = await response.json() as { confirmed?: string[] };
-      const confirmed = new Set(result.confirmed ?? batch.map((point) => point.idempotencyKey));
-      await mutateQueue((latest) => latest.filter((point) => (
+  return locationFlushes.run(employeeId, async () => {
+    lastLocationSyncErrors.delete(employeeId);
+    return drainLocationOutbox({
+      readPending: async () => (
+        await readQueue()
+      ).filter((point) => point.employeeId === employeeId && !point.syncRejectedAt),
+      sendBatch: async (batch) => {
+        const response = await fetchWithTimeout(`${API_BASE}/locations/batch`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ points: batch }),
+        });
+        if (!response.ok) throw new Error(`Location sync returned ${response.status}.`);
+        return response.json();
+      },
+      removeConfirmed: (confirmed) => mutateQueue((latest) => latest.filter((point) => (
         point.employeeId !== employeeId || !confirmed.has(point.idempotencyKey)
-      )));
-      return confirmed.size;
-    } catch {
-      return 0;
-    }
-  })();
-  activeFlushes.set(employeeId, activeFlush);
-  try {
-    return await activeFlush;
-  } finally {
-    if (activeFlushes.get(employeeId) === activeFlush) activeFlushes.delete(employeeId);
-  }
+      ))),
+      quarantineRejected: (rejected) => mutateQueue((latest) => latest.map((point) => (
+        point.employeeId === employeeId && rejected.has(point.idempotencyKey)
+          ? { ...point, syncRejectedAt: new Date().toISOString(), syncError: rejected.get(point.idempotencyKey) }
+          : point
+      ))),
+      onError: (error) => {
+        lastLocationSyncErrors.set(employeeId, error instanceof Error ? error.message : "Route points could not reach the server.");
+      },
+    });
+  });
 }
