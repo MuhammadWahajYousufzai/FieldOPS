@@ -39,7 +39,7 @@ import {
   locationQueueCount,
   queueLocationObjects,
 } from "../lib/background-location";
-import { EVIDENCE_UPLOAD_TIMEOUT_MS, fetchWithTimeout } from "../lib/network";
+import { AUTH_REQUEST_TIMEOUT_MS, EVIDENCE_UPLOAD_TIMEOUT_MS, fetchWithTimeout } from "../lib/network";
 
 type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "sync" | "profile";
 type VisitStatus = "planned" | "active" | "completed";
@@ -374,7 +374,18 @@ function territoryCopy(policy: TerritoryPolicy, position: TerritoryPosition) {
   return `Outside ${names || "your assigned territory"}. Visits and orders are disabled at this location.`;
 }
 
-async function jsonRequest(path: string, options: RequestInit = {}, token?: string) {
+type JsonRequestConfig = {
+  token?: string;
+  timeoutMs?: number;
+  timeoutMessage?: string;
+};
+
+async function jsonRequest(
+  path: string,
+  options: RequestInit = {},
+  config: JsonRequestConfig = {},
+) {
+  const { token, timeoutMs, timeoutMessage } = config;
   const response = await fetchWithTimeout(`${API_BASE}${path}`, {
     ...options,
     headers: {
@@ -382,7 +393,7 @@ async function jsonRequest(path: string, options: RequestInit = {}, token?: stri
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
-  });
+  }, timeoutMs, timeoutMessage);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || "The FieldOPS server could not complete this request.");
   return body;
@@ -662,7 +673,7 @@ function FieldOpsApp() {
 
   async function executeOperation(operation: OfflineOperation, authenticatedSession: Session) {
     if (operation.type === "json") {
-      return jsonRequest(operation.path, { method: "POST", body: JSON.stringify(operation.body) }, authenticatedSession.token);
+      return jsonRequest(operation.path, { method: "POST", body: JSON.stringify(operation.body) }, { token: authenticatedSession.token });
     }
     validateStoredEvidence(operation.photo);
     validateStoredEvidence(operation.audio);
@@ -750,7 +761,7 @@ function FieldOpsApp() {
     const sessionEpoch = sessionEpochRef.current;
     setRefreshing(true);
     try {
-      const context = await jsonRequest("/context", {}, authenticatedSession.token);
+      const context = await jsonRequest("/context", {}, { token: authenticatedSession.token });
       if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
       const today = String(context.date ?? pakistanWorkDate());
       const nextPolicy = normalizeTerritoryPolicy(context.territoryPolicy);
@@ -787,6 +798,9 @@ function FieldOpsApp() {
     const result = await jsonRequest("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    }, {
+      timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+      timeoutMessage: "Sign in is taking longer than expected. Check your internet connection and try again.",
     }) as Session;
     const recoveryOwner = recoveryEmployeeIdRef.current;
     if (recoveryOwner && result.employee.id !== recoveryOwner) {

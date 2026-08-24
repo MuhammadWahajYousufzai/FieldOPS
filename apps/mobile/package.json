@@ -5,6 +5,7 @@
   "main": "index.tsx",
   "scripts": {
     "start": "expo start",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test lib/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "ios:asc:upload": "bash ./scripts/ios-app-store-connect.sh upload",
     "ios:asc:export": "bash ./scripts/ios-app-store-connect.sh export",

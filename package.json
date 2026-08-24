@@ -7,7 +7,7 @@
     "dev:mobile": "pnpm --filter @fieldops/mobile start",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm --filter @fieldops/domain test"
+    "test": "pnpm -r --if-present test"
   },
   "dependencies": {
     "next": "16.3.0",
