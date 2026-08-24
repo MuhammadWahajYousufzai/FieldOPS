@@ -1,12 +1,43 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as TaskManager from "expo-task-manager";
 import { fetchWithTimeout } from "./network";
 
 export const LOCATION_QUEUE_KEY = "fieldops-location-outbox-v1";
+export const LEGACY_LOCATION_TASK = "fieldops-minute-route-v1";
+
+const LEGACY_TRACKING_SESSION_KEY = "fieldops-tracking-session-v1";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
 let queueMutation: Promise<void> = Promise.resolve();
 const activeFlushes = new Map<string, Promise<number>>();
+
+/**
+ * Earlier TestFlight builds registered a persistent Expo background-location
+ * task. iOS keeps that native registration across app updates, even though the
+ * current FieldOPS route tracker is foreground-only. Build 20 restores the
+ * native capability long enough to launch and removes the obsolete task here.
+ */
+export async function cleanupLegacyBackgroundLocationTask() {
+  try {
+    if (await Location.hasStartedLocationUpdatesAsync(LEGACY_LOCATION_TASK)) {
+      await Location.stopLocationUpdatesAsync(LEGACY_LOCATION_TASK);
+    }
+  } catch {
+    // Continue to TaskManager cleanup; either API may already have removed it.
+  }
+
+  try {
+    if (await TaskManager.isTaskRegisteredAsync(LEGACY_LOCATION_TASK)) {
+      await TaskManager.unregisterTaskAsync(LEGACY_LOCATION_TASK);
+    }
+  } catch {
+    // The restored Info.plist capability keeps launch safe even if cleanup is
+    // temporarily unavailable. A later launch will retry this migration.
+  }
+
+  await AsyncStorage.removeItem(LEGACY_TRACKING_SESSION_KEY).catch(() => undefined);
+}
 
 export type QueuedLocation = {
   employeeId: string;

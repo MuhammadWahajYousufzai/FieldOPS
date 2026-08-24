@@ -4,6 +4,12 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 
 import FieldOpsApp, { STORAGE_KEY } from "./app/index";
+import { cleanupLegacyBackgroundLocationTask } from "./lib/background-location";
+
+// Start the native upgrade migration before the React tree hydrates. Build 19
+// could not reach this point because iOS rejected the retained task first;
+// build 20 restores the capability needed for this one-time cleanup to run.
+void cleanupLegacyBackgroundLocationTask();
 
 type StartupBoundaryState = { error: Error | null; resetKey: number };
 

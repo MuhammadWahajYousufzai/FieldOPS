@@ -321,12 +321,24 @@ function parseState(saved: string): PersistedState | null {
   try {
     const value = JSON.parse(saved) as Partial<PersistedState>;
     if (!value || !Array.isArray(value.outlets) || !Array.isArray(value.queue)) return null;
+    const rawSession = value.session as Partial<Session> | null | undefined;
+    const rawEmployee = rawSession?.employee as Partial<Session["employee"]> | null | undefined;
+    const session = (
+      typeof rawSession?.token === "string"
+      && typeof rawSession?.expiresAt === "string"
+      && typeof rawEmployee?.id === "string"
+      && typeof rawEmployee?.name === "string"
+    ) ? {
+      token: rawSession.token,
+      expiresAt: rawSession.expiresAt,
+      employee: { id: rawEmployee.id, name: rawEmployee.name },
+    } : null;
     const persisted = migratePersistedVisits(
       value.queue.filter((item) => item?.state === "confirmed" || Boolean(item?.operation)),
       value.activeVisit,
     );
     return {
-      session: value.session ?? null,
+      session,
       workState: value.workState ?? "not_started",
       outlets: value.outlets.map((outlet) => ({
         ...outlet,
@@ -535,7 +547,7 @@ function FieldOpsApp() {
       if (restoredActiveVisit) setSelectedId(restoredActiveVisit.outletId);
       else if (restoredOutlets[0]) setSelectedId(restoredOutlets[0].id);
       persistDurableQueue(persisted.queue).catch(() => undefined);
-    }).finally(() => {
+    }).catch(() => undefined).finally(() => {
       if (!cancelled) setHydrated(true);
     });
     return () => { cancelled = true; };

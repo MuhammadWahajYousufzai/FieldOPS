@@ -1,4 +1,5 @@
 internal import Expo
+import Foundation
 import React
 import ReactAppDependencyProvider
 
@@ -9,10 +10,40 @@ class AppDelegate: ExpoAppDelegate {
   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
+  /// Expo persists TaskManager registrations in UserDefaults across app
+  /// updates. Older FieldOPS builds registered a background location task that
+  /// the foreground-only app no longer uses. Remove only that verified legacy
+  /// registration before Expo restores native tasks during launch.
+  private func removeLegacyLocationTaskRegistration() {
+    let defaults = UserDefaults.standard
+    let serviceKey = "EXTaskService"
+    let taskName = "fieldops-minute-route-v1"
+    guard var service = defaults.dictionary(forKey: serviceKey) else { return }
+
+    var changed = false
+    for appID in Array(service.keys) {
+      guard var app = service[appID] as? [String: Any],
+            var tasks = app["tasks"] as? [String: Any],
+            let task = tasks[taskName] as? [String: Any],
+            task["consumerClass"] as? String == "EXLocationTaskConsumer" else { continue }
+
+      tasks.removeValue(forKey: taskName)
+      app["tasks"] = tasks
+      service[appID] = app
+      changed = true
+    }
+
+    if changed {
+      defaults.set(service, forKey: serviceKey)
+    }
+  }
+
   public override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    removeLegacyLocationTaskRegistration()
+
     let delegate = ReactNativeDelegate()
     let factory = ExpoReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
