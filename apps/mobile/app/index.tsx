@@ -39,7 +39,7 @@ import {
   locationQueueCount,
   queueLocationObjects,
 } from "../lib/background-location";
-import { AUTH_REQUEST_TIMEOUT_MS, EVIDENCE_UPLOAD_TIMEOUT_MS, fetchWithTimeout } from "../lib/network";
+import { fetchWithTimeout } from "../lib/network";
 
 type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "sync" | "profile";
 type VisitStatus = "planned" | "active" | "completed";
@@ -376,7 +376,6 @@ function territoryCopy(policy: TerritoryPolicy, position: TerritoryPosition) {
 
 type JsonRequestConfig = {
   token?: string;
-  timeoutMs?: number;
   timeoutMessage?: string;
 };
 
@@ -385,7 +384,7 @@ async function jsonRequest(
   options: RequestInit = {},
   config: JsonRequestConfig = {},
 ) {
-  const { token, timeoutMs, timeoutMessage } = config;
+  const { token, timeoutMessage } = config;
   const response = await fetchWithTimeout(`${API_BASE}${path}`, {
     ...options,
     headers: {
@@ -393,7 +392,7 @@ async function jsonRequest(
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
-  }, timeoutMs, timeoutMessage);
+  }, { timeoutMessage });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || "The FieldOPS server could not complete this request.");
   return body;
@@ -685,7 +684,7 @@ function FieldOpsApp() {
       method: "POST",
       headers: { authorization: `Bearer ${authenticatedSession.token}` },
       body: form,
-    }, EVIDENCE_UPLOAD_TIMEOUT_MS);
+    });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Visit evidence could not be uploaded.");
     return body;
@@ -799,7 +798,6 @@ function FieldOpsApp() {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }, {
-      timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
       timeoutMessage: "Sign in is taking longer than expected. Check your internet connection and try again.",
     }) as Session;
     const recoveryOwner = recoveryEmployeeIdRef.current;

@@ -1,21 +1,23 @@
-export const JSON_REQUEST_TIMEOUT_MS = 12_000;
-// Appwrite Sites cold starts have been observed above 20 seconds. Authentication
-// is not retried automatically because the server may already have created a
-// session before the client times out.
-export const AUTH_REQUEST_TIMEOUT_MS = 45_000;
-// Evidence requests can contain both a field photo and an audio note. Give
-// slower mobile connections enough time while still finishing before the
-// 60-second Appwrite Sites request limit.
-export const EVIDENCE_UPLOAD_TIMEOUT_MS = 55_000;
+// Keep every mobile request below the Appwrite Sites 60-second ceiling while
+// allowing enough time for observed cold starts on the self-hosted server.
+export const SERVER_REQUEST_TIMEOUT_MS = 50_000;
 
 const DEFAULT_TIMEOUT_MESSAGE = "The server took too long to respond. Your work is safe on this phone and will retry automatically.";
+
+type FetchTimeoutOptions = {
+  timeoutMs?: number;
+  timeoutMessage?: string;
+};
 
 export async function fetchWithTimeout(
   input: string,
   init: RequestInit = {},
-  timeoutMs = JSON_REQUEST_TIMEOUT_MS,
-  timeoutMessage = DEFAULT_TIMEOUT_MESSAGE,
+  options: FetchTimeoutOptions = {},
 ) {
+  const {
+    timeoutMs = SERVER_REQUEST_TIMEOUT_MS,
+    timeoutMessage = DEFAULT_TIMEOUT_MESSAGE,
+  } = options;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

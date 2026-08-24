@@ -16,7 +16,7 @@ test("fetchWithTimeout translates Expo's native cancellation into the supplied t
   });
 
   await assert.rejects(
-    fetchWithTimeout("https://example.invalid", {}, 1, "Friendly timeout message."),
+    fetchWithTimeout("https://example.invalid", {}, { timeoutMs: 1, timeoutMessage: "Friendly timeout message." }),
     (error) => error instanceof Error && error.message === "Friendly timeout message.",
   );
 });
@@ -33,7 +33,7 @@ test("fetchWithTimeout preserves non-timeout network errors", async (t) => {
   };
 
   await assert.rejects(
-    fetchWithTimeout("https://example.invalid", {}, 1_000),
+    fetchWithTimeout("https://example.invalid", {}, { timeoutMs: 1_000 }),
     (error) => error === networkError,
   );
 });
@@ -49,7 +49,7 @@ test("fetchWithTimeout still recognizes the standard AbortError shape", async (t
   };
 
   await assert.rejects(
-    fetchWithTimeout("https://example.invalid", {}, 1_000, "Friendly timeout message."),
+    fetchWithTimeout("https://example.invalid", {}, { timeoutMs: 1_000, timeoutMessage: "Friendly timeout message." }),
     (error) => error instanceof Error && error.message === "Friendly timeout message.",
   );
 });
@@ -66,7 +66,7 @@ test("fetchWithTimeout clears its timer after a successful response", async (t) 
     return new Response(null, { status: 204 });
   };
 
-  const response = await fetchWithTimeout("https://example.invalid", {}, 1);
+  const response = await fetchWithTimeout("https://example.invalid", {}, { timeoutMs: 1 });
   await new Promise((resolve) => setTimeout(resolve, 5));
 
   assert.equal(response.status, 204);
