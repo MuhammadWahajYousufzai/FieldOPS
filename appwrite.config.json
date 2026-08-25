@@ -49,21 +49,21 @@
         },
         "auth": {
             "methods": {
-                "jwt": true,
-                "phone": true,
-                "invites": true,
-                "anonymous": true,
-                "email-otp": true,
-                "magic-url": true,
+                "jwt": false,
+                "phone": false,
+                "invites": false,
+                "anonymous": false,
+                "email-otp": false,
+                "magic-url": false,
                 "email-password": true
             },
             "security": {
-                "duration": 31536000,
+                "duration": 7776000,
                 "limit": null,
-                "sessionsLimit": null,
-                "passwordHistory": null,
-                "passwordDictionary": false,
-                "personalDataCheck": false,
+                "sessionsLimit": 10,
+                "passwordHistory": 5,
+                "passwordDictionary": true,
+                "personalDataCheck": true,
                 "sessionAlerts": false,
                 "mockNumbers": []
             }

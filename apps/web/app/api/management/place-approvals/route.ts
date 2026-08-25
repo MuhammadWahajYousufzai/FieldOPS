@@ -91,7 +91,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true, visitId, placeApprovalStatus: "rejected" });
       }
       if (latest?.place_approval_status === "approved") {
-        return NextResponse.json({ error: "Another manager already approved this place. Refresh the review queue." }, { status: 409 });
+        return NextResponse.json({ error: "This place was already approved in another tab or request. Refresh the review queue." }, { status: 409 });
       }
       throw error;
     }

@@ -25,6 +25,54 @@ export type TerritoryBoundary = { type: "Polygon"; coordinates: LngLat[][] };
 export const MAX_PLACE_MARK_ACCURACY_METERS = 50;
 const EARTH_RADIUS_METERS = 6_371_000;
 
+export type RouteTrackingPolicy = {
+  sampleIntervalSeconds: number;
+  distanceIntervalMeters: number;
+  maxAcceptedAccuracyMeters: number;
+  stationaryJitterMeters: number;
+  segmentGapMinutes: number;
+  maxPlausibleSpeedMps: number;
+};
+
+export type RouteTrackPoint = Coordinate & {
+  capturedAt: string;
+  accuracy: number;
+  id?: string;
+  speed?: number | null;
+};
+
+export const DEFAULT_ROUTE_TRACKING_POLICY: Readonly<RouteTrackingPolicy> = Object.freeze({
+  sampleIntervalSeconds: 15,
+  distanceIntervalMeters: 10,
+  maxAcceptedAccuracyMeters: 35,
+  stationaryJitterMeters: 20,
+  segmentGapMinutes: 5,
+  maxPlausibleSpeedMps: 45,
+});
+
+// Native location providers report speed in metres per second. A non-negative
+// value below this threshold is an explicit stationary signal; negative or
+// missing values mean the provider could not determine speed and must not be
+// treated as stationary.
+const STATIONARY_REPORTED_SPEED_MPS = 0.5;
+
+/**
+ * Treat manager-provided tracking values as untrusted operational input. The
+ * bounds keep an accidental dashboard value from disabling collection,
+ * exhausting a phone battery, or drawing physically impossible route legs.
+ */
+export function normalizeRouteTrackingPolicy(value: unknown): RouteTrackingPolicy {
+  const input = value && typeof value === "object" ? value as Partial<Record<keyof RouteTrackingPolicy, unknown>> : {};
+  return {
+    sampleIntervalSeconds: boundedNumber(input.sampleIntervalSeconds, 5, 300, DEFAULT_ROUTE_TRACKING_POLICY.sampleIntervalSeconds),
+    distanceIntervalMeters: boundedNumber(input.distanceIntervalMeters, 3, 1_000, DEFAULT_ROUTE_TRACKING_POLICY.distanceIntervalMeters),
+    maxAcceptedAccuracyMeters: boundedNumber(input.maxAcceptedAccuracyMeters, 5, 250, DEFAULT_ROUTE_TRACKING_POLICY.maxAcceptedAccuracyMeters),
+    stationaryJitterMeters: boundedNumber(input.stationaryJitterMeters, 0, 100, DEFAULT_ROUTE_TRACKING_POLICY.stationaryJitterMeters),
+    segmentGapMinutes: boundedNumber(input.segmentGapMinutes, 1, 60, DEFAULT_ROUTE_TRACKING_POLICY.segmentGapMinutes),
+    maxPlausibleSpeedMps: boundedNumber(input.maxPlausibleSpeedMps, 5, 100, DEFAULT_ROUTE_TRACKING_POLICY.maxPlausibleSpeedMps),
+  };
+}
+
 export function distanceMeters(a: Coordinate, b: Coordinate): number {
   const radians = (value: number) => value * Math.PI / 180;
   const dLat = radians(b.latitude - a.latitude);
@@ -33,6 +81,201 @@ export function distanceMeters(a: Coordinate, b: Coordinate): number {
   const lat2 = radians(b.latitude);
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(h));
+}
+
+export function isReliableRoutePoint(
+  point: RouteTrackPoint,
+  policy: RouteTrackingPolicy = DEFAULT_ROUTE_TRACKING_POLICY,
+): boolean {
+  return Number.isFinite(point.latitude)
+    && Math.abs(point.latitude) <= 90
+    && Number.isFinite(point.longitude)
+    && Math.abs(point.longitude) <= 180
+    && Number.isFinite(point.accuracy)
+    && point.accuracy > 0
+    && point.accuracy <= policy.maxAcceptedAccuracyMeters
+    && Number.isFinite(new Date(point.capturedAt).valueOf());
+}
+
+/**
+ * Applies the phone-side capture policy. A stationary heartbeat is retained
+ * about every two minutes so managers can distinguish a stopped employee from
+ * a stopped GPS receiver, while small interim movements inside the fix's
+ * uncertainty are ignored.
+ */
+export function shouldCaptureRoutePoint(
+  previous: RouteTrackPoint | null,
+  candidate: RouteTrackPoint,
+  policy: RouteTrackingPolicy = DEFAULT_ROUTE_TRACKING_POLICY,
+): boolean {
+  if (!isReliableRoutePoint(candidate, policy)) return false;
+  if (!previous || !isReliableRoutePoint(previous, policy)) return true;
+
+  const elapsedMs = new Date(candidate.capturedAt).valueOf() - new Date(previous.capturedAt).valueOf();
+  if (elapsedMs <= 0) return false;
+  const distance = distanceMeters(previous, candidate);
+  const speed = distance / (elapsedMs / 1_000);
+  if (speed > policy.maxPlausibleSpeedMps) return false;
+
+  const heartbeatSeconds = Math.max(60, Math.min(120, policy.sampleIntervalSeconds * 8));
+  // When the native motion estimate explicitly says the phone is stationary,
+  // a displaced coordinate is GPS wander rather than evidence of travel. Keep
+  // only the periodic raw heartbeat so a stop remains visible in the audit log.
+  if (reportsStationary(candidate)) return elapsedMs >= heartbeatSeconds * 1_000;
+
+  const movementThreshold = routeJitterThreshold(previous, candidate, policy);
+  if (distance >= movementThreshold) return true;
+  return elapsedMs >= heartbeatSeconds * 1_000;
+}
+
+/**
+ * Converts raw audit points into honest map geometry. Raw points remain stored
+ * and visible in the audit table; only the drawn line is quality-filtered.
+ * Poor fixes are omitted, stationary GPS drift is suppressed, duplicate action
+ * points are collapsed, and long gaps/implausible jumps begin a new segment
+ * instead of inventing a diagonal route the salesperson never travelled.
+ */
+export function buildRouteSegments<Point extends RouteTrackPoint>(
+  points: readonly Point[],
+  policy: RouteTrackingPolicy = DEFAULT_ROUTE_TRACKING_POLICY,
+): Point[][] {
+  const reliable = points
+    .map((point, index) => ({ point, index, time: new Date(point.capturedAt).valueOf() }))
+    .filter(({ point }) => isReliableRoutePoint(point, policy))
+    .sort((a, b) => a.time - b.time || String(a.point.id ?? "").localeCompare(String(b.point.id ?? "")) || a.index - b.index);
+
+  const deduplicated: typeof reliable = [];
+  for (const candidate of reliable) {
+    const previous = deduplicated.at(-1);
+    if (previous && Math.abs(candidate.time - previous.time) <= 1_000) {
+      if (candidate.point.accuracy < previous.point.accuracy) deduplicated[deduplicated.length - 1] = candidate;
+      continue;
+    }
+    deduplicated.push(candidate);
+  }
+
+  // Keep the initial anchor, but do not turn explicit native stationary
+  // heartbeats into route geometry. Their unmodified coordinates remain in the
+  // raw audit log. This prevents a lunch/prayer pause from becoming an oval
+  // even when every wandering fix individually has acceptable accuracy.
+  const withoutStationaryDrift = deduplicated.filter((candidate, index) => (
+    index === 0 || !reportsStationary(candidate.point)
+  ));
+
+  // A single bad coordinate between two plausible fixes creates the exact
+  // triangle/oval artifact reported in the field. Remove only physically
+  // impossible spikes whose neighbours form a plausible leg; real turns and
+  // out-and-back paths remain intact.
+  const withoutSpikes = withoutStationaryDrift.filter((candidate, index, values) => {
+    const previous = values[index - 1];
+    const next = values[index + 1];
+    if (!previous || !next) return true;
+    const beforeSeconds = (candidate.time - previous.time) / 1_000;
+    const afterSeconds = (next.time - candidate.time) / 1_000;
+    const acrossSeconds = (next.time - previous.time) / 1_000;
+    if (beforeSeconds <= 0 || afterSeconds <= 0 || acrossSeconds <= 0) return false;
+    const beforeSpeed = distanceMeters(previous.point, candidate.point) / beforeSeconds;
+    const afterSpeed = distanceMeters(candidate.point, next.point) / afterSeconds;
+    const acrossSpeed = distanceMeters(previous.point, next.point) / acrossSeconds;
+    return !(beforeSpeed > policy.maxPlausibleSpeedMps
+      && afterSpeed > policy.maxPlausibleSpeedMps
+      && acrossSpeed <= policy.maxPlausibleSpeedMps);
+  });
+
+  const segments: Point[][] = [];
+  let segment: Point[] = [];
+  let previous: (typeof withoutSpikes)[number] | undefined;
+  const segmentGapMs = policy.segmentGapMinutes * 60_000;
+
+  for (const candidate of withoutSpikes) {
+    if (!previous) {
+      segment = [candidate.point];
+      previous = candidate;
+      continue;
+    }
+
+    const elapsedMs = candidate.time - previous.time;
+    const distance = distanceMeters(previous.point, candidate.point);
+    const speed = distance / Math.max(1, elapsedMs / 1_000);
+    if (elapsedMs > segmentGapMs || speed > policy.maxPlausibleSpeedMps) {
+      if (segment.length > 0) segments.push(segment);
+      segment = [candidate.point];
+      previous = candidate;
+      continue;
+    }
+
+    if (distance < routeJitterThreshold(previous.point, candidate.point, policy)) continue;
+    segment.push(candidate.point);
+    previous = candidate;
+  }
+
+  if (segment.length > 0) segments.push(segment);
+  return segments;
+}
+
+/**
+ * Returns honest, explicitly estimated links between otherwise reliable route
+ * segments. These links help a manager understand the general direction after
+ * a short GPS interruption without presenting an invented path as recorded.
+ * Stationary pauses, physically impossible jumps, and gaps over two hours are
+ * deliberately left disconnected.
+ */
+export function buildRouteGapConnectors<Point extends RouteTrackPoint>(
+  segments: readonly (readonly Point[])[],
+  policy: RouteTrackingPolicy = DEFAULT_ROUTE_TRACKING_POLICY,
+): Array<[Point, Point]> {
+  const nonempty = segments.filter((segment) => segment.length > 0);
+  const minimumGapMs = policy.segmentGapMinutes * 60_000;
+  const maximumGapMs = 120 * 60_000;
+  const connectors: Array<[Point, Point]> = [];
+
+  for (let index = 1; index < nonempty.length; index += 1) {
+    const from = nonempty[index - 1]?.at(-1);
+    const to = nonempty[index]?.[0];
+    if (!from || !to) continue;
+
+    const elapsedMs = new Date(to.capturedAt).valueOf() - new Date(from.capturedAt).valueOf();
+    if (elapsedMs <= minimumGapMs || elapsedMs > maximumGapMs) continue;
+
+    const distance = distanceMeters(from, to);
+    if (distance <= gapUncertaintyMeters(from, to, policy)) continue;
+    if (distance / (elapsedMs / 1_000) > policy.maxPlausibleSpeedMps) continue;
+    connectors.push([from, to]);
+  }
+
+  return connectors;
+}
+
+function routeJitterThreshold(
+  a: RouteTrackPoint,
+  b: RouteTrackPoint,
+  policy: RouteTrackingPolicy,
+) {
+  const accuracyAwareThreshold = Math.max(
+    policy.distanceIntervalMeters,
+    Math.max(a.accuracy, b.accuracy) * 0.75,
+  );
+  return Math.min(policy.stationaryJitterMeters, accuracyAwareThreshold);
+}
+
+function reportsStationary(point: RouteTrackPoint) {
+  return typeof point.speed === "number"
+    && Number.isFinite(point.speed)
+    && point.speed >= 0
+    && point.speed < STATIONARY_REPORTED_SPEED_MPS;
+}
+
+function gapUncertaintyMeters(
+  a: RouteTrackPoint,
+  b: RouteTrackPoint,
+  policy: RouteTrackingPolicy,
+) {
+  return Math.max(policy.stationaryJitterMeters, a.accuracy, b.accuracy);
+}
+
+function boundedNumber(value: unknown, minimum: number, maximum: number, fallback: number) {
+  const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
 }
 
 export function evaluateGeofence(

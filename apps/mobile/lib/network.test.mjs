@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fetchWithTimeout } from "./network.ts";
+import { fetchWithTimeout, retryAfterDelayMs } from "./network.ts";
 
 test("fetchWithTimeout translates Expo's native cancellation into the supplied timeout message", async (t) => {
   const originalFetch = globalThis.fetch;
@@ -71,4 +71,31 @@ test("fetchWithTimeout clears its timer after a successful response", async (t) 
 
   assert.equal(response.status, 204);
   assert.equal(requestSignal.aborted, false);
+});
+
+test("fetchWithTimeout preserves an explicit caller cancellation", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  const cancellation = new Error("screen closed");
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(new Error("native cancellation")), { once: true });
+  });
+
+  const request = fetchWithTimeout("https://example.invalid", { signal: controller.signal }, {
+    timeoutMs: 1_000,
+    timeoutMessage: "This was not a timeout.",
+  });
+  controller.abort(cancellation);
+  await assert.rejects(request, (error) => error === cancellation);
+});
+
+test("retryAfterDelayMs supports delta seconds and HTTP dates with a safety cap", () => {
+  const now = new Date("2026-08-25T10:00:00.000Z").valueOf();
+  assert.equal(retryAfterDelayMs("12", now), 12_000);
+  assert.equal(retryAfterDelayMs("Tue, 25 Aug 2026 10:00:30 GMT", now), 30_000);
+  assert.equal(retryAfterDelayMs("not-a-date", now), undefined);
+  assert.equal(retryAfterDelayMs("3600", now, 60_000), 60_000);
 });

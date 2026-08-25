@@ -12,6 +12,9 @@ and the App Store Connect Apple ID is `6798195013`.
 
 ## Build and upload from macOS
 
+Use Xcode 26.4 or newer. Expo SDK 57's current `expo-modules-jsi` release uses
+Swift ownership support that is unavailable in Xcode 26.3 and earlier.
+
 From the repository root:
 
 ```bash
@@ -22,17 +25,19 @@ The script installs the locked dependencies, generates the native iOS project, a
 
 ## Xcode Cloud
 
+Select an Xcode 26.4-or-newer build environment for the workflow.
+
 The committed workspace is `apps/mobile/ios/YousufRiceFieldOps.xcworkspace` and
 the scheme is `YousufRiceFieldOps`. The `ci_post_clone.sh` hook installs the
 locked monorepo dependencies and CocoaPods; `ci_pre_xcodebuild.sh` synchronizes
 the native marketing version from `app.json` and assigns an Xcode Cloud build
-number no lower than 20. Configure an Archive action for iOS with App Store
+number no lower than 22. Configure an Archive action for iOS with App Store
 Connect distribution and a TestFlight internal-testing post-action.
 
 Xcode Cloud does not need an App Store Connect API key. It does require this
 repository to be committed and pushed to a supported Git provider before the
 workflow can be connected.
 
-The current release line is version `1.0.4`, starting at build `20`. For future
+The current release line is version `1.0.4`, starting at build `22`. For future
 releases, update `expo.version` and `ios.buildNumber` in `app.json` together with
 the native target settings before pushing the Xcode Cloud build.

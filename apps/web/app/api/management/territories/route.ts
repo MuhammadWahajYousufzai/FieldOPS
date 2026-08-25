@@ -4,10 +4,19 @@ import { ID, Query } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { requireManager } from "../../../../lib/auth";
+import {
+  isAppwriteConflict,
+  isAppwriteNotFound,
+  managementAuditIdentity,
+  managementOperationKey,
+  runManagementTransaction,
+  stableManagementId,
+} from "../../../../lib/management-write";
 import { text } from "../../../../lib/mobile-auth";
+import { listAllRows } from "../../../../lib/table-data";
+import { territoryBoundaryImpact } from "../../../../lib/territory-impact";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
-const stableId = (prefix: string, value: string) => `${prefix}_${createHash("sha256").update(value).digest("hex").slice(0, 24)}`;
 
 export async function POST(request: Request) {
   const actor = await requireManager();
@@ -25,23 +34,83 @@ export async function POST(request: Request) {
     if (!area) return NextResponse.json({ error: "Organization geography must be set up before creating a territory." }, { status: 409 });
     const areaId = area.$id;
     const code = `TER-${createHash("sha256").update(`${areaId}:${name.trim().toLowerCase()}`).digest("hex").slice(0, 10).toUpperCase()}`;
-    const territoryId = stableId("ter", `${areaId}:${code}`);
-    await db.createRow({ databaseId, tableId: "territories", rowId: territoryId, data: {
-      area_id: areaId, code, name, boundary: boundary.coordinates, active: true,
-    }, permissions: [] });
+    const territoryId = stableManagementId("ter", `${areaId}:${code}`);
     const salesRole = (await db.listRows({ databaseId, tableId: "roles", queries: [Query.equal("code", "sales_person"), Query.limit(1)] })).rows[0];
-    if (!salesRole) throw new Error("Sales role is not configured");
-    for (const employeeId of employeeIds) {
-      const employee = await db.getRow({ databaseId, tableId: "employees", rowId: employeeId });
-      if (employee.status !== "active") continue;
-      await db.createRow({ databaseId, tableId: "employee_assignments", rowId: ID.unique(), data: {
-        employee_id: employeeId, role_id: salesRole.$id, territory_id: territoryId,
-        effective_from: new Date().toISOString(), assigned_by: actor.user.$id, reason: "Assigned when territory was created",
-      }, permissions: [] });
+    if (!salesRole) return NextResponse.json({ error: "The salesperson role is not configured." }, { status: 409 });
+    const employees = await Promise.all(employeeIds.map((employeeId) => db.getRow({
+      databaseId,
+      tableId: "employees",
+      rowId: employeeId,
+    }).catch(() => null)));
+    if (employees.some((employee) => !employee || employee.status !== "active")) {
+      return NextResponse.json({ error: "Every selected salesperson must still be active. Refresh and try again." }, { status: 409 });
     }
-    await audit(db, actor.user.$id, "territory.created", territoryId, { code, areaId, employeeIds });
-    return NextResponse.json({ ok: true, territoryId }, { status: 201 });
+
+    const existing = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId }).catch((error) => {
+      if (isAppwriteNotFound(error)) return null;
+      throw error;
+    });
+    if (existing) {
+      const savedBoundary = parseTerritoryBoundary(existing.boundary);
+      const sameRequest = existing.active === true
+        && String(existing.area_id) === areaId
+        && String(existing.code) === code
+        && String(existing.name).trim() === name.trim()
+        && JSON.stringify(savedBoundary?.coordinates ?? null) === JSON.stringify(boundary.coordinates);
+      if (!sameRequest) return NextResponse.json({ error: "A territory with that name already exists with different details." }, { status: 409 });
+      return NextResponse.json({ ok: true, territoryId, created: false, replayed: true });
+    }
+
+    const operationKey = managementOperationKey(body.operationId, "territory.create", areaId, code);
+    const { auditId, correlationId } = managementAuditIdentity("territory.created", territoryId, operationKey);
+    const now = new Date().toISOString();
+    await runManagementTransaction(db, async (transactionId) => {
+      await db.createRow({ databaseId, tableId: "territories", rowId: territoryId, transactionId, data: {
+        area_id: areaId,
+        code,
+        name,
+        boundary: boundary.coordinates,
+        active: true,
+      }, permissions: [] });
+      for (const employeeId of employeeIds) {
+        const assignmentId = stableManagementId("assign", "territory-create", employeeId, salesRole.$id, territoryId);
+        await db.createRow({ databaseId, tableId: "employee_assignments", rowId: assignmentId, transactionId, data: {
+          employee_id: employeeId,
+          role_id: salesRole.$id,
+          territory_id: territoryId,
+          effective_from: now,
+          assigned_by: actor.user.$id,
+          reason: "Assigned when territory was created",
+        }, permissions: [] });
+      }
+      await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
+        actor_user_id: actor.user.$id,
+        action: "territory.created",
+        entity_type: "territory",
+        entity_id: territoryId,
+        occurred_at: now,
+        after_json: JSON.stringify({ code, areaId, employeeIds }),
+        reason: "Management dashboard",
+        correlation_id: correlationId,
+      }, permissions: [] });
+    });
+    return NextResponse.json({ ok: true, territoryId, created: true, replayed: false }, { status: 201 });
   } catch (error) {
+    if (isAppwriteConflict(error)) {
+      const area = (await db.listRows({ databaseId, tableId: "areas", queries: [Query.equal("active", true), Query.orderAsc("$createdAt"), Query.limit(1)] })).rows[0];
+      if (area) {
+        const code = `TER-${createHash("sha256").update(`${area.$id}:${name.trim().toLowerCase()}`).digest("hex").slice(0, 10).toUpperCase()}`;
+        const territoryId = stableManagementId("ter", `${area.$id}:${code}`);
+        const stored = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId }).catch(() => null);
+        const storedBoundary = stored ? parseTerritoryBoundary(stored.boundary) : null;
+        if (stored
+          && stored.active === true
+          && String(stored.name).trim() === name.trim()
+          && JSON.stringify(storedBoundary?.coordinates ?? null) === JSON.stringify(boundary.coordinates)) {
+          return NextResponse.json({ ok: true, territoryId, created: false, replayed: true });
+        }
+      }
+    }
     const codeValue = typeof error === "object" && error && "code" in error ? Number(error.code) : 500;
     return NextResponse.json({ error: codeValue === 409 ? "A territory with that name already exists." : "The territory could not be created." }, { status: codeValue === 409 ? 409 : 500 });
   }
@@ -56,8 +125,44 @@ export async function PATCH(request: Request) {
   const db = createAdminTablesDb();
   try {
     const before = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId });
-    await db.updateRow({ databaseId, tableId: "territories", rowId: territoryId, data: { boundary: boundary.coordinates } });
-    await audit(db, actor.user.$id, "territory.boundary_updated", territoryId, { code: before.code });
+    const outletRows = await listAllRows(db, databaseId, "outlets", [
+      Query.equal("territory_id", territoryId),
+      Query.equal("status", "active"),
+    ]);
+    const impact = territoryBoundaryImpact(boundary, outletRows.map((outlet) => ({
+      id: outlet.$id,
+      name: String(outlet.name || outlet.code || "Unnamed outlet"),
+      latitude: Number(outlet.latitude),
+      longitude: Number(outlet.longitude),
+    })));
+    const affected = [...impact.outside, ...impact.invalid];
+    if (affected.length > 0) {
+      return NextResponse.json({
+        error: `This boundary would leave ${affected.length} active ${affected.length === 1 ? "outlet" : "outlets"} outside the territory. Include them in the boundary or move them to the correct territory first.`,
+        code: "territory_boundary_strands_outlets",
+        affectedOutlets: affected.map((outlet) => ({ id: outlet.id, name: outlet.name })),
+      }, { status: 409 });
+    }
+
+    const transaction = await db.createTransaction({ ttl: 60 });
+    try {
+      await db.updateRow({ databaseId, tableId: "territories", rowId: territoryId, transactionId: transaction.$id, data: { boundary: boundary.coordinates } });
+      await db.createRow({ databaseId, tableId: "audit_logs", rowId: ID.unique(), transactionId: transaction.$id, data: {
+        actor_user_id: actor.user.$id,
+        action: "territory.boundary_updated",
+        entity_type: "territory",
+        entity_id: territoryId,
+        occurred_at: new Date().toISOString(),
+        before_json: JSON.stringify({ boundary: before.boundary ?? null }),
+        after_json: JSON.stringify({ boundary: boundary.coordinates, outletsChecked: impact.checked }),
+        reason: "Management dashboard boundary validation",
+        correlation_id: randomUUID(),
+      }, permissions: [] });
+      await db.updateTransaction({ transactionId: transaction.$id, commit: true });
+    } catch (error) {
+      await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
+      throw error;
+    }
     return NextResponse.json({ ok: true, territoryId });
   } catch {
     return NextResponse.json({ error: "The territory boundary could not be updated." }, { status: 500 });
@@ -66,11 +171,4 @@ export async function PATCH(request: Request) {
 
 function sanitizeIds(value: unknown) {
   return Array.isArray(value) ? [...new Set(value.map((item) => text(item, 36)).filter(Boolean))].slice(0, 100) : [];
-}
-
-async function audit(db: ReturnType<typeof createAdminTablesDb>, actorUserId: string, action: string, territoryId: string, after: object) {
-  await db.createRow({ databaseId, tableId: "audit_logs", rowId: ID.unique(), data: {
-    actor_user_id: actorUserId, action, entity_type: "territory", entity_id: territoryId,
-    occurred_at: new Date().toISOString(), after_json: JSON.stringify(after), reason: "Management dashboard", correlation_id: randomUUID(),
-  }, permissions: [] });
 }

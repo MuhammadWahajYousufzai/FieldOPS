@@ -12,7 +12,7 @@ def releaseBuildRequested = gradle.startParameter.taskNames.any { it.toLowerCase
 if (releaseBuildRequested && !hasReleaseSigning) {
     throw new GradleException("Release signing is required. Set KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS, and KEY_PASSWORD.")
 }
-def fieldOpsVersionCode = System.getenv("VERSION_CODE") ? System.getenv("VERSION_CODE").toInteger() : 6
+def fieldOpsVersionCode = System.getenv("VERSION_CODE") ? System.getenv("VERSION_CODE").toInteger() : 7
 def fieldOpsVersionName = System.getenv("VERSION_NAME") ?: "1.0.4"
 
 /**

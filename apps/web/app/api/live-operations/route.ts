@@ -59,6 +59,7 @@ export async function GET(request: Request) {
           latitude: Number(coordinates[1]),
           longitude: Number(coordinates[0]),
           accuracy: Number(row.accuracy),
+          speed: storedSpeed(row.speed),
           source: String(row.source),
         };
       }),
@@ -103,6 +104,10 @@ function parseNear(value: string | null): [number, number] | null {
 
 function validPoint(value: unknown): value is [number, number] {
   return Array.isArray(value) && value.length === 2 && value.every((coordinate) => Number.isFinite(Number(coordinate)));
+}
+
+function storedSpeed(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function latestAttendanceByEmployee<T extends object>(rows: T[]) {

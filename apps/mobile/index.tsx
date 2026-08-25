@@ -4,7 +4,8 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 
 import FieldOpsApp, { STORAGE_KEY } from "./app/index";
-import { cleanupLegacyBackgroundLocationTask } from "./lib/background-location";
+import { cleanupLegacyBackgroundLocationTask, stopBackgroundRouteTracking } from "./lib/background-location";
+import { clearSecureMobileSession } from "./lib/secure-session";
 
 // Start the native upgrade migration before the React tree hydrates. Build 19
 // could not reach this point because iOS rejected the retained task first;
@@ -25,6 +26,8 @@ class StartupBoundary extends Component<{ children: ReactNode }, StartupBoundary
   }
 
   private resetPilot = async () => {
+    await stopBackgroundRouteTracking().catch(() => undefined);
+    await clearSecureMobileSession().catch(() => undefined);
     await AsyncStorage.removeItem(STORAGE_KEY).catch(() => undefined);
     this.setState((state) => ({ error: null, resetKey: state.resetKey + 1 }));
   };

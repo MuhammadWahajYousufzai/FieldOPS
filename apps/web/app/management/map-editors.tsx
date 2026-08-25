@@ -1,6 +1,6 @@
 "use client";
 
-import type { LngLat, TerritoryBoundary } from "@fieldops/domain";
+import { pointInTerritory, type LngLat, type TerritoryBoundary } from "@fieldops/domain";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSourceSpecification, LngLatBoundsLike } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
@@ -22,15 +22,38 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const changeRef = useRef(onChange);
+  const territoriesRef = useRef(territories);
+  const selectedTerritoryRef = useRef(selectedTerritoryId);
+  const selectPointRef = useRef<(point: SelectedPoint) => void>(() => undefined);
   const [ready, setReady] = useState(false);
+  const [selectionError, setSelectionError] = useState("");
   changeRef.current = onChange;
+  territoriesRef.current = territories;
+  selectedTerritoryRef.current = selectedTerritoryId;
+  selectPointRef.current = (point) => {
+    const territory = territoriesRef.current.find((item) => item.id === selectedTerritoryRef.current);
+    if (!territory) {
+      setSelectionError("Choose a territory before placing the outlet.");
+      return;
+    }
+    if (!territory.boundary) {
+      setSelectionError(`Draw and save ${territory.name}'s boundary before placing an outlet.`);
+      return;
+    }
+    if (!pointInTerritory(point, territory.boundary)) {
+      setSelectionError(`That point is outside ${territory.name}. Choose a point inside the shaded boundary.`);
+      return;
+    }
+    setSelectionError("");
+    changeRef.current(point);
+  };
 
   useEffect(() => {
     if (!container.current) return;
     const map = new maplibregl.Map({ container: container.current, style: styleUrl, center: karachiCenter, zoom: 11.8 });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
-    map.on("click", (event) => changeRef.current({ latitude: event.lngLat.lat, longitude: event.lngLat.lng }));
+    map.on("click", (event) => selectPointRef.current({ latitude: event.lngLat.lat, longitude: event.lngLat.lng }));
     map.on("load", () => setReady(true));
     return () => { markerRef.current?.remove(); mapRef.current = null; map.remove(); };
   }, []);
@@ -41,9 +64,11 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
     for (const territory of territories) {
       if (!territory.boundary) continue;
       const sourceId = mapId("outlet-territory", territory.id);
-      map.addSource(sourceId, { type: "geojson", data: territory.boundary as GeoJSONSourceSpecification["data"] });
-      map.addLayer({ id: `${sourceId}-fill`, type: "fill", source: sourceId, paint: { "fill-color": "#243d74", "fill-opacity": territory.id === selectedTerritoryId ? 0.2 : 0.06 } });
-      map.addLayer({ id: `${sourceId}-line`, type: "line", source: sourceId, paint: { "line-color": territory.id === selectedTerritoryId ? "#243d74" : "#8792a8", "line-width": territory.id === selectedTerritoryId ? 3 : 1.5 } });
+      const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+      if (existing) existing.setData(territory.boundary as GeoJSONSourceSpecification["data"]);
+      else map.addSource(sourceId, { type: "geojson", data: territory.boundary as GeoJSONSourceSpecification["data"] });
+      if (!map.getLayer(`${sourceId}-fill`)) map.addLayer({ id: `${sourceId}-fill`, type: "fill", source: sourceId, paint: { "fill-color": "#243d74", "fill-opacity": territory.id === selectedTerritoryId ? 0.2 : 0.06 } });
+      if (!map.getLayer(`${sourceId}-line`)) map.addLayer({ id: `${sourceId}-line`, type: "line", source: sourceId, paint: { "line-color": territory.id === selectedTerritoryId ? "#243d74" : "#8792a8", "line-width": territory.id === selectedTerritoryId ? 3 : 1.5 } });
     }
   }, [ready, territories]);
 
@@ -61,11 +86,17 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
     }
     const selected = territories.find((territory) => territory.id === selectedTerritoryId && territory.boundary);
     if (selected?.boundary) fitBoundary(map, selected.boundary);
+    setSelectionError("");
   }, [ready, selectedTerritoryId, territories]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !value) return;
+    if (!map || !ready) return;
+    if (!value) {
+      markerRef.current?.remove();
+      markerRef.current = null;
+      return;
+    }
     if (!markerRef.current) markerRef.current = new maplibregl.Marker({ color: "#d8a629" }).addTo(map);
     markerRef.current.setLngLat([value.longitude, value.latitude]);
   }, [ready, value]);
@@ -73,9 +104,10 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
   return <div className="grid gap-3">
     <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Outlet map picker. Click the map or move it and use the center button to select a visit point." />
     <div className="flex flex-wrap items-center gap-3">
-      <button type="button" className={ui.quietButton} onClick={() => { const center = mapRef.current?.getCenter(); if (center) onChange({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
+      <button type="button" className={ui.quietButton} onClick={() => { const center = mapRef.current?.getCenter(); if (center) selectPointRef.current({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
       <span className="text-xs font-bold text-slate-500" aria-live="polite">{value ? `${value.latitude.toFixed(6)}, ${value.longitude.toFixed(6)} selected` : "No visit point selected"}</span>
     </div>
+    {selectionError && <p className={ui.messageError} role="alert">{selectionError}</p>}
   </div>;
 }
 

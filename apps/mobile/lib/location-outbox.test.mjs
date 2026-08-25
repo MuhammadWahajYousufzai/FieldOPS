@@ -2,9 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  LOCATION_STORAGE_CHUNK_SIZE,
+  MAX_LOCATION_QUEUE_ITEMS,
+  authenticationAttemptWasReplaced,
+  canAttemptLocationItem,
   confirmedLocationIds,
   createKeyedSingleFlight,
+  createKeyedTrailingSingleFlight,
+  createLocationQueueStoragePlan,
+  deduplicateLocationItems,
+  deterministicLocationKey,
   drainLocationOutbox,
+  restoreLocationQueueChunks,
 } from "./location-outbox.ts";
 
 function queueHarness(size) {
@@ -110,6 +119,11 @@ test("drainLocationOutbox does not delete points for malformed successful payloa
     { name: "confirmed is not an array", value: { confirmed: "point-0" } },
     { name: "confirmed contains an unknown ID", value: { confirmed: ["point-0", "not-submitted"] } },
     { name: "confirmed contains a non-string", value: { confirmed: ["point-0", 1] } },
+    { name: "an ID is both confirmed and rejected", value: { confirmed: ["point-0"], rejected: [{ idempotencyKey: "point-0", retryable: true }] } },
+    { name: "an ID has contradictory rejections", value: { confirmed: [], rejected: [
+      { idempotencyKey: "point-0", retryable: true },
+      { idempotencyKey: "point-0", retryable: false },
+    ] } },
   ];
 
   for (const malformed of malformedPayloads) {
@@ -171,4 +185,131 @@ test("createKeyedSingleFlight coalesces concurrent work and permits a later run"
     return 8;
   }), 8);
   assert.equal(calls, 2);
+});
+
+test("retryable server rejections are retained and pause the current drain", async () => {
+  const queue = queueHarness(3);
+  let retryable;
+  let requests = 0;
+  const confirmed = await drainLocationOutbox({
+    readPending: queue.readPending,
+    removeConfirmed: queue.removeConfirmed,
+    sendBatch: async () => {
+      requests += 1;
+      return {
+        confirmed: ["point-0"],
+        rejected: [{ idempotencyKey: "point-1", reason: "server_write_failed", retryable: true }],
+      };
+    },
+    onRetryableRejected: async (items) => { retryable = items; },
+  });
+  assert.equal(confirmed, 1);
+  assert.equal(requests, 1);
+  assert.deepEqual([...retryable], [["point-1", "server_write_failed"]]);
+  assert.deepEqual(queue.remaining().map((point) => point.idempotencyKey), ["point-1", "point-2"]);
+});
+
+test("a batch disposition can be persisted atomically", async () => {
+  const queue = queueHarness(2);
+  let writes = 0;
+  await drainLocationOutbox({
+    readPending: queue.readPending,
+    removeConfirmed: async () => { throw new Error("legacy mutation should not run"); },
+    applyDisposition: async (disposition) => {
+      writes += 1;
+      await queue.removeConfirmed(disposition.confirmed);
+    },
+    sendBatch: async (batch) => ({ confirmed: batch.map((point) => point.idempotencyKey), rejected: [] }),
+  });
+  assert.equal(writes, 1);
+  assert.equal(queue.remaining().length, 0);
+});
+
+test("trailing single flight performs one follow-up drain when work arrives mid-flight", async () => {
+  const flights = createKeyedTrailingSingleFlight();
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const first = flights.run("employee-1", async () => {
+    calls += 1;
+    await gate;
+    return calls;
+  });
+  await Promise.resolve();
+  const second = flights.run("employee-1", async () => {
+    calls += 1;
+    return calls;
+  });
+  const third = flights.run("employee-1", async () => {
+    calls += 1;
+    return calls;
+  });
+  release();
+  assert.deepEqual(await Promise.all([first, second, third]), [2, 2, 2]);
+  assert.equal(calls, 2);
+});
+
+test("location keys are deterministic and queued duplicates collapse", () => {
+  const point = { timestamp: 1_777_000_000_123, latitude: 24.81, longitude: 67.04 };
+  const key = deterministicLocationKey("employee-1", point);
+  assert.match(key, /^[a-zA-Z0-9._-]{1,36}$/);
+  assert.equal(key, deterministicLocationKey("employee-1", point));
+  assert.notEqual(key, deterministicLocationKey("employee-2", point));
+  assert.equal(deduplicateLocationItems([
+    { idempotencyKey: key },
+    { idempotencyKey: key },
+    { idempotencyKey: "different" },
+  ]).length, 2);
+});
+
+test("normal reconnect respects location rejection, permanent failure, and retry backoff", () => {
+  const nowMs = new Date("2026-08-25T10:00:00.000Z").valueOf();
+  assert.equal(canAttemptLocationItem({ syncRejectedAt: "2026-08-25T09:00:00.000Z" }, { nowMs }), false);
+  assert.equal(canAttemptLocationItem({ syncRetryable: false }, { nowMs }), false);
+  assert.equal(canAttemptLocationItem({ syncRetryable: true, nextSyncAttemptAt: "2026-08-25T10:01:00.000Z" }, { nowMs }), false);
+  assert.equal(canAttemptLocationItem({ syncRetryable: true, nextSyncAttemptAt: "2026-08-25T09:59:00.000Z" }, { nowMs }), true);
+  assert.equal(canAttemptLocationItem({ syncRetryable: false }, { force: true, nowMs }), true);
+  // Server-rejected points are quarantined even during an explicit override.
+  assert.equal(canAttemptLocationItem({ syncRejectedAt: "2026-08-25T09:00:00.000Z" }, { force: true, nowMs }), false);
+  // Authentication pause is lifted only after a fresh session explicitly
+  // resumes the employee queue; network callbacks cannot force through it.
+  assert.equal(canAttemptLocationItem({ syncAuthPausedAt: "2026-08-25T09:00:00.000Z" }, { force: true, nowMs }), false);
+});
+
+test("a 401 from a replaced authentication epoch cannot pause the new session", () => {
+  assert.equal(authenticationAttemptWasReplaced(4, 5), true);
+  assert.equal(authenticationAttemptWasReplaced(5, 5), false);
+});
+
+test("location storage plans cap every chunk at 200 points and restore in order", () => {
+  const points = Array.from({ length: 451 }, (_, index) => ({ idempotencyKey: `point-${index}` }));
+  const plan = createLocationQueueStoragePlan(points, "generation-1", "queue-chunk-", "2026-08-25T10:00:00.000Z");
+  assert.equal(plan.manifest.count, 451);
+  assert.equal(plan.manifest.chunkSize, LOCATION_STORAGE_CHUNK_SIZE);
+  assert.deepEqual(plan.chunks.map((chunk) => chunk.items.length), [200, 200, 51]);
+  assert.equal(Math.max(...plan.chunks.map((chunk) => chunk.items.length)), 200);
+
+  const restored = restoreLocationQueueChunks(
+    plan.manifest,
+    new Map(plan.chunks.map((chunk) => [chunk.key, chunk.items])),
+  );
+  assert.deepEqual(restored, points);
+});
+
+test("location storage refuses overflow or incomplete generations without trimming", () => {
+  const overflow = Array.from({ length: MAX_LOCATION_QUEUE_ITEMS + 1 }, (_, index) => ({ idempotencyKey: `point-${index}` }));
+  assert.throws(
+    () => createLocationQueueStoragePlan(overflow, "generation-overflow", "queue-chunk-"),
+    /capacity/,
+  );
+
+  const plan = createLocationQueueStoragePlan(
+    Array.from({ length: 201 }, (_, index) => ({ idempotencyKey: `point-${index}` })),
+    "generation-incomplete",
+    "queue-chunk-",
+  );
+  assert.throws(
+    () => restoreLocationQueueChunks(plan.manifest, new Map([[plan.chunks[0].key, plan.chunks[0].items]])),
+    /missing or invalid/,
+  );
 });

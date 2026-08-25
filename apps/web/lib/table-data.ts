@@ -23,6 +23,40 @@ export async function listAllRowsOrEmpty(db: TablesDB, databaseId: string, table
   }
 }
 
+export type RowListResult = {
+  tableId: string;
+  rows: Models.DefaultRow[];
+  error: string;
+};
+
+/**
+ * Dashboard reads must distinguish a real empty result from an unavailable
+ * table. Returning the error beside any rows lets the page remain useful
+ * without turning a backend failure into a misleading zero.
+ */
+export async function listRowsResult(
+  db: TablesDB,
+  databaseId: string,
+  tableId: string,
+  queries: string[] = [],
+  maximum = 10_000,
+): Promise<RowListResult> {
+  try {
+    return {
+      tableId,
+      rows: await withTimeout(listAllRows(db, databaseId, tableId, queries, maximum), 8_000, `Listing ${tableId} timed out`),
+      error: "",
+    };
+  } catch (error) {
+    console.error(`Could not list FieldOPS table ${tableId}`, error);
+    return {
+      tableId,
+      rows: [],
+      error: error instanceof Error ? error.message : `Could not load ${tableId}`,
+    };
+  }
+}
+
 export function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(message)), timeoutMs);

@@ -4,7 +4,8 @@ import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { hasRequiredVisitEvidence } from "@fieldops/domain";
 import { requireManager } from "../lib/auth";
 import { workDate } from "../lib/mobile-auth";
-import { listAllRowsOrEmpty } from "../lib/table-data";
+import { operationalPolicyFromRow } from "../lib/operational-policy";
+import { listRowsResult } from "../lib/table-data";
 import type { LiveAttendance, LiveEmployee, LiveLocationPoint } from "../lib/live-types";
 import { LogoutButton } from "./logout-button";
 import { LiveGpsCount, LiveOperations } from "./live-operations";
@@ -36,16 +37,23 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const selectedEmployee = params.employee ?? "all";
   const db = createAdminTablesDb();
   const employeeFilter = selectedEmployee === "all" ? [] : [Query.equal("employee_id", selectedEmployee)];
-  const [employeeRows, outletRows, routeRows, attendanceRows, rawVisitRows, locationRows, orderRows] = await Promise.all([
-    listAllRowsOrEmpty(db, databaseId, "employees", [Query.equal("status", "active")]),
-    listAllRowsOrEmpty(db, databaseId, "outlets", [Query.equal("status", "active")]),
-    listAllRowsOrEmpty(db, databaseId, "route_assignments", [Query.equal("work_date", date)]),
-    listAllRowsOrEmpty(db, databaseId, "attendance_records", [Query.equal("work_date", date)]),
-    listAllRowsOrEmpty(db, databaseId, "visits", [Query.equal("work_date", date), Query.equal("status", "completed"), ...employeeFilter]),
-    listAllRowsOrEmpty(db, databaseId, "location_points", [Query.equal("work_date", date), ...employeeFilter]),
-    listAllRowsOrEmpty(db, databaseId, "orders", [Query.equal("work_date", date), ...employeeFilter]),
+  const initialResults = await Promise.all([
+    listRowsResult(db, databaseId, "employees", [Query.equal("status", "active")]),
+    listRowsResult(db, databaseId, "outlets", [Query.equal("status", "active")]),
+    listRowsResult(db, databaseId, "route_assignments", [Query.equal("work_date", date)]),
+    listRowsResult(db, databaseId, "attendance_records", [Query.equal("work_date", date)]),
+    listRowsResult(db, databaseId, "visits", [Query.equal("work_date", date), Query.equal("status", "completed"), ...employeeFilter]),
+    listRowsResult(db, databaseId, "location_points", [Query.equal("work_date", date), ...employeeFilter]),
+    listRowsResult(db, databaseId, "orders", [Query.equal("work_date", date), ...employeeFilter]),
+    listRowsResult(db, databaseId, "organizations", [Query.equal("active", true), Query.orderAsc("$createdAt")], 1),
   ]);
-  const evidenceRows = rawVisitRows.length > 0 ? await listAllRowsOrEmpty(db, databaseId, "visit_evidence", [], 5_000) : [];
+  const [employeeResult, outletResult, routeResult, attendanceResult, visitResult, locationResult, orderResult, organizationResult] = initialResults;
+  const employeeRows = employeeResult.rows, outletRows = outletResult.rows, routeRows = routeResult.rows;
+  const attendanceRows = attendanceResult.rows, rawVisitRows = visitResult.rows, locationRows = locationResult.rows, orderRows = orderResult.rows;
+  const operationsPolicy = operationalPolicyFromRow(organizationResult.rows[0] as Record<string, unknown> | undefined);
+  const evidenceResult = rawVisitRows.length > 0 ? await listRowsResult(db, databaseId, "visit_evidence", [], 5_000) : null;
+  const evidenceRows = evidenceResult?.rows ?? [];
+  const dataErrors = [...initialResults, ...(evidenceResult ? [evidenceResult] : [])].filter((result) => result.error);
   employeeRows.sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
   outletRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   locationRows.sort((a, b) => String(a.captured_at).localeCompare(String(b.captured_at)));
@@ -97,7 +105,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const liveAttendance: LiveAttendance[] = visibleAttendance.map((row) => ({ id: row.$id, employeeId: String(row.employee_id), status: String(row.status), checkInAt: String(row.check_in_at), checkOutAt: row.check_out_at ? String(row.check_out_at) : null }));
   const liveLocations: LiveLocationPoint[] = locationRows.map((row) => {
     const coordinates = validPoint(row.coordinates) ? row.coordinates : [Number(row.longitude), Number(row.latitude)];
-    return { id: row.$id, employeeId: String(row.employee_id), capturedAt: String(row.captured_at), receivedAt: String(row.received_at), latitude: Number(coordinates[1]), longitude: Number(coordinates[0]), accuracy: Number(row.accuracy), source: String(row.source) };
+    return { id: row.$id, employeeId: String(row.employee_id), capturedAt: String(row.captured_at), receivedAt: String(row.received_at), latitude: Number(coordinates[1]), longitude: Number(coordinates[0]), accuracy: Number(row.accuracy), speed: storedSpeed(row.speed), source: String(row.source) };
   });
 
   const metricClass = "border-b border-slate-200 py-5 sm:border-b-0 sm:border-r sm:px-6 sm:first:pl-0 sm:last:border-r-0";
@@ -112,7 +120,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       <div className="mt-6 border-t border-white/15 px-2 pt-4 lg:mt-auto"><small className="mb-1 block text-slate-400">Signed in as</small><strong className="block">{actor.user.name}</strong><LogoutButton /></div>
     </aside>
     <section className={ui.workspace}>
-      <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>Date-wise field record</p><h1 className={ui.h1}>Every commitment and field visit.</h1><p className={ui.lede}>Minute-by-minute route history, unfinished management assignments, salesperson-added visits, required photo and audio evidence, and territory-aware orders.</p></div><a className={ui.button} href="/management">Assign visits & manage team</a></header>
+      <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>Date-wise field record</p><h1 className={ui.h1}>Every commitment and field visit.</h1><p className={ui.lede}>Quality-checked route history, unfinished assignments, salesperson-marked places, photo and voice evidence, and territory-aware orders.</p></div><a className={ui.button} href="/management">Open management controls</a></header>
+      {dataErrors.length > 0 && <section className="mb-6 border-l-4 border-amber-600 bg-amber-50 p-4 text-amber-950" role="alert"><strong className="block">Some dashboard records could not be loaded.</strong><p className="mt-1 text-sm leading-6">The visible totals may be incomplete; an unavailable table is not being reported as zero. Refresh to retry: {dataErrors.map((result) => result.tableId.replaceAll("_", " ")).join(", ")}.</p><a className="mt-3 inline-flex font-black text-amber-950 underline decoration-2 underline-offset-4" href={`/?date=${date}&employee=${selectedEmployee}`}>Retry dashboard data</a></section>}
       <form className="mb-7 flex flex-col items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-end" method="get" id="reports">
         <label className={`${ui.label} sm:min-w-48`}>Date<input className={ui.input} type="date" name="date" defaultValue={date} /></label>
         <label className={`${ui.label} sm:min-w-56`}>Salesperson<select className={ui.input} name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => employee.$id !== actor.employee.$id).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
@@ -122,9 +131,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <article className={metricClass}><span className={metricLabel}>Assigned completion</span><b className={metricValue}>{assignedCompleted}/{visibleRoutes.length}</b><small className={metricDetail}>{assignedPending} still need follow-up</small></article>
         <article className={metricClass}><span className={metricLabel}>Visits recorded</span><b className={metricValue}>{completedVisits}</b><small className={metricDetail}>{selfInitiatedVisits} added by salespeople</small></article>
         <article className={metricClass}><span className={metricLabel}>Orders recorded</span><b className={metricValue}>{orderRows.length}</b><small className={metricDetail}>PKR {sales.toLocaleString()}</small></article>
-        <article className={metricClass}><span className={metricLabel}>GPS route points</span><span className={metricValue}><LiveGpsCount initialCount={locationRows.length} /></span><small className={metricDetail}>Minute-by-minute history</small></article>
+        <article className={metricClass}><span className={metricLabel}>GPS route points</span><span className={metricValue}><LiveGpsCount initialCount={locationRows.length} /></span><small className={metricDetail}>Raw fixes preserved for audit</small></article>
       </section>
-      <LiveOperations key={`${date}:${selectedEmployee}`} date={date} selectedEmployee={selectedEmployee} pollingEnabled={date === workDate()} generatedAt={new Date().toISOString()} staticPoints={staticMapPoints} initialEmployees={liveEmployees} initialAttendance={liveAttendance} initialLocations={liveLocations} />
+      <LiveOperations key={`${date}:${selectedEmployee}`} date={date} selectedEmployee={selectedEmployee} pollingEnabled={date === workDate()} generatedAt={new Date().toISOString()} staticPoints={staticMapPoints} initialEmployees={liveEmployees} initialAttendance={liveAttendance} initialLocations={liveLocations} routePolicy={operationsPolicy} />
       <section className={ui.tableCard} id="assignments"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Management commitments</p><h2 className={ui.h2}>Assigned visit completion status</h2></div><span className="text-sm font-bold text-slate-500">{assignedPending} need follow-up</span></div>
         <div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Salesperson</th><th>Assigned customer</th><th>Sequence</th><th>Status</th><th>Completed</th></tr></thead><tbody>
           {visibleRoutes.map((route) => <tr key={route.$id}><td>{String(employees.get(String(route.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(route.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(route.outlet_id))?.address ?? "")}</small></td><td>{Number(route.sequence)}</td><td><span className={route.status === "completed" ? "font-extrabold text-emerald-700" : "font-extrabold text-amber-700"}>{String(route.status).replaceAll("_", " ")}</span></td><td>{time(route.completed_at)}</td></tr>)}
@@ -154,4 +163,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
 function validPoint(value: unknown): value is [number, number] {
   return Array.isArray(value) && value.length === 2 && value.every((coordinate) => Number.isFinite(Number(coordinate)));
+}
+
+function storedSpeed(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

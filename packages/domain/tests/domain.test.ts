@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_ROUTE_TRACKING_POLICY,
   MAX_VISIT_EVIDENCE_BYTES,
+  buildRouteGapConnectors,
+  buildRouteSegments,
   canAccessTerritory,
   evaluateGeofence,
   hasRequiredVisitEvidence,
   mergeRefreshedVisits,
+  normalizeRouteTrackingPolicy,
   parseTerritoryBoundary,
   pointInTerritory,
   retryDelayMs,
+  shouldCaptureRoutePoint,
   visitEvidenceExtension,
   visitEvidenceValidationError,
   type AccessContext,
+  type RouteTrackPoint,
 } from "../src";
 
 describe("territory authorization", () => {
@@ -38,6 +44,220 @@ describe("visit geofence", () => {
     const outlet = { latitude: 24.8138, longitude: 67.0305 };
     const nearby = { latitude: 24.8141, longitude: 67.0305 };
     expect(evaluateGeofence(outlet, nearby, 70, 0).accepted).toBe(true);
+  });
+});
+
+describe("route tracking fidelity", () => {
+  const origin = { latitude: 24.9063, longitude: 66.98864 };
+  const point = (
+    seconds: number,
+    latitude: number,
+    longitude: number,
+    accuracy = 6,
+    id = `point-${seconds}`,
+    speed: number | null = null,
+  ): RouteTrackPoint => ({
+    id,
+    capturedAt: new Date(Date.UTC(2026, 7, 18, 8, 0, seconds)).toISOString(),
+    latitude,
+    longitude,
+    accuracy,
+    speed,
+  });
+
+  it("uses bounded, high-fidelity defaults for manager-controlled policy", () => {
+    expect(DEFAULT_ROUTE_TRACKING_POLICY).toEqual({
+      sampleIntervalSeconds: 15,
+      distanceIntervalMeters: 10,
+      maxAcceptedAccuracyMeters: 35,
+      stationaryJitterMeters: 20,
+      segmentGapMinutes: 5,
+      maxPlausibleSpeedMps: 45,
+    });
+    expect(normalizeRouteTrackingPolicy({
+      sampleIntervalSeconds: 0,
+      distanceIntervalMeters: "15",
+      maxAcceptedAccuracyMeters: 10_000,
+      segmentGapMinutes: "not a number",
+    })).toMatchObject({
+      sampleIntervalSeconds: 5,
+      distanceIntervalMeters: 15,
+      maxAcceptedAccuracyMeters: 250,
+      segmentGapMinutes: 5,
+    });
+  });
+
+  it("captures real movement, rejects weak fixes, and keeps a stationary live heartbeat", () => {
+    const start = point(0, origin.latitude, origin.longitude);
+    const jitter = point(15, origin.latitude + 0.00002, origin.longitude);
+    const moved = point(30, origin.latitude + 0.0002, origin.longitude);
+    const weak = point(45, origin.latitude + 0.0004, origin.longitude, 82);
+    const heartbeat = point(120, origin.latitude + 0.00001, origin.longitude);
+
+    expect(shouldCaptureRoutePoint(null, start)).toBe(true);
+    expect(shouldCaptureRoutePoint(start, jitter)).toBe(false);
+    expect(shouldCaptureRoutePoint(start, moved)).toBe(true);
+    expect(shouldCaptureRoutePoint(moved, weak)).toBe(false);
+    expect(shouldCaptureRoutePoint(start, heartbeat)).toBe(true);
+  });
+
+  it("does not mistake native-reported stationary drift for movement", () => {
+    const start = point(0, origin.latitude, origin.longitude, 8, "start", 0);
+    const earlyDrift = point(15, origin.latitude + 0.00025, origin.longitude, 8, "early-drift", 0);
+    const heartbeat = point(120, origin.latitude + 0.00025, origin.longitude, 8, "heartbeat", 0);
+    const walking = point(135, origin.latitude + 0.00025, origin.longitude, 8, "walking", 1.2);
+
+    expect(shouldCaptureRoutePoint(start, earlyDrift)).toBe(false);
+    expect(shouldCaptureRoutePoint(start, heartbeat)).toBe(true);
+    expect(shouldCaptureRoutePoint(start, walking)).toBe(true);
+  });
+
+  it("preserves an accurate outbound turn and return along the same road", () => {
+    const route = [
+      point(0, 24.9063, 66.98864),
+      point(15, 24.9063, 66.9882),
+      point(30, 24.9063, 66.98775),
+      point(45, 24.90645, 66.98775),
+      point(60, 24.9063, 66.98775),
+      point(75, 24.9063, 66.9882),
+      point(90, 24.9063, 66.98864),
+    ];
+
+    const segments = buildRouteSegments(route);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.map(({ latitude, longitude }) => [latitude, longitude])).toEqual(
+      route.map(({ latitude, longitude }) => [latitude, longitude]),
+    );
+  });
+
+  it("removes the weak mosque/lunch drift and never draws across a long pause", () => {
+    const start = point(0, 24.9063, 66.98864, 8, "start");
+    const outbound = point(15, 24.9063, 66.98765, 8, "outbound");
+    const weakTriangle = point(30, 24.9058, 66.98769, 82, "weak-triangle");
+    const afterPause: RouteTrackPoint = {
+      ...point(45, 24.9063, 66.9882, 8, "return"),
+      capturedAt: "2026-08-18T08:20:00.000Z",
+    };
+    const home: RouteTrackPoint = {
+      ...point(60, 24.9063, 66.98864, 8, "home"),
+      capturedAt: "2026-08-18T08:20:15.000Z",
+    };
+
+    const segments = buildRouteSegments([start, outbound, weakTriangle, afterPause, home]);
+    expect(segments.flat().map((item) => item.id)).not.toContain("weak-triangle");
+    expect(segments).toHaveLength(2);
+    expect(segments[0]?.map((item) => item.id)).toEqual(["start", "outbound"]);
+    expect(segments[1]?.map((item) => item.id)).toEqual(["return", "home"]);
+    expect(buildRouteGapConnectors(segments).map(([from, to]) => [from.id, to.id]))
+      .toEqual([["outbound", "return"]]);
+  });
+
+  it("keeps an out-and-back lunch and mosque route from becoming a triangle or oval", () => {
+    const start = point(0, 24.9063, 66.98864, 7, "start", 1.4);
+    const straight = point(15, 24.9063, 66.9882, 7, "straight", 1.4);
+    const turn = point(30, 24.90645, 66.98775, 7, "turn", 1.1);
+    const lunch = point(45, 24.90662, 66.98775, 8, "lunch", 0.8);
+    const driftOne: RouteTrackPoint = {
+      ...point(46, 24.90682, 66.98755, 8, "lunch-drift-one", 0),
+      capturedAt: "2026-08-18T08:02:00.000Z",
+    };
+    const driftTwo: RouteTrackPoint = {
+      ...point(47, 24.90648, 66.98748, 9, "lunch-drift-two", 0.1),
+      capturedAt: "2026-08-18T08:04:00.000Z",
+    };
+    const mosque: RouteTrackPoint = {
+      ...point(48, 24.90694, 66.98775, 7, "mosque", 1),
+      capturedAt: "2026-08-18T08:12:00.000Z",
+    };
+    const returnTurn: RouteTrackPoint = {
+      ...point(49, 24.90645, 66.98775, 7, "return-turn", 1.2),
+      capturedAt: "2026-08-18T08:25:00.000Z",
+    };
+    const returnStraight: RouteTrackPoint = {
+      ...point(50, 24.9063, 66.9882, 7, "return-straight", 1.4),
+      capturedAt: "2026-08-18T08:25:15.000Z",
+    };
+    const home: RouteTrackPoint = {
+      ...point(51, 24.9063, 66.98864, 7, "home", 1.4),
+      capturedAt: "2026-08-18T08:25:30.000Z",
+    };
+
+    const segments = buildRouteSegments([
+      start,
+      straight,
+      turn,
+      lunch,
+      driftOne,
+      driftTwo,
+      mosque,
+      returnTurn,
+      returnStraight,
+      home,
+    ]);
+    const ids = segments.flat().map((item) => item.id);
+
+    expect(ids).toEqual([
+      "start",
+      "straight",
+      "turn",
+      "lunch",
+      "mosque",
+      "return-turn",
+      "return-straight",
+      "home",
+    ]);
+    expect(segments.map((segment) => segment.map((item) => item.id))).toEqual([
+      ["start", "straight", "turn", "lunch"],
+      ["mosque"],
+      ["return-turn", "return-straight", "home"],
+    ]);
+    expect(buildRouteGapConnectors(segments).map(([from, to]) => [from.id, to.id])).toEqual([
+      ["lunch", "mosque"],
+      ["mosque", "return-turn"],
+    ]);
+  });
+
+  it("does not estimate stationary or very long GPS gaps", () => {
+    const start = point(0, origin.latitude, origin.longitude, 6, "start");
+    const samePlace: RouteTrackPoint = {
+      ...point(1, origin.latitude + 0.00001, origin.longitude, 6, "same-place"),
+      capturedAt: "2026-08-18T08:10:00.000Z",
+    };
+    const muchLater: RouteTrackPoint = {
+      ...point(2, origin.latitude, origin.longitude + 0.0005, 6, "much-later"),
+      capturedAt: "2026-08-18T11:00:00.000Z",
+    };
+
+    expect(buildRouteGapConnectors([[start], [samePlace], [muchLater]])).toEqual([]);
+  });
+
+  it("does not estimate a gap whose endpoints overlap within GPS uncertainty", () => {
+    const start = point(0, origin.latitude, origin.longitude, 30, "start");
+    const uncertainReturn: RouteTrackPoint = {
+      ...point(1, origin.latitude + 0.00022, origin.longitude, 30, "uncertain-return"),
+      capturedAt: "2026-08-18T08:10:00.000Z",
+    };
+
+    expect(buildRouteGapConnectors([[start], [uncertainReturn]])).toEqual([]);
+  });
+
+  it("collapses duplicate action points and stationary GPS scribble", () => {
+    const start = point(0, origin.latitude, origin.longitude, 12, "foreground");
+    const duplicate = point(0, origin.latitude + 0.00003, origin.longitude, 5, "shift-check-in");
+    const drift = point(15, origin.latitude + 0.00002, origin.longitude + 0.00001, 8, "drift");
+    const moved = point(30, origin.latitude, origin.longitude + 0.0004, 8, "moved");
+
+    expect(buildRouteSegments([start, duplicate, drift, moved])[0]?.map((item) => item.id))
+      .toEqual(["shift-check-in", "moved"]);
+  });
+
+  it("removes a one-point impossible spike without deleting a real turn", () => {
+    const start = point(0, 24.9063, 66.98864, 5, "start");
+    const impossible = point(15, 25.0063, 67.08864, 5, "impossible");
+    const next = point(30, 24.9063, 66.9882, 5, "next");
+
+    expect(buildRouteSegments([start, impossible, next]).flat().map((item) => item.id))
+      .toEqual(["start", "next"]);
   });
 });
 

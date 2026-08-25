@@ -2,11 +2,15 @@ import { Query, type Models } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { mobileActor, workDate } from "../../../../lib/mobile-auth";
+import { operationalPolicyFromRow } from "../../../../lib/operational-policy";
+import { ACTIVE_DEAL_STAGES } from "../../../../lib/team-desk";
 import { territoryAccessForEmployee } from "../../../../lib/territory-access";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 const MAX_ROWS_PER_TYPE = 100;
 const MAX_RECENT_ACTIVITY = 50;
+const RECENT_PLACE_DAYS = 14;
+const RECENT_CLOSED_DEAL_DAYS = 90;
 type DataRow = Models.Row & Record<string, unknown>;
 type PlaceApprovalStatus = "pending_review" | "approved" | "rejected";
 type ActivityStatus = "recorded" | PlaceApprovalStatus;
@@ -177,7 +181,23 @@ export async function GET(request: Request) {
   const requestedDate = new URL(request.url).searchParams.get("date") ?? "";
   const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : workDate();
   const employeeId = actor.employee.$id;
-  const [routes, territoryAccess, attendanceResult, completedVisitResult, orderResult] = await Promise.all([
+  const recentDate = new Date();
+  recentDate.setDate(recentDate.getDate() - RECENT_PLACE_DAYS);
+  const recentWorkDate = workDate(recentDate);
+  const reviewedSince = recentDate.toISOString();
+  const [
+    routes,
+    territoryAccess,
+    attendanceResult,
+    completedVisitResult,
+    orderResult,
+    reviewedPlaceResult,
+    pendingPlaceResult,
+    organizationResult,
+    teamMessageResult,
+    activeDealResult,
+    closedDealResult,
+  ] = await Promise.all([
     db.listRows({
       databaseId,
       tableId: "route_assignments",
@@ -199,20 +219,75 @@ export async function GET(request: Request) {
       tableId: "orders",
       queries: [Query.equal("employee_id", employeeId), Query.equal("work_date", date), Query.orderDesc("$createdAt"), Query.limit(MAX_ROWS_PER_TYPE)],
     }),
+    db.listRows({
+      databaseId,
+      tableId: "visits",
+      queries: [Query.equal("employee_id", employeeId), Query.greaterThanEqual("reviewed_at", reviewedSince), Query.orderDesc("reviewed_at"), Query.limit(MAX_ROWS_PER_TYPE)],
+    }).catch(() => ({ rows: [] })),
+    db.listRows({
+      databaseId,
+      tableId: "visits",
+      queries: [Query.equal("employee_id", employeeId), Query.equal("place_approval_status", "pending_review"), Query.greaterThanEqual("work_date", recentWorkDate), Query.orderDesc("work_date"), Query.limit(MAX_ROWS_PER_TYPE)],
+    }).catch(() => ({ rows: [] })),
+    db.listRows({
+      databaseId,
+      tableId: "organizations",
+      queries: [Query.equal("active", true), Query.orderAsc("$createdAt"), Query.limit(1)],
+    }),
+    db.listRows({
+      databaseId,
+      tableId: "team_messages",
+      queries: [Query.equal("employee_id", employeeId), Query.orderDesc("sent_at"), Query.limit(MAX_ROWS_PER_TYPE)],
+    }),
+    db.listRows({
+      databaseId,
+      tableId: "sales_deals",
+      queries: [
+        Query.equal("employee_id", employeeId),
+        Query.equal("stage", [...ACTIVE_DEAL_STAGES]),
+        Query.orderDesc("$updatedAt"),
+        Query.limit(MAX_ROWS_PER_TYPE),
+      ],
+    }),
+    db.listRows({
+      databaseId,
+      tableId: "sales_deals",
+      queries: [
+        Query.equal("employee_id", employeeId),
+        Query.equal("stage", ["won", "lost"]),
+        Query.orderDesc("$updatedAt"),
+        Query.limit(MAX_ROWS_PER_TYPE),
+      ],
+    }),
   ]);
   const routeRows = routes.rows as DataRow[];
   const attendanceRows = attendanceResult.rows as DataRow[];
   const completedVisits = completedVisitResult.rows as DataRow[];
+  const recentPlaceVisits = dedupeRows([
+    ...completedVisits,
+    ...(reviewedPlaceResult.rows as DataRow[]),
+    ...(pendingPlaceResult.rows as DataRow[]),
+  ]).filter((visit) => visit.status === "completed");
   const orderRows = orderResult.rows as DataRow[];
+  const organization = organizationResult.rows[0] as DataRow | undefined;
+  const operationsPolicy = operationalPolicyFromRow(organization);
+  const teamMessageRows = teamMessageResult.rows as DataRow[];
+  const closedDealCutoff = new Date();
+  closedDealCutoff.setDate(closedDealCutoff.getDate() - RECENT_CLOSED_DEAL_DAYS);
+  const dealRows = dedupeRows([
+    ...(activeDealResult.rows as DataRow[]),
+    ...(closedDealResult.rows as DataRow[]).filter((deal) => new Date(deal.$updatedAt).valueOf() >= closedDealCutoff.valueOf()),
+  ]).sort((left, right) => right.$updatedAt.localeCompare(left.$updatedAt)).slice(0, MAX_ROWS_PER_TYPE);
   const outletIds = [
     ...routeRows.map((route) => stringValue(route.outlet_id)),
-    ...completedVisits.flatMap((visit) => {
+    ...recentPlaceVisits.flatMap((visit) => {
       const status = placeApprovalStatus(visit.place_approval_status);
       return [stringValue(visit.outlet_id), approvedOutletId(visit, status)];
     }),
     ...orderRows.map((order) => stringValue(order.outlet_id)),
+    ...dealRows.map((deal) => stringValue(deal.outlet_id)),
   ];
-  const selfVisitIds = completedVisits
+  const selfVisitIds = recentPlaceVisits
     .filter((visit) => visit.visit_type === "self_initiated" || !visit.route_assignment_id)
     .map((visit) => visit.$id);
   const [outlets, evidenceTypes] = await Promise.all([
@@ -275,7 +350,37 @@ export async function GET(request: Request) {
     shiftActive: Boolean(activeAttendance),
     workState,
     route: [...assignedVisits, ...selfVisits],
-    recentActivity: buildRecentActivity(attendanceRows, completedVisits, orderRows, outlets, evidenceTypes),
+    recentActivity: buildRecentActivity(attendanceRows, recentPlaceVisits, orderRows, outlets, evidenceTypes),
+    teamContact: {
+      name: stringValue(organization?.manager_contact_name),
+      phone: stringValue(organization?.manager_contact_phone),
+      whatsapp: stringValue(organization?.manager_contact_whatsapp),
+      updatedAt: organization?.$updatedAt ?? "",
+    },
+    teamMessages: teamMessageRows.map((message) => ({
+      id: message.$id,
+      employeeId: stringValue(message.employee_id),
+      senderRole: stringValue(message.sender_role),
+      senderEmployeeId: stringValue(message.sender_employee_id) || null,
+      body: stringValue(message.body),
+      sentAt: stringValue(message.sent_at),
+      readAt: stringValue(message.read_at) || null,
+    })),
+    deals: dealRows.map((deal) => ({
+      id: deal.$id,
+      employeeId: stringValue(deal.employee_id),
+      outletId: stringValue(deal.outlet_id) || null,
+      outletName: stringValue(outlets.get(stringValue(deal.outlet_id))?.name),
+      customerName: stringValue(deal.customer_name),
+      title: stringValue(deal.title),
+      stage: stringValue(deal.stage),
+      amount: deal.amount === null || deal.amount === undefined ? null : Number(deal.amount),
+      nextAction: stringValue(deal.next_action),
+      followUpAt: stringValue(deal.follow_up_at) || null,
+      notes: stringValue(deal.notes),
+      updatedAt: deal.$updatedAt,
+    })),
+    operationsPolicy,
     territoryPolicy: {
       mode: territoryAccess.restricted ? "restricted" : "unrestricted",
       assignedCount: territoryAccess.assignedCount,
@@ -285,4 +390,8 @@ export async function GET(request: Request) {
     },
     map: { styleUrl: "https://tiles.openfreemap.org/styles/liberty", attribution: "© OpenStreetMap contributors" },
   });
+}
+
+function dedupeRows(rows: DataRow[]) {
+  return [...new Map(rows.map((row) => [row.$id, row])).values()];
 }

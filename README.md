@@ -20,4 +20,4 @@ corepack pnpm dev
 
 Copy `.env.example` to `.env.local` only after Appwrite infrastructure is available. No migration is automatically executed.
 
-For an existing installation, run the versioned migrations in order. The salesperson-marked place approval release requires `scripts/migrate-007-place-approvals.mjs` before the matching server code is deployed; rehearse migrations on a scrubbed snapshot first.
+For an existing installation, run the versioned migrations in order. The current route, control-room, Team Desk, and identity-login release requires `scripts/migrate-008-activity-sync.mjs` through `scripts/migrate-013-auth-rate-limit.mjs` after migration 007 and before the matching server code is deployed; rehearse migrations on a scrubbed snapshot first. Migration 012 is fail-closed: it changes no labels unless the database has one active organization and resolves exactly one distinct active manager user. Migration 013 adds private, pseudonymous credential-attempt counters used by both manager and salesperson login.

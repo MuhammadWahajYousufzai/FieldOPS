@@ -1,34 +1,80 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { createAdminUsers, createSessionAccount } from "@fieldops/appwrite/server";
-import { dashboardManagerUserId, managerForUser, SESSION_COOKIE } from "../../../../lib/auth";
+import type { Models } from "node-appwrite";
+import { createAdminAccount, createAdminTablesDb, createAdminUsers } from "@fieldops/appwrite/server";
+import { managerForUser, SESSION_COOKIE } from "../../../../lib/auth";
+import { authorizeCreatedSession } from "../../../../lib/created-session-authorization";
+import { consumeCredentialAttempt } from "../../../../lib/credential-attempt-throttle";
 
-function matchesDashboardPassword(password: string): boolean {
-  const configured = process.env.FIELDOPS_INITIAL_PASSWORD;
-  if (!configured) throw new Error("FIELDOPS_INITIAL_PASSWORD is not configured.");
-  const submittedDigest = createHash("sha256").update(password).digest();
-  const configuredDigest = createHash("sha256").update(configured).digest();
-  return timingSafeEqual(submittedDigest, configuredDigest);
+const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
+
+function appwriteStatus(error: unknown): number {
+  return typeof error === "object" && error !== null && "code" in error
+    ? Number(error.code)
+    : 0;
 }
 
 export async function POST(request: Request) {
+  let body: Record<string, unknown>;
   try {
-    const body = await request.json();
-    if (typeof body.password !== "string" || !body.password) {
-      return NextResponse.json({ error: "Enter your password." }, { status: 400 });
+    const input = await request.json() as unknown;
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid body");
+    body = input as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
+  }
+
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!email || email.length > 320 || !password || password.length > 256) {
+    return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });
+  }
+
+  try {
+    const throttle = await consumeCredentialAttempt({
+      db: createAdminTablesDb(),
+      databaseId,
+      email,
+      headers: request.headers,
+      secret: process.env.AUTH_RATE_LIMIT_HMAC_SECRET ?? process.env.APPWRITE_API_KEY ?? "",
+    });
+    if (!throttle.allowed) {
+      return NextResponse.json(
+        { error: "Too many sign-in attempts. Wait a few minutes and try again." },
+        { status: 429, headers: { "cache-control": "no-store", "retry-after": String(throttle.retryAfterSeconds) } },
+      );
     }
-    if (!matchesDashboardPassword(body.password)) {
-      return NextResponse.json({ error: "The password is incorrect." }, { status: 401 });
-    }
-    const userId = await dashboardManagerUserId();
-    const session = await createAdminUsers().createSession({ userId });
-    const account = createSessionAccount(session.secret);
-    const user = await account.get();
-    const actor = await managerForUser(user);
+  } catch (error) {
+    console.error("Dashboard credential-attempt protection is unavailable", error);
+    return NextResponse.json(
+      { error: "Sign in is temporarily unavailable. Try again shortly." },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  let session: Models.Session;
+  try {
+    session = await createAdminAccount().createEmailPasswordSession({ email, password });
+  } catch (error) {
+    const status = appwriteStatus(error);
+    return NextResponse.json(
+      { error: status === 401 ? "The email or password is incorrect." : "Sign in is temporarily unavailable." },
+      { status: status === 401 ? 401 : 503 },
+    );
+  }
+
+  const users = createAdminUsers();
+  try {
+    const actor = await authorizeCreatedSession(
+      async () => {
+        const user = await users.get({ userId: session.userId });
+        return managerForUser(user);
+      },
+      () => users.deleteSession({ userId: session.userId, sessionId: session.$id }),
+    );
     if (!actor) {
-      await account.deleteSession({ sessionId: "current" });
-      return NextResponse.json({ error: "Management access is required." }, { status: 403 });
+      return NextResponse.json({ error: "This account is not authorized for management access." }, { status: 403 });
     }
+
     const response = NextResponse.json({ ok: true });
     response.cookies.set(SESSION_COOKIE, session.secret, {
       httpOnly: true,
@@ -39,7 +85,7 @@ export async function POST(request: Request) {
     });
     return response;
   } catch (error) {
-    console.error("Dashboard sign-in failed", error);
-    return NextResponse.json({ error: "Dashboard sign-in is not configured correctly." }, { status: 503 });
+    console.error("Dashboard authorization failed after session creation", error);
+    return NextResponse.json({ error: "Sign in could not be completed safely. Try again." }, { status: 503 });
   }
 }

@@ -35,6 +35,12 @@ async function ensureUser(email, name, password) {
   return users.create({ userId: ID.unique(), email, password, name });
 }
 
+async function ensureUserLabel(user, label) {
+  const labels = Array.isArray(user.labels) ? user.labels : [];
+  if (labels.includes(label)) return user;
+  return users.updateLabels({ userId: user.$id, labels: [...labels, label] });
+}
+
 const organizationId = stableId("org", "yousuf-rice");
 const regionId = stableId("reg", `${organizationId}:KHI`);
 const areaId = stableId("area", `${regionId}:KHI-S`);
@@ -49,7 +55,10 @@ const salesRoleId = stableId("role", "sales_person");
 await ensureRow("roles", managerRoleId, { code: "super_admin", name: "Executive manager", system: true, active: true });
 await ensureRow("roles", salesRoleId, { code: "sales_person", name: "Sales person", system: true, active: true });
 
-const manager = await ensureUser("management@sherazwaqar.tech", "FieldOPS Management", initialPassword);
+const manager = await ensureUserLabel(
+  await ensureUser("management@sherazwaqar.tech", "FieldOPS Management", initialPassword),
+  "admin",
+);
 const salesperson = await ensureUser("ali.raza@sherazwaqar.tech", "Ali Raza", salespersonPassword);
 const managerEmployeeId = stableId("emp", manager.$id);
 const salesEmployeeId = stableId("emp", salesperson.$id);

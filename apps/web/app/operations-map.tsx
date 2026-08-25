@@ -18,6 +18,7 @@ export type RouteLine = {
   name: string;
   color: string;
   coordinates: [number, number][];
+  estimated?: boolean;
 };
 
 export function OperationsMap({ points, routes = [] }: { points: MapPoint[]; routes?: RouteLine[] }) {
@@ -62,7 +63,15 @@ export function OperationsMap({ points, routes = [] }: { points: MapPoint[]; rou
       if (existing) existing.setData(data);
       else {
         map.addSource(sourceId, { type: "geojson", data });
-        map.addLayer({ id: sourceId, type: "line", source: sourceId, paint: { "line-color": route.color, "line-width": 4, "line-opacity": 0.82 } });
+        map.addLayer({
+          id: sourceId,
+          type: "line",
+          source: sourceId,
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: route.estimated
+            ? { "line-color": route.color, "line-width": 3, "line-opacity": 0.68, "line-dasharray": [1.5, 1.5] }
+            : { "line-color": route.color, "line-width": 4, "line-opacity": 0.82 },
+        });
       }
     }
     for (const sourceId of routeIdsRef.current) {
@@ -94,17 +103,41 @@ export function OperationsMap({ points, routes = [] }: { points: MapPoint[]; rou
     }
 
     if (!hasFittedRef.current) {
-      const bounds = new maplibregl.LngLatBounds();
-      for (const route of routes) for (const coordinate of route.coordinates) bounds.extend(coordinate);
-      for (const point of points) bounds.extend([point.longitude, point.latitude]);
-      if (points.length + routes.reduce((sum, route) => sum + route.coordinates.length, 0) > 1) {
-        map.fitBounds(bounds as LngLatBoundsLike, { padding: 55, maxZoom: 14, duration: 0 });
-      }
+      fitMapToContent(map, points, routes, 0);
       hasFittedRef.current = true;
     }
   }, [points, ready, routes]);
 
-  return <div className="mt-5 h-[350px] w-full overflow-hidden rounded-2xl bg-slate-200 sm:h-[430px]" ref={container} aria-label="Map of assigned outlets and captured visit locations" />;
+  return <div className="relative mt-5 h-[350px] w-full overflow-hidden rounded-2xl bg-slate-200 sm:h-[430px]">
+    <div className="h-full w-full" ref={container} aria-label="Map of assigned outlets and captured visit locations" />
+    <button
+      type="button"
+      className="absolute bottom-3 left-3 z-10 min-h-10 rounded-lg border border-slate-300 bg-white/95 px-3 text-xs font-black text-[#14213D] shadow-md backdrop-blur hover:bg-white focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#D8A629]"
+      onClick={() => {
+        const map = mapRef.current;
+        if (map) fitMapToContent(map, points, routes, 350);
+      }}
+    >Fit route</button>
+  </div>;
+}
+
+function fitMapToContent(map: maplibregl.Map, points: MapPoint[], routes: RouteLine[], duration: number) {
+  const routeCoordinates = routes.flatMap((route) => route.coordinates);
+  const coordinates: [number, number][] = routeCoordinates.length > 0
+    ? routeCoordinates
+    : points.flatMap((point): [number, number][] => (
+      Number.isFinite(point.longitude) && Number.isFinite(point.latitude)
+        ? [[point.longitude, point.latitude]]
+        : []
+    ));
+  if (coordinates.length === 0) return;
+  if (coordinates.length === 1) {
+    map.easeTo({ center: coordinates[0]!, zoom: 15, duration });
+    return;
+  }
+  const bounds = new maplibregl.LngLatBounds();
+  for (const coordinate of coordinates) bounds.extend(coordinate);
+  map.fitBounds(bounds as LngLatBoundsLike, { padding: 55, maxZoom: 15, duration });
 }
 
 function routeSourceId(id: string) {

@@ -7,7 +7,7 @@ PROJECT_DIRECTORY=$(CDPATH= cd -- "$SCRIPT_DIRECTORY/.." && pwd)
 APP_CONFIG="$PROJECT_DIRECTORY/../app.json"
 INFO_PLIST="$PROJECT_DIRECTORY/YousufRiceFieldOps/Info.plist"
 PROJECT_FILE="$PROJECT_DIRECTORY/YousufRiceFieldOps.xcodeproj"
-RELEASE_BUILD_FLOOR=20
+RELEASE_BUILD_FLOOR=22
 
 release_metadata=$(
   /usr/bin/env node -e '

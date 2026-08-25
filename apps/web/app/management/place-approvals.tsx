@@ -81,7 +81,6 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
   const [message, setMessage] = useState<Message>(null);
   const [resolved, setResolved] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, ReviewDraft>>(() => Object.fromEntries(reviews.map((review) => [review.id, reviewDraft(review)])));
-  const [correctedNames, setCorrectedNames] = useState<Record<string, string>>(() => Object.fromEntries(approvedPlaces.map((place) => [place.id, place.name])));
   const openReviews = useMemo(() => reviews.filter((review) => !resolved.includes(review.id)), [resolved, reviews]);
 
   function updateDraft(visitId: string, update: Partial<ReviewDraft>) {
@@ -122,26 +121,6 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
       router.refresh();
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : "The review could not be saved." });
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function correctName(place: ApprovedPlace) {
-    const name = correctedNames[place.id]?.trim() ?? "";
-    if (!name) {
-      setMessage({ tone: "error", text: "Enter the corrected official place name." });
-      return;
-    }
-    const busyKey = `correct:${place.id}`;
-    setBusy(busyKey);
-    setMessage(null);
-    try {
-      await requestJson(`/api/management/outlets/${place.id}`, "PATCH", { name, expectedName: place.name });
-      setMessage({ tone: "success", text: `${name} is now the official place name. The verified GPS point was not changed.` });
-      router.refresh();
-    } catch (error) {
-      setMessage({ tone: "error", text: error instanceof Error ? error.message : "The name correction could not be saved." });
     } finally {
       setBusy("");
     }
@@ -218,18 +197,13 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
 
     <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(20,33,61,0.055)]" aria-labelledby="approved-places-title">
       <div className="flex flex-col items-start justify-between gap-3 border-b border-slate-200 px-5 py-5 sm:flex-row sm:items-end sm:px-6">
-        <div><p className={ui.eyebrow}>Permanent field directory</p><h3 className={ui.h2} id="approved-places-title">Approved salesperson-marked places</h3><p className={ui.lede}>Correcting a name keeps the GPS point and original field report unchanged.</p></div>
+        <div><p className={ui.eyebrow}>Permanent field directory</p><h3 className={ui.h2} id="approved-places-title">Approved salesperson-marked places</h3><p className={ui.lede}>Review history stays here. Use the single Places directory below to edit official details without changing GPS.</p></div>
         <span className="text-sm font-black text-slate-500">{approvedPlaces.length} saved</span>
       </div>
-      {approvedPlaces.length > 0 ? <div className="divide-y divide-slate-200">{approvedPlaces.map((place) => {
-        const name = correctedNames[place.id] ?? place.name;
-        const changed = name.trim() !== place.name;
-        return <article className="grid gap-4 px-5 py-5 sm:px-6 xl:grid-cols-[minmax(220px,.8fr)_minmax(320px,1fr)_auto] xl:items-end" key={place.id}>
+      {approvedPlaces.length > 0 ? <div className="divide-y divide-slate-200">{approvedPlaces.map((place) => <article className="grid gap-4 px-5 py-5 sm:grid-cols-[1fr_auto] sm:items-center sm:px-6" key={place.id}>
           <div><span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-800">Permanent · {place.code}</span><strong className="mt-2 block text-lg text-[#14213D]">{place.name}</strong><small className="mt-1 block leading-5 text-slate-500">{place.address}<br />{place.territoryName} · marked by {place.salespersonName}<br />Approved {formatDateTime(place.approvedAt)}</small>{place.submittedName && place.submittedName !== place.name && <small className="mt-1 block font-bold text-blue-700">Submitted as “{place.submittedName}”</small>}</div>
-          <label className={ui.label} htmlFor={`correct-name-${place.id}`}>Correct official name<input id={`correct-name-${place.id}`} className={ui.input} value={name} maxLength={160} onChange={(event) => setCorrectedNames((current) => ({ ...current, [place.id]: event.target.value }))} /></label>
-          <div className="flex flex-wrap gap-2 xl:justify-end"><a className={ui.quietButton} href={mapUrl(place.latitude, place.longitude)} target="_blank" rel="noreferrer">Open point</a><button type="button" className={ui.button} disabled={Boolean(busy) || !changed || !name.trim()} onClick={() => correctName(place)}>{busy === `correct:${place.id}` ? "Saving…" : "Save correction"}</button></div>
-        </article>;
-      })}</div> : <p className="px-5 py-7 text-sm leading-6 text-slate-500 sm:px-6">No salesperson-marked place has been approved yet. The first approved review will become the first permanent entry here.</p>}
+          <div className="flex flex-wrap gap-2 sm:justify-end"><a className={ui.quietButton} href={mapUrl(place.latitude, place.longitude)} target="_blank" rel="noreferrer">Open point</a><a className={ui.button} href="#management-controls" onClick={() => window.dispatchEvent(new CustomEvent("fieldops:open-management-control", { detail: "places" }))}>Manage place</a></div>
+        </article>)}</div> : <p className="px-5 py-7 text-sm leading-6 text-slate-500 sm:px-6">No salesperson-marked place has been approved yet. The first approved review will become the first permanent entry here.</p>}
     </section>
   </section>;
 }

@@ -11,9 +11,9 @@ class AppDelegate: ExpoAppDelegate {
   var reactNativeFactory: RCTReactNativeFactory?
 
   /// Expo persists TaskManager registrations in UserDefaults across app
-  /// updates. Older FieldOPS builds registered a background location task that
-  /// the foreground-only app no longer uses. Remove only that verified legacy
-  /// registration before Expo restores native tasks during launch.
+  /// updates. Older FieldOPS builds registered a background location task under
+  /// a retired name. Remove only that verified legacy registration before Expo
+  /// restores tasks; the optional active-route task uses a different name.
   private func removeLegacyLocationTaskRegistration() {
     let defaults = UserDefaults.standard
     let serviceKey = "EXTaskService"

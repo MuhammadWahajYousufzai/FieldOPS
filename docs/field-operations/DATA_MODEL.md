@@ -2,25 +2,33 @@
 
 The self-hosted Appwrite 1.9.6 project uses TablesDB with server-only access. Every table has row security enabled and no table-wide client permissions. The Next.js Appwrite Site is the policy boundary for both the management dashboard and mobile API.
 
+This deployment is intentionally single-organization and operated through one manager control room. The `organizations` table supplies company-wide configuration; it is not a tenant selector, and no user can switch between organizations.
+
 ## Live resources
 
 | Table | Purpose and essential columns |
 |---|---|
-| `organizations` | company identity, timezone, currency, active state |
+| `organizations` | company identity, timezone, currency, active state, and the single manager's call/WhatsApp contact |
 | `regions` | organization hierarchy |
 | `areas` | region hierarchy |
 | `territories` | area, code, name, native `boundary` polygon, active state |
 | `roles` | manager and salesperson role definitions |
-| `employees` | Appwrite user link, display name, manager, status |
+| `employees` | Appwrite user link, display name, phone, manager, status |
 | `employee_assignments` | effective-dated role and optional territory assignment |
 | `audit_logs` | immutable management/security mutations |
 | `outlets` | territory, official name/address, immutable latitude/longitude and native `coordinates` point, optional source visit |
 | `route_assignments` | salesperson, outlet, work date, sequence, completion state |
+| `route_sequence_counters` | atomic per-salesperson/day sequence allocator for repeated or overlapping planning requests |
 | `attendance_records` | daily check-in/check-out and GPS evidence |
 | `visits` | assigned or salesperson-added visit, evidence and place-approval state, required native `coordinates` point |
 | `visit_evidence` | photo/audio metadata linked to Storage files |
-| `location_points` | minute-by-minute route points and native coordinates |
+| `location_points` | policy-filtered route points, native coordinates, accuracy, and foreground/background source |
 | `orders` | salesperson/customer/order totals and native coordinates |
+| `team_messages` | salesperson↔manager work thread, explicit read state, and retry-safe request key |
+| `sales_deals` | salesperson-owned opportunity, working value, stage, next action, follow-up, and notes |
+| `auth_attempt_windows` | private HMAC-derived login-attempt windows; no raw email, IP address, or password |
+
+The active `organizations` row also stores guarded route-quality and automatic-sync controls. Management can tune capture cadence, movement threshold, weak-fix cutoff, stationary jitter radius, route-gap segmentation, plausible speed, and phone sync cadence from the web dashboard. Mobile and route rendering normalize every value against safe bounds and fall back to production defaults when an older cached context has no policy.
 
 Storage uses the single private `visit-evidence` bucket. There are no public customer, employee, location, order, or evidence resources.
 
@@ -33,6 +41,14 @@ A salesperson-added visit follows `pending_review → approved` or `pending_revi
 Management reviews the evidence and may supply the official place name, address, and containing territory. Approval creates one permanent `outlets` row linked by `origin_visit_id`; that outlet keeps the submitted coordinates. Management may later correct only its official name through the place directory. The original salesperson-entered name remains on the visit and in the audit trail.
 
 The mobile Activity screen combines confirmed visits, place-review decisions, and sales events from `GET /api/v1/context` with the local upload outbox. A local item is removed only after an explicit server confirmation. Location batches use stable row IDs, drain more than one page, retain partial failures, and are coalesced into one active upload. Non-retryable corrupt points are quarantined so valid points continue, then shown for explicit removal in Activity. The durable outbox can recover independently if the main UI-state record is damaged. Live dashboard polling advances by server `received_at` and continues saturated pages with a row cursor, so older points uploaded after reconnecting still appear.
+
+Route display never treats every raw fix as travelled road. The phone captures high-fidelity updates during active work, rejects weak or physically impossible fixes before queueing, and keeps stationary heartbeats without recording normal GPS scribble. Foreground recording is the default. A salesperson may separately enable background permission for screen-lock continuity; that task has its own persisted active-session scope and stops at Finish session or sign out. The dashboard preserves all server-received points in the audit log but draws quality-checked segments, breaking the solid line across long gaps or implausible jumps and showing only a clearly dashed direction estimate across moderate gaps. Migration 008 adds employee-scoped indexes for recent cross-day place-review activity; migration 009 adds the organization-level operational controls; migration 010 adds atomic daily route-sequence counters so double taps, retries, and overlapping tabs cannot create duplicate positions.
+
+The Team Desk is deliberately not a separate CRM or tenant layer. A salesperson can call the one configured manager, send a durable offline message, and keep a customer opportunity at `lead`, `qualified`, `proposal`, `negotiation`, `won`, or `lost`. The manager can reply, call a salesperson, maintain phone numbers, and update stage, next action, or follow-up from the same dashboard. Reads are employee-scoped, manager writes are authenticated, every mutation is idempotent, and record changes use optimistic version checks. Deal values are salesperson-entered working estimates—not booked revenue or a forecast. Migration 011 adds the contact fields plus `team_messages` and `sales_deals` with their required query and request-key indexes.
+
+Dashboard access uses a named Appwrite user account, never a shared password-only bypass. After Appwrite verifies the user's credentials, the server requires both the exact server-managed `admin` user label and a currently effective assignment to an active `super_admin`, `executive`, or `manager` role for an active employee. Mobile field access separately requires a currently effective `sales_person` assignment, so the manager account cannot create field activity. Migration 012 resolves the single manager identity, stops without changing anything unless the records identify exactly one distinct active manager user, and then preserves that user's existing labels while adding `admin` if needed. Labels remain server-managed; the migration does not revoke or recreate sessions.
+
+Both credential endpoints consume durable attempt counters before asking Appwrite to create a session. Migration 013 creates a private row-secured table keyed only by HMAC digests of the normalized email, client network, and fixed 15-minute window. It permits up to six attempts per email/network and twenty per email across networks, returns `429` with `Retry-After` when blocked, and fails closed if counter storage is unavailable. The production project enables only email/password authentication, limits users to ten sessions of at most 90 days, invalidates sessions on password change, and applies common-password, personal-data, and five-password history checks to future password changes.
 
 The empty, unreferenced `permissions`, `role_permissions`, `permission_overrides`, and `integration_events` tables and the empty legacy `boundary_geojson` column were removed on 2026-08-11 after their row counts and runtime references were rechecked. Roles and effective assignments are the active authorization model.
 

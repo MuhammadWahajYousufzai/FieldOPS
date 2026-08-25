@@ -50,9 +50,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>FieldOPS uses the camera to capture timestamped outlet visit evidence.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>FieldOPS uses background location only to stop a route-tracking task retained from an earlier version.</string>
+	<string>If you choose screen-lock continuity, FieldOPS records your route while the screen is locked or another app is open, only during active work.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>FieldOPS records your route and visit evidence while work is active.</string>
+	<string>FieldOPS uses your location to verify visits and record the route only while work is active.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>FieldOPS uses the microphone to record the required audio note for a completed visit.</string>
 	<key>NSMotionUsageDescription</key>

@@ -28,20 +28,25 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "FieldOPS records route updates and visit evidence while the app is open during active work."
+          "locationWhenInUsePermission": "FieldOPS uses your location to verify visits and record the route only while work is active.",
+          "locationAlwaysAndWhenInUsePermission": "If you choose screen-lock continuity, FieldOPS records your route while the screen is locked or another app is open, only during active work.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "ios": {
       "bundleIdentifier": "pk.yousufrice.fieldops",
       "appleTeamId": "V4AYP7YKGS",
-      "buildNumber": "20",
+      "buildNumber": "22",
       "icon": "./assets/icon.png",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSLocationWhenInUseUsageDescription": "FieldOPS records route updates and visit evidence while the app is open during active work.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "FieldOPS uses background location only to stop a route-tracking task retained from an earlier version.",
+        "NSLocationWhenInUseUsageDescription": "FieldOPS uses your location to verify visits and record the route only while work is active.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "If you choose screen-lock continuity, FieldOPS records your route while the screen is locked or another app is open, only during active work.",
         "NSCameraUsageDescription": "FieldOPS uses the camera to capture timestamped outlet visit evidence.",
         "NSPhotoLibraryUsageDescription": "FieldOPS uses the photo library only when a salesperson attaches visit evidence.",
         "NSMicrophoneUsageDescription": "FieldOPS uses the microphone to record the required audio note for a completed visit.",
@@ -51,12 +56,12 @@
     },
     "android": {
       "package": "pk.yousufrice.fieldops",
-      "versionCode": 6,
+      "versionCode": 7,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#17233B"
       },
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA", "RECORD_AUDIO"]
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION", "CAMERA", "RECORD_AUDIO"]
     }
   }
 }

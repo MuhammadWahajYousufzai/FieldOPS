@@ -3,13 +3,18 @@ import "../global.css";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
 import {
+  DEFAULT_ROUTE_TRACKING_POLICY,
   distanceMeters,
   hasRequiredVisitEvidence,
+  isReliableRoutePoint,
   MAX_PLACE_MARK_ACCURACY_METERS,
   mergeRefreshedVisits,
+  normalizeRouteTrackingPolicy,
   parseTerritoryBoundary,
   pointInAnyTerritory,
-  retryDelayMs,
+  shouldCaptureRoutePoint,
+  type RouteTrackPoint,
+  type RouteTrackingPolicy,
   type TerritoryBoundary,
 } from "@fieldops/domain";
 import {
@@ -31,6 +36,7 @@ import {
   AppState,
   Image,
   Linking,
+  Platform,
   ScrollView,
   Text,
   TextInput,
@@ -40,19 +46,56 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import {
+  backgroundRouteStatus,
   clearRejectedLocationPoints,
   flushLocationQueue,
   locationQueueCount,
   locationQueueStats,
   queueLocationObjects,
+  requestBackgroundRoutePermission,
+  resumeLocationQueueAfterAuthentication,
+  setBackgroundRoutePreference,
+  startBackgroundRouteTracking,
+  stopBackgroundRouteTracking,
+  type BackgroundRouteStatus,
 } from "../lib/background-location";
-import { fetchWithTimeout } from "../lib/network";
+import { fetchWithTimeout, retryAfterDelayMs } from "../lib/network";
+import {
+  appendUniqueOutboxRecord,
+  createDurableOutboxController,
+  findEquivalentOutboxRecord,
+  normalizeRestoredOutbox,
+  operationRetryDecision,
+  resumeAuthFailedOutboxRecords,
+  selectOutboxCandidates,
+  type DurableOutboxController,
+} from "../lib/operation-outbox";
+import {
+  clearSecureMobileSession,
+  readSecureMobileSession,
+  saveSecureMobileSession,
+  type SecureMobileSession,
+} from "../lib/secure-session";
+import {
+  dealFollowUpStatus,
+  dealStages,
+  isDealStage,
+  normalizeDeals,
+  normalizeTeamContact,
+  normalizeTeamMessages,
+  teamContactUrl,
+  type Deal,
+  type DealStage,
+  type TeamContact,
+  type TeamMessage,
+} from "../lib/team-data";
 
-type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "sync" | "profile";
+type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "team" | "sync" | "profile";
 type VisitStatus = "planned" | "active" | "completed";
 type PlaceApprovalStatus = "not_applicable" | "pending_review" | "approved" | "rejected";
 type WorkState = "not_started" | "active" | "finished";
 type Session = { token: string; expiresAt: string; employee: { id: string; name: string } };
+type PersistedSessionMetadata = Omit<Session, "token">;
 type JsonOperation = { type: "json"; path: string; body: Record<string, unknown> };
 type EvidenceAttachment = { uri: string; name: string; type: string };
 type VisitUploadOperation = {
@@ -71,7 +114,8 @@ type QueueItem = {
   createdAt: string;
   attempts: number;
   error?: string;
-  errorKind?: "connection" | "auth" | "validation" | "server";
+  errorKind?: "connection" | "auth" | "validation" | "conflict" | "server";
+  retryable?: boolean;
   httpStatus?: number;
   lastAttemptAt?: string;
   nextAttemptAt?: string;
@@ -96,6 +140,7 @@ type Outlet = {
 };
 type TerritoryInfo = { id: string; code: string; name: string; boundary: TerritoryBoundary | null };
 type TerritoryPolicy = { mode: "unrestricted" | "restricted"; assignedCount: number; territories: TerritoryInfo[] };
+type MobileOperationsPolicy = RouteTrackingPolicy & { syncIntervalSeconds: number };
 type TerritoryPosition = "unrestricted" | "checking" | "inside" | "outside" | "boundary_missing";
 type ActiveVisit = {
   id: string;
@@ -122,16 +167,34 @@ type ServerActivity = {
   occurredAt: string;
   amount?: number;
 };
+type DealDraft = {
+  outletId: string;
+  customerName: string;
+  title: string;
+  stage: DealStage;
+  amount: number | null;
+  nextAction: string;
+  followUpAt: string;
+  notes: string;
+};
 type PersistedState = {
-  session: Session | null;
+  session: PersistedSessionMetadata | null;
   workState: WorkState;
   outlets: Outlet[];
   queue: QueueItem[];
   activeVisit: ActiveVisit | null;
   territoryPolicy: TerritoryPolicy;
+  operationsPolicy: MobileOperationsPolicy;
   contextDate: string;
   serverActivity: ServerActivity[];
+  teamContact: TeamContact | null;
+  teamMessages: TeamMessage[];
+  deals: Deal[];
   lastSyncAt: string;
+};
+type ParsedPersistedState = Omit<PersistedState, "session"> & {
+  session: Session | null;
+  storedEmployeeId: string;
 };
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
@@ -141,6 +204,14 @@ const RECOVERY_EMPLOYEE_STORAGE_KEY = "fieldops-recovery-employee-v1";
 const MAX_EVIDENCE_BYTES = 20 * 1024 * 1024;
 const GEOFENCE_METERS = 70;
 const GPS_FIX_TIMEOUT_MS = 18_000;
+const defaultOperationsPolicy: MobileOperationsPolicy = { ...DEFAULT_ROUTE_TRACKING_POLICY, syncIntervalSeconds: 15 };
+const defaultBackgroundRouteStatus: BackgroundRouteStatus = {
+  supported: true,
+  permission: "undetermined",
+  canAskAgain: true,
+  enabled: false,
+  running: false,
+};
 const emptyPermissions: PermissionState = {
   foreground: false,
   camera: false,
@@ -149,8 +220,19 @@ const emptyPermissions: PermissionState = {
 };
 const unrestrictedTerritoryPolicy: TerritoryPolicy = { mode: "unrestricted", assignedCount: 0, territories: [] };
 
+function normalizeMobileOperationsPolicy(value: unknown): MobileOperationsPolicy {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const syncInterval = Number(record.syncIntervalSeconds);
+  return {
+    ...normalizeRouteTrackingPolicy(record),
+    syncIntervalSeconds: Number.isFinite(syncInterval)
+      ? Math.min(120, Math.max(10, Math.round(syncInterval)))
+      : defaultOperationsPolicy.syncIntervalSeconds,
+  };
+}
+
 class RequestError extends Error {
-  constructor(message: string, readonly status = 0) {
+  constructor(message: string, readonly status = 0, readonly retryAfterMs?: number) {
     super(message);
     this.name = "RequestError";
   }
@@ -311,16 +393,24 @@ function scopeLegacyQueue(items: QueueItem[], employeeId: string) {
 }
 
 function parseDurableQueue(saved: string | null, fallback: QueueItem[], activeVisit: unknown) {
-  if (!saved) return migratePersistedVisits(fallback, activeVisit);
+  if (!saved) {
+    const migrated = migratePersistedVisits(fallback, activeVisit);
+    return { ...migrated, queue: normalizeRestoredOutbox(migrated.queue) };
+  }
   try {
     const value = JSON.parse(saved) as unknown;
-    if (!Array.isArray(value)) return migratePersistedVisits(fallback, activeVisit);
-    return migratePersistedVisits(
+    if (!Array.isArray(value)) {
+      const migrated = migratePersistedVisits(fallback, activeVisit);
+      return { ...migrated, queue: normalizeRestoredOutbox(migrated.queue) };
+    }
+    const migrated = migratePersistedVisits(
       value.filter((item): item is QueueItem => Boolean(item && typeof item === "object")),
       activeVisit,
     );
+    return { ...migrated, queue: normalizeRestoredOutbox(migrated.queue) };
   } catch {
-    return migratePersistedVisits(fallback, activeVisit);
+    const migrated = migratePersistedVisits(fallback, activeVisit);
+    return { ...migrated, queue: normalizeRestoredOutbox(migrated.queue) };
   }
 }
 
@@ -352,27 +442,40 @@ async function persistDurableQueue(queue: QueueItem[]) {
   await operation;
 }
 
-function parseState(saved: string): PersistedState | null {
+function locallyPersistedSession(session: Session | null): PersistedSessionMetadata | null {
+  if (!session) return null;
+  return {
+    expiresAt: session.expiresAt,
+    employee: { ...session.employee },
+  };
+}
+
+function parseState(saved: string, secureSession: SecureMobileSession | null): ParsedPersistedState | null {
   try {
     const value = JSON.parse(saved) as Partial<PersistedState>;
     if (!value || !Array.isArray(value.outlets) || !Array.isArray(value.queue)) return null;
-    const rawSession = value.session as Partial<Session> | null | undefined;
+    const rawSession = value.session as (Partial<PersistedSessionMetadata> & { token?: unknown }) | null | undefined;
     const rawEmployee = rawSession?.employee as Partial<Session["employee"]> | null | undefined;
+    const storedEmployeeId = typeof rawEmployee?.id === "string" ? rawEmployee.id : "";
     const session = (
-      typeof rawSession?.token === "string"
-      && typeof rawSession?.expiresAt === "string"
-      && typeof rawEmployee?.id === "string"
+      typeof rawSession?.expiresAt === "string"
+      && Date.parse(rawSession.expiresAt) > Date.now()
+      && storedEmployeeId
       && typeof rawEmployee?.name === "string"
+      && secureSession?.employeeId === storedEmployeeId
+      && typeof secureSession.token === "string"
+      && secureSession.token.length > 0
     ) ? {
-      token: rawSession.token,
+      token: secureSession.token,
       expiresAt: rawSession.expiresAt,
-      employee: { id: rawEmployee.id, name: rawEmployee.name },
+      employee: { id: storedEmployeeId, name: rawEmployee.name },
     } : null;
     const persisted = migratePersistedVisits(
       value.queue.filter((item) => item?.state === "confirmed" || Boolean(item?.operation)),
       value.activeVisit,
     );
     return {
+      storedEmployeeId,
       session,
       workState: value.workState ?? "not_started",
       outlets: value.outlets.map((outlet) => ({
@@ -388,8 +491,12 @@ function parseState(saved: string): PersistedState | null {
       queue: persisted.queue,
       activeVisit: persisted.activeVisit,
       territoryPolicy: normalizeTerritoryPolicy(value.territoryPolicy),
+      operationsPolicy: normalizeMobileOperationsPolicy(value.operationsPolicy),
       contextDate: typeof value.contextDate === "string" ? value.contextDate : "",
       serverActivity: Array.isArray(value.serverActivity) ? value.serverActivity : [],
+      teamContact: normalizeTeamContact(value.teamContact),
+      teamMessages: normalizeTeamMessages(value.teamMessages),
+      deals: normalizeDeals(value.deals),
       lastSyncAt: typeof value.lastSyncAt === "string" ? value.lastSyncAt : "",
     };
   } catch {
@@ -435,7 +542,11 @@ async function jsonRequest(
     },
   }, { timeoutMessage });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new RequestError(body.error || "The FieldOPS server could not complete this request.", response.status);
+  if (!response.ok) throw new RequestError(
+    body.error || "The FieldOPS server could not complete this request.",
+    response.status,
+    retryAfterDelayMs(response.headers.get("retry-after")),
+  );
   return body;
 }
 
@@ -461,6 +572,16 @@ async function withGpsTimeout<T>(operation: Promise<T>) {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function routeTrackPoint(location: Location.LocationObject): RouteTrackPoint {
+  return {
+    capturedAt: new Date(location.timestamp).toISOString(),
+    latitude: location.coords.latitude,
+    longitude: location.coords.longitude,
+    accuracy: location.coords.accuracy ?? Number.POSITIVE_INFINITY,
+    speed: location.coords.speed,
+  };
 }
 
 async function preserveEvidence(uri: string, extension: string) {
@@ -523,32 +644,61 @@ function FieldOpsApp() {
   const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
   const [recording, setRecording] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [manualSyncing, setManualSyncing] = useState(false);
   const [permissionState, setPermissionState] = useState<PermissionState>(emptyPermissions);
   const [permissionBusy, setPermissionBusy] = useState(false);
   const [permissionChecked, setPermissionChecked] = useState(false);
+  const [backgroundRoute, setBackgroundRoute] = useState<BackgroundRouteStatus>(defaultBackgroundRouteStatus);
+  const [backgroundRouteBusy, setBackgroundRouteBusy] = useState(false);
   const [locationPending, setLocationPending] = useState(0);
   const [locationRejected, setLocationRejected] = useState(0);
   const [locationSyncError, setLocationSyncError] = useState("");
   const [recoveryEmployeeId, setRecoveryEmployeeId] = useState("");
   const [territoryPolicy, setTerritoryPolicy] = useState<TerritoryPolicy>(unrestrictedTerritoryPolicy);
+  const [operationsPolicy, setOperationsPolicy] = useState<MobileOperationsPolicy>(defaultOperationsPolicy);
   const [contextDate, setContextDate] = useState("");
   const [territoryPosition, setTerritoryPosition] = useState<TerritoryPosition>("checking");
   const [locationChecking, setLocationChecking] = useState(false);
   const [lastLocationCheck, setLastLocationCheck] = useState<{ accuracy: number; checkedAt: string } | null>(null);
   const [networkOnline, setNetworkOnline] = useState<boolean | null>(null);
   const [serverActivity, setServerActivity] = useState<ServerActivity[]>([]);
+  const [teamContact, setTeamContact] = useState<TeamContact | null>(null);
+  const [teamMessages, setTeamMessages] = useState<TeamMessage[]>([]);
+  const [deals, setDeals] = useState<Deal[]>([]);
   const [lastSyncAt, setLastSyncAt] = useState("");
+  const [officeSyncError, setOfficeSyncError] = useState("");
   const queueRef = useRef<QueueItem[]>([]);
+  const durableQueueControllerRef = useRef<DurableOutboxController<QueueItem> | null>(null);
   const sessionRef = useRef<Session | null>(null);
   const recoveryEmployeeIdRef = useRef("");
   const sessionEpochRef = useRef(0);
   const syncPromiseRef = useRef<Promise<void> | null>(null);
   const syncRequestedRef = useRef(false);
   const syncForceRequestedRef = useRef(false);
+  const contextRequestRef = useRef<{ token: string; promise: Promise<void> } | null>(null);
+  const lastContextRefreshRef = useRef<{ token: string; at: number } | null>(null);
+  const manualSyncPromiseRef = useRef<Promise<void> | null>(null);
   const visitSubmittingRef = useRef(false);
   const permissionPrompted = useRef(false);
-  const heartbeatRunningRef = useRef(false);
-  const lastHeartbeatAtRef = useRef(0);
+  const lastCapturedRoutePointRef = useRef<RouteTrackPoint | null>(null);
+  const routeCapturePromiseRef = useRef<Promise<void>>(Promise.resolve());
+
+  if (!durableQueueControllerRef.current) {
+    durableQueueControllerRef.current = createDurableOutboxController<QueueItem>({
+      readCurrent: () => queueRef.current,
+      persist: async (records) => {
+        try {
+          await persistDurableQueue([...records]);
+        } catch {
+          throw new Error("FieldOPS could not safely save this work on your phone. Check available storage and try again.");
+        }
+      },
+      publish: (records) => {
+        queueRef.current = records;
+        setQueue(records);
+      },
+    });
+  }
 
   const selected = outlets.find((outlet) => outlet.id === selectedId) ?? outlets[0];
   const assignedOutlets = outlets.filter((outlet) => outlet.kind === "assigned");
@@ -579,12 +729,8 @@ function FieldOpsApp() {
     ? territoryCopy(territoryPolicy, territoryPosition)
     : "Today’s work access has not downloaded yet. Tap Update while online before starting a visit or order.";
 
-  async function setQueueDurably(update: (items: QueueItem[]) => QueueItem[]) {
-    const next = trimQueue(update(queueRef.current));
-    queueRef.current = next;
-    setQueue(next);
-    await persistDurableQueue(next);
-    return next;
+  function setQueueDurably(update: (items: QueueItem[]) => QueueItem[]) {
+    return durableQueueControllerRef.current!.update((items) => trimQueue(update(items)));
   }
 
   function sessionIsCurrent(expected: Session, epoch: number) {
@@ -613,15 +759,23 @@ function FieldOpsApp() {
       AsyncStorage.getItem(STORAGE_KEY),
       AsyncStorage.getItem(OUTBOX_STORAGE_KEY),
       AsyncStorage.getItem(RECOVERY_EMPLOYEE_STORAGE_KEY),
-    ]).then(([saved, savedOutbox, savedRecoveryEmployeeId]) => {
+      readSecureMobileSession(),
+    ]).then(async ([saved, savedOutbox, savedRecoveryEmployeeId, secureSession]) => {
       if (cancelled) return;
-      const value = saved ? parseState(saved) : null;
+      const value = saved ? parseState(saved, secureSession) : null;
       if (!value) {
         const parsed = parseDurableQueue(savedOutbox, [], null);
         const unconfirmedOwners = [...new Set(parsed.queue
           .filter((item) => item.state !== "confirmed" && item.employeeId)
           .map((item) => item.employeeId))];
-        const recoveryOwner = savedRecoveryEmployeeId || (unconfirmedOwners.length === 1 ? unconfirmedOwners[0]! : "");
+        const secureRouteOwner = secureSession?.employeeId ?? "";
+        const hasSecureOwnerRoute = secureRouteOwner
+          ? await locationQueueCount(secureRouteOwner).then((count) => count > 0).catch(() => true)
+          : false;
+        if (cancelled) return;
+        const recoveryOwner = savedRecoveryEmployeeId
+          || (unconfirmedOwners.length === 1 ? unconfirmedOwners[0]! : "")
+          || (hasSecureOwnerRoute ? secureRouteOwner : "");
         const recoveredQueue = scopeLegacyQueue(parsed.queue, recoveryOwner);
         queueRef.current = recoveredQueue;
         setQueue(recoveredQueue);
@@ -631,10 +785,24 @@ function FieldOpsApp() {
           AsyncStorage.setItem(RECOVERY_EMPLOYEE_STORAGE_KEY, recoveryOwner).catch(() => undefined);
         }
         persistDurableQueue(recoveredQueue).catch(() => undefined);
+        if (secureSession) await clearSecureMobileSession().catch(() => undefined);
         return;
       }
-      const legacyOwnerId = savedRecoveryEmployeeId || value.session?.employee.id || "";
       const parsed = parseDurableQueue(savedOutbox, value.queue, value.activeVisit);
+      const hasUnconfirmedWork = Boolean(parsed.activeVisit)
+        || parsed.queue.some((item) => item.state !== "confirmed");
+      const unconfirmedOwners = [...new Set(parsed.queue
+        .filter((item) => item.state !== "confirmed" && item.employeeId)
+        .map((item) => item.employeeId))];
+      const inferredOwnerId = value.storedEmployeeId
+        || (unconfirmedOwners.length === 1 ? unconfirmedOwners[0]! : "");
+      const hasQueuedRoute = !value.session && inferredOwnerId
+        ? await locationQueueCount(inferredOwnerId).then((count) => count > 0).catch(() => true)
+        : false;
+      if (cancelled) return;
+      const recoveryOwner = savedRecoveryEmployeeId
+        || (!value.session && (hasUnconfirmedWork || hasQueuedRoute) ? inferredOwnerId : "");
+      const legacyOwnerId = recoveryOwner || value.session?.employee.id || value.storedEmployeeId;
       const persisted = { ...parsed, queue: scopeLegacyQueue(parsed.queue, legacyOwnerId) };
       const ownerQueue = legacyOwnerId
         ? persisted.queue.filter((item) => item.employeeId === legacyOwnerId)
@@ -644,24 +812,41 @@ function FieldOpsApp() {
         && hasQueuedVisitSubmission(ownerQueue, persisted.activeVisit.id)
         ? null
         : persisted.activeVisit;
-      const restoredSession = savedRecoveryEmployeeId ? null : value.session;
-      recoveryEmployeeIdRef.current = savedRecoveryEmployeeId ?? "";
-      setRecoveryEmployeeId(savedRecoveryEmployeeId ?? "");
+      const restoredSession = recoveryOwner ? null : value.session;
+      const cleanSignedOutState = !restoredSession && !recoveryOwner;
+      const restoredQueue = cleanSignedOutState ? [] : persisted.queue;
+      recoveryEmployeeIdRef.current = recoveryOwner;
+      setRecoveryEmployeeId(recoveryOwner);
+      if (recoveryOwner) {
+        AsyncStorage.setItem(RECOVERY_EMPLOYEE_STORAGE_KEY, recoveryOwner).catch(() => undefined);
+      }
       sessionRef.current = restoredSession;
       setSession(restoredSession);
-      setWorkState(value.workState);
-      setOutlets(restoredOutlets);
-      setQueue(persisted.queue);
-      queueRef.current = persisted.queue;
-      setActiveVisit(restoredActiveVisit);
-      setTerritoryPolicy(value.territoryPolicy);
-      setContextDate(value.contextDate);
-      setServerActivity(value.serverActivity);
-      setLastSyncAt(value.lastSyncAt);
-      setTerritoryPosition(value.territoryPolicy.mode === "restricted" ? "checking" : "unrestricted");
-      if (restoredActiveVisit) setSelectedId(restoredActiveVisit.outletId);
-      else if (restoredOutlets[0]) setSelectedId(restoredOutlets[0].id);
-      persistDurableQueue(persisted.queue).catch(() => undefined);
+      setWorkState(cleanSignedOutState ? "not_started" : value.workState);
+      setOutlets(cleanSignedOutState ? [] : restoredOutlets);
+      setQueue(restoredQueue);
+      queueRef.current = restoredQueue;
+      setActiveVisit(cleanSignedOutState ? null : restoredActiveVisit);
+      setTerritoryPolicy(cleanSignedOutState ? unrestrictedTerritoryPolicy : value.territoryPolicy);
+      setOperationsPolicy(cleanSignedOutState ? defaultOperationsPolicy : value.operationsPolicy);
+      setContextDate(cleanSignedOutState ? "" : value.contextDate);
+      setServerActivity(cleanSignedOutState ? [] : value.serverActivity);
+      setTeamContact(cleanSignedOutState ? null : value.teamContact);
+      setTeamMessages(cleanSignedOutState ? [] : value.teamMessages);
+      setDeals(cleanSignedOutState ? [] : value.deals);
+      setLastSyncAt(cleanSignedOutState ? "" : value.lastSyncAt);
+      setTerritoryPosition(cleanSignedOutState || value.territoryPolicy.mode === "restricted" ? "checking" : "unrestricted");
+      if (!cleanSignedOutState && restoredActiveVisit) setSelectedId(restoredActiveVisit.outletId);
+      else if (!cleanSignedOutState && restoredOutlets[0]) setSelectedId(restoredOutlets[0].id);
+      persistDurableQueue(restoredQueue).catch(() => undefined);
+      if (restoredSession) {
+        resumeLocationQueueAfterAuthentication(restoredSession.employee.id)
+          .then(() => flushLocationQueue(restoredSession.employee.id, restoredSession.token))
+          .then(() => refreshLocationCount())
+          .catch(() => undefined);
+      } else if (secureSession) {
+        await clearSecureMobileSession().catch(() => undefined);
+      }
     }).catch(() => undefined).finally(() => {
       if (!cancelled) setHydrated(true);
     });
@@ -671,17 +856,21 @@ function FieldOpsApp() {
   useEffect(() => {
     if (!hydrated) return;
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
-      session,
+      session: locallyPersistedSession(session),
       workState,
       outlets,
       queue,
       activeVisit,
       territoryPolicy,
+      operationsPolicy,
       contextDate,
       serverActivity,
+      teamContact,
+      teamMessages,
+      deals,
       lastSyncAt,
     })).catch(() => undefined);
-  }, [activeVisit, contextDate, hydrated, lastSyncAt, outlets, queue, serverActivity, session, territoryPolicy, workState]);
+  }, [activeVisit, contextDate, deals, hydrated, lastSyncAt, operationsPolicy, outlets, queue, serverActivity, session, teamContact, teamMessages, territoryPolicy, workState]);
 
   useEffect(() => {
     if (!hydrated || !session) return;
@@ -694,6 +883,41 @@ function FieldOpsApp() {
   }, [hydrated, session?.token]);
 
   useEffect(() => {
+    if (!hydrated || (session && !permissionChecked)) return;
+    let cancelled = false;
+    const reconcile = async () => {
+      const authenticatedSession = session;
+      if (!authenticatedSession || workState !== "active" || !trackingReady) {
+        await stopBackgroundRouteTracking();
+      } else {
+        const status = await backgroundRouteStatus(authenticatedSession.employee.id);
+        if (status.enabled && status.supported && status.permission === "granted") {
+          await startBackgroundRouteTracking({
+            employeeId: authenticatedSession.employee.id,
+            token: authenticatedSession.token,
+            expiresAt: authenticatedSession.expiresAt,
+            policy: operationsPolicy,
+            lastAcceptedPoint: lastCapturedRoutePointRef.current,
+          }).catch(async (error) => {
+            await stopBackgroundRouteTracking();
+            if (!cancelled) {
+              setLocationSyncError(error instanceof Error ? error.message : "Screen-lock route continuity could not start.");
+            }
+          });
+        } else {
+          await stopBackgroundRouteTracking();
+        }
+      }
+      const next = authenticatedSession
+        ? await backgroundRouteStatus(authenticatedSession.employee.id)
+        : defaultBackgroundRouteStatus;
+      if (!cancelled) setBackgroundRoute(next);
+    };
+    void reconcile();
+    return () => { cancelled = true; };
+  }, [backgroundRoute.enabled, backgroundRoute.permission, backgroundRoute.running, backgroundRoute.supported, hydrated, operationsPolicy, permissionChecked, session?.token, trackingReady, workState]);
+
+  useEffect(() => {
     if (!hydrated || !session) return;
     refreshContext(false).catch(() => undefined);
     syncOperations().catch(() => undefined);
@@ -701,17 +925,68 @@ function FieldOpsApp() {
   }, [hydrated, session?.token]);
 
   useEffect(() => {
+    if (!hydrated || !session || (screen !== "sync" && screen !== "team") || networkOnline === false) return;
+    refreshContext(false).catch(() => undefined);
+    const timer = setInterval(() => refreshContext(false).catch(() => undefined), 45_000);
+    return () => clearInterval(timer);
+  }, [hydrated, networkOnline, screen, session?.token]);
+
+  useEffect(() => {
     if (!hydrated || !session || !permissionChecked || !permissionReady || !territoryPolicyReady || territoryPosition !== "checking") return;
     checkMyLocation(false, territoryPolicy).catch(() => undefined);
   }, [contextDate, hydrated, permissionChecked, permissionReady, session?.token, territoryPolicy, territoryPosition]);
 
   useEffect(() => {
-    if (!session || workState !== "active") return;
-    if (!trackingReady) return;
-    captureLiveHeartbeat(true).catch(() => undefined);
-    const heartbeatTimer = setInterval(() => captureLiveHeartbeat(true).catch(() => undefined), 60_000);
-    return () => clearInterval(heartbeatTimer);
-  }, [session?.token, trackingReady, workState]);
+    if (!session || workState !== "active") {
+      lastCapturedRoutePointRef.current = null;
+      return;
+    }
+    if (!trackingReady || backgroundRoute.running) return;
+
+    let cancelled = false;
+    let subscription: Location.LocationSubscription | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const authenticatedSession = session;
+    const sessionEpoch = sessionEpochRef.current;
+
+    const receiveLocation = (location: Location.LocationObject) => {
+      if (cancelled) return;
+      routeCapturePromiseRef.current = routeCapturePromiseRef.current.then(async () => {
+        if (cancelled || !sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+        const candidate = routeTrackPoint(location);
+        if (!shouldCaptureRoutePoint(lastCapturedRoutePointRef.current, candidate, operationsPolicy)) return;
+        await queueLocationObjects(authenticatedSession.employee.id, [location], "foreground");
+        lastCapturedRoutePointRef.current = candidate;
+        if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+        await refreshLocationCount();
+      }).catch((error) => {
+        if (!cancelled) setLocationSyncError(error instanceof Error ? error.message : "Route point could not be saved on this phone.");
+      });
+    };
+
+    const startTracking = async () => {
+      try {
+        const started = await Location.watchPositionAsync({
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: operationsPolicy.sampleIntervalSeconds * 1_000,
+          distanceInterval: operationsPolicy.distanceIntervalMeters,
+        }, receiveLocation);
+        if (cancelled) started.remove();
+        else subscription = started;
+      } catch (error) {
+        if (cancelled) return;
+        setLocationSyncError(error instanceof Error ? error.message : "Route tracking could not start.");
+        retryTimer = setTimeout(() => { void startTracking(); }, 15_000);
+      }
+    };
+    void startTracking();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      subscription?.remove();
+    };
+  }, [backgroundRoute.running, operationsPolicy, session?.token, trackingReady, workState]);
 
   useEffect(() => {
     if (!hydrated || !session) return;
@@ -721,12 +996,11 @@ function FieldOpsApp() {
         syncOperations(),
         flushLocationQueue(session.employee.id, session.token),
       ]).then(() => refreshLocationCount()).catch(() => undefined);
-    }, 15_000);
+    }, operationsPolicy.syncIntervalSeconds * 1_000);
     const appSubscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
-        refreshPermissions(false)
-          .then((permissions) => captureLiveHeartbeat(true, permissions))
-          .catch(() => undefined);
+        refreshPermissions(false).catch(() => undefined);
+        refreshBackgroundRouteStatus().catch(() => undefined);
         Promise.all([
           syncOperations(),
           flushLocationQueue(session.employee.id, session.token),
@@ -739,12 +1013,10 @@ function FieldOpsApp() {
       setNetworkOnline(online);
       if (online) {
         Promise.all([
-          syncOperations({ force: true }),
+          syncOperations(),
           flushLocationQueue(session.employee.id, session.token),
         ]).then(() => refreshLocationCount()).catch(() => undefined);
-        refreshPermissions(false)
-          .then((permissions) => captureLiveHeartbeat(true, permissions))
-          .catch(() => undefined);
+        refreshPermissions(false).catch(() => undefined);
         refreshContext(false).catch(() => undefined);
       }
     });
@@ -753,7 +1025,7 @@ function FieldOpsApp() {
       appSubscription.remove();
       networkSubscription();
     };
-  }, [hydrated, session?.token, trackingReady, workState]);
+  }, [hydrated, operationsPolicy.syncIntervalSeconds, session?.token, trackingReady, workState]);
 
   async function refreshLocationCount() {
     const employeeId = sessionRef.current?.employee.id;
@@ -761,6 +1033,95 @@ function FieldOpsApp() {
     setLocationPending(stats.pending);
     setLocationRejected(stats.rejected);
     setLocationSyncError(stats.error);
+  }
+
+  async function refreshBackgroundRouteStatus() {
+    const employeeId = sessionRef.current?.employee.id;
+    if (!employeeId) {
+      setBackgroundRoute(defaultBackgroundRouteStatus);
+      return defaultBackgroundRouteStatus;
+    }
+    const next = await backgroundRouteStatus(employeeId);
+    setBackgroundRoute(next);
+    return next;
+  }
+
+  function enableBackgroundRoute() {
+    const authenticatedSession = sessionRef.current;
+    if (!authenticatedSession || backgroundRouteBusy) return;
+    const systemStep = Platform.OS === "android"
+      ? "Android may open phone settings. Choose Allow all the time, then return to FieldOPS."
+      : "iPhone will ask for Always location access after the normal While Using permission.";
+    Alert.alert(
+      "Keep the route through screen lock?",
+      `This is optional. When enabled, FieldOPS records the work route while the screen is locked or another app is open—but only between Start work and Finish session. ${systemStep}`,
+      [
+        { text: "Not now", style: "cancel" },
+        { text: "Continue", onPress: () => {
+          setBackgroundRouteBusy(true);
+          (async () => {
+            const current = await backgroundRouteStatus(authenticatedSession.employee.id);
+            if (!current.supported) {
+              Alert.alert("Not available on this phone", "Work will still record while FieldOPS is open.");
+              return;
+            }
+            if (current.permission === "denied" && !current.canAskAgain) {
+              await Linking.openSettings();
+              return;
+            }
+            const permission = await requestBackgroundRoutePermission();
+            if (!permission.granted) {
+              await setBackgroundRoutePreference(authenticatedSession.employee.id, false);
+              await stopBackgroundRouteTracking();
+              Alert.alert("Screen-lock continuity is off", "You can keep working. FieldOPS will record the route whenever the app is open, and you can enable this later in Profile.");
+              return;
+            }
+            await setBackgroundRoutePreference(authenticatedSession.employee.id, true);
+            if (workState === "active" && trackingReady) {
+              await startBackgroundRouteTracking({
+                employeeId: authenticatedSession.employee.id,
+                token: authenticatedSession.token,
+                expiresAt: authenticatedSession.expiresAt,
+                policy: operationsPolicy,
+                lastAcceptedPoint: lastCapturedRoutePointRef.current,
+              });
+            }
+            Alert.alert(
+              "Screen-lock continuity enabled",
+              workState === "active"
+                ? "Your active work route can continue when the screen locks. Finish session or sign out to stop it."
+                : "It will start automatically the next time you tap Start work.",
+            );
+          })().catch((error) => {
+            Alert.alert("Could not enable continuity", `${error instanceof Error ? error.message : "Open phone settings and try again."} Your foreground route remains available.`);
+          }).finally(() => {
+            setBackgroundRouteBusy(false);
+            refreshBackgroundRouteStatus().catch(() => undefined);
+          });
+        } },
+      ],
+    );
+  }
+
+  function disableBackgroundRoute() {
+    const employeeId = sessionRef.current?.employee.id;
+    if (!employeeId || backgroundRouteBusy) return;
+    Alert.alert(
+      "Turn off screen-lock continuity?",
+      "The route will still record while FieldOPS is open during active work.",
+      [
+        { text: "Keep on", style: "cancel" },
+        { text: "Turn off", style: "destructive", onPress: () => {
+          setBackgroundRouteBusy(true);
+          Promise.all([
+            setBackgroundRoutePreference(employeeId, false),
+            stopBackgroundRouteTracking(),
+          ]).then(() => refreshBackgroundRouteStatus()).catch(() => {
+            Alert.alert("Setting not changed", "Try again from Profile.");
+          }).finally(() => setBackgroundRouteBusy(false));
+        } },
+      ],
+    );
   }
 
   function removeRejectedRoutePoints() {
@@ -831,7 +1192,11 @@ function FieldOpsApp() {
       body: form,
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new RequestError(body.error || "Visit evidence could not be uploaded.", response.status);
+    if (!response.ok) throw new RequestError(
+      body.error || "Visit evidence could not be uploaded.",
+      response.status,
+      retryAfterDelayMs(response.headers.get("retry-after")),
+    );
     if (body.ok !== true) {
       throw new RequestError("The server did not confirm the visit evidence. FieldOPS will keep it and retry.", 502);
     }
@@ -851,19 +1216,16 @@ function FieldOpsApp() {
       let force = Boolean(options.force);
       let onlyId = options.onlyId;
       let confirmedAny = false;
+      let teamConflictNeedsRefresh = false;
       do {
         syncRequestedRef.current = false;
         syncForceRequestedRef.current = false;
         const now = Date.now();
-        const candidates = [...queueRef.current]
-          .filter((item) => (
-            item.employeeId === authenticatedSession.employee.id
-            && item.operation
-            && item.state !== "confirmed"
-            && (!onlyId || item.id === onlyId)
-            && (force || !item.nextAttemptAt || new Date(item.nextAttemptAt).valueOf() <= now)
-          ))
-          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        const candidates = selectOutboxCandidates(queueRef.current, authenticatedSession.employee.id, {
+          force,
+          onlyId,
+          nowMs: now,
+        });
 
         const processItem = async (item: QueueItem) => {
           if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return "auth" as const;
@@ -874,13 +1236,15 @@ function FieldOpsApp() {
             lastAttemptAt,
             error: undefined,
             errorKind: undefined,
+            retryable: undefined,
             httpStatus: undefined,
           } : entry));
           try {
-            await executeOperation(item.operation!, authenticatedSession);
+            const confirmation = await executeOperation(item.operation!, authenticatedSession);
             if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return "auth" as const;
+            applyTeamConfirmation(item, confirmation);
             await setQueueDurably((items) => items.map((entry) => entry.id === item.id
-              ? { ...entry, state: "confirmed", error: undefined, errorKind: undefined, httpStatus: undefined, nextAttemptAt: undefined }
+              ? { ...entry, state: "confirmed", error: undefined, errorKind: undefined, retryable: undefined, httpStatus: undefined, nextAttemptAt: undefined }
               : entry));
             confirmedAny = true;
             setLastSyncAt(new Date().toISOString());
@@ -897,31 +1261,30 @@ function FieldOpsApp() {
           } catch (error) {
             if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return "auth" as const;
             const status = error instanceof RequestError ? error.status : 0;
-            const errorKind: QueueItem["errorKind"] = status === 401
-              ? "auth"
-              : [400, 403, 404, 409, 422].includes(status)
-                ? "validation"
-                : status >= 500
-                  ? "server"
-                  : "connection";
+            if (status === 409 && item.operation?.type === "json" && item.operation.path === "/deals") {
+              teamConflictNeedsRefresh = true;
+            }
+            const attempts = item.attempts + 1;
+            const retry = operationRetryDecision({
+              status,
+              attempts,
+              retryAfterMs: error instanceof RequestError ? error.retryAfterMs : undefined,
+            });
             await setQueueDurably((items) => items.map((entry) => {
               if (entry.id !== item.id) return entry;
-              const attempts = entry.attempts + 1;
-              const delay = errorKind === "validation" || errorKind === "auth"
-                ? 5 * 60_000
-                : retryDelayMs(attempts);
               return {
                 ...entry,
                 state: "failed",
                 attempts,
-                errorKind,
+                errorKind: retry.errorKind,
+                retryable: retry.retryable,
                 ...(status ? { httpStatus: status } : {}),
                 lastAttemptAt,
-                nextAttemptAt: new Date(Date.now() + delay).toISOString(),
+                nextAttemptAt: retry.nextAttemptAt,
                 error: error instanceof Error ? error.message : "Connection interrupted. FieldOPS will retry.",
               };
             }));
-            return errorKind;
+            return retry.errorKind;
           }
         };
 
@@ -953,26 +1316,36 @@ function FieldOpsApp() {
         force = syncForceRequestedRef.current;
         onlyId = undefined;
       } while (syncRequestedRef.current && sessionIsCurrent(authenticatedSession, sessionEpoch));
-      if (confirmedAny && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
+      if ((confirmedAny || teamConflictNeedsRefresh) && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
         await refreshContext(false).catch(() => undefined);
       }
     })();
     syncPromiseRef.current = operation;
     return operation.finally(() => {
-      if (syncPromiseRef.current === operation) syncPromiseRef.current = null;
+      if (syncPromiseRef.current !== operation) return;
+      syncPromiseRef.current = null;
+      if (syncRequestedRef.current && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
+        const forceTrailing = syncForceRequestedRef.current;
+        setTimeout(() => syncOperations({ force: forceTrailing }).catch(() => undefined), 0);
+      }
     });
   }
 
   async function retryQueueItem(id: string) {
-    await setQueueDurably((items) => items.map((item) => item.id === id ? {
-      ...item,
-      state: "pending",
-      nextAttemptAt: undefined,
-      error: undefined,
-      errorKind: undefined,
-      httpStatus: undefined,
-    } : item));
-    await syncOperations({ force: true, onlyId: id });
+    try {
+      await setQueueDurably((items) => items.map((item) => item.id === id ? {
+        ...item,
+        state: "pending",
+        nextAttemptAt: undefined,
+        error: undefined,
+        errorKind: undefined,
+        retryable: undefined,
+        httpStatus: undefined,
+      } : item));
+      await syncOperations({ force: true, onlyId: id });
+    } catch (error) {
+      Alert.alert("Retry not started", error instanceof Error ? error.message : "The saved work could not be updated on this phone.");
+    }
   }
 
   async function enqueue(label: string, operation: OfflineOperation) {
@@ -987,48 +1360,76 @@ function FieldOpsApp() {
       attempts: 0,
       operation,
     };
-    await setQueueDurably((items) => [...items, item]);
+    const existing = findEquivalentOutboxRecord(queueRef.current, item);
+    if (existing) {
+      await durableQueueControllerRef.current!.persistCurrent();
+      if (existing.state !== "confirmed") setTimeout(() => syncOperations().catch(() => undefined), 0);
+      return existing;
+    }
+    await setQueueDurably((items) => appendUniqueOutboxRecord(items, item));
     setTimeout(() => syncOperations().catch(() => undefined), 0);
     return item;
   }
 
-  async function refreshContext(showMessage = true) {
+  function refreshContext(showMessage = true): Promise<void> {
     const authenticatedSession = sessionRef.current;
-    if (!authenticatedSession) return;
+    if (!authenticatedSession) return Promise.resolve();
+    const activeRequest = contextRequestRef.current;
+    if (activeRequest?.token === authenticatedSession.token) return activeRequest.promise;
+    if (!showMessage
+      && lastContextRefreshRef.current?.token === authenticatedSession.token
+      && Date.now() - lastContextRefreshRef.current.at < 2_000) return Promise.resolve();
     const sessionEpoch = sessionEpochRef.current;
-    setRefreshing(true);
-    try {
-      const context = await jsonRequest("/context", {}, { token: authenticatedSession.token });
-      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
-      const today = String(context.date ?? pakistanWorkDate());
-      const nextPolicy = normalizeTerritoryPolicy(context.territoryPolicy);
-      setOutlets((current) => mergeRefreshedVisits(context.route as Outlet[], current, today));
-      setServerActivity(Array.isArray(context.recentActivity) ? context.recentActivity as ServerActivity[] : []);
-      setLastSyncAt(new Date().toISOString());
-      setTerritoryPolicy(nextPolicy);
-      setContextDate(today);
-      setTerritoryPosition(nextPolicy.mode === "restricted" ? "checking" : "unrestricted");
-      const hasPendingAttendance = queueRef.current.some((item) => (
-        item.employeeId === authenticatedSession.employee.id
-        &&
-        item.operation?.type === "json"
-        && item.operation.path === "/attendance"
-        && item.state !== "confirmed"
-      ));
-      if (!hasPendingAttendance) setWorkState(context.workState ?? (context.shiftActive ? "active" : "not_started"));
-      setSelectedId((current) => current || String(context.route[0]?.id ?? ""));
-      checkMyLocation(false, nextPolicy).catch(() => undefined);
-      if (showMessage) {
-        const assignedCount = (context.route as Outlet[]).filter((outlet) => outlet.kind !== "self").length;
-        Alert.alert("Today updated", `${assignedCount} assigned ${assignedCount === 1 ? "visit" : "visits"} and your latest activity are ready.`);
+    const request = (async () => {
+      setRefreshing(true);
+      try {
+        const context = await jsonRequest("/context", {}, { token: authenticatedSession.token });
+        if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
+        const today = String(context.date ?? pakistanWorkDate());
+        const nextPolicy = normalizeTerritoryPolicy(context.territoryPolicy);
+        const nextOperationsPolicy = normalizeMobileOperationsPolicy(context.operationsPolicy);
+        setOutlets((current) => mergeRefreshedVisits(context.route as Outlet[], current, today));
+        setServerActivity(Array.isArray(context.recentActivity) ? context.recentActivity as ServerActivity[] : []);
+        setTeamContact(normalizeTeamContact(context.teamContact));
+        setTeamMessages(normalizeTeamMessages(context.teamMessages));
+        setDeals(normalizeDeals(context.deals));
+        setOfficeSyncError("");
+        lastContextRefreshRef.current = { token: authenticatedSession.token, at: Date.now() };
+        setLastSyncAt(new Date().toISOString());
+        setTerritoryPolicy(nextPolicy);
+        setOperationsPolicy(nextOperationsPolicy);
+        setContextDate(today);
+        setTerritoryPosition(nextPolicy.mode === "restricted" ? "checking" : "unrestricted");
+        const hasPendingAttendance = queueRef.current.some((item) => (
+          item.employeeId === authenticatedSession.employee.id
+          &&
+          item.operation?.type === "json"
+          && item.operation.path === "/attendance"
+          && item.state !== "confirmed"
+        ));
+        if (!hasPendingAttendance) setWorkState(context.workState ?? (context.shiftActive ? "active" : "not_started"));
+        setSelectedId((current) => current || String(context.route[0]?.id ?? ""));
+        checkMyLocation(false, nextPolicy).catch(() => undefined);
+        if (showMessage) {
+          const assignedCount = (context.route as Outlet[]).filter((outlet) => outlet.kind !== "self").length;
+          Alert.alert("Today updated", `${assignedCount} assigned ${assignedCount === 1 ? "visit" : "visits"} and your latest activity are ready.`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not refresh office activity.";
+        if (sessionIsCurrent(authenticatedSession, sessionEpoch)) setOfficeSyncError(message);
+        if (showMessage && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
+          Alert.alert("Working offline", message);
+        }
+      } finally {
+        if (sessionIsCurrent(authenticatedSession, sessionEpoch)) setRefreshing(false);
       }
-    } catch (error) {
-      if (showMessage && sessionIsCurrent(authenticatedSession, sessionEpoch)) {
-        Alert.alert("Working offline", error instanceof Error ? error.message : "Could not refresh assigned visits.");
+    })();
+    contextRequestRef.current = { token: authenticatedSession.token, promise: request };
+    return request.finally(() => {
+      if (contextRequestRef.current?.promise === request) {
+        contextRequestRef.current = null;
       }
-    } finally {
-      if (sessionIsCurrent(authenticatedSession, sessionEpoch)) setRefreshing(false);
-    }
+    });
   }
 
   async function signIn(email: string, password: string) {
@@ -1040,24 +1441,37 @@ function FieldOpsApp() {
     }) as Session;
     const recoveryOwner = recoveryEmployeeIdRef.current;
     if (recoveryOwner && result.employee.id !== recoveryOwner) {
+      await revokeMobileSession(result);
       throw new Error("This phone has unsynced work for another employee. Sign in with the same account to recover and upload it first.");
     }
-    if (recoveryOwner) {
-      // Persist the replacement session before removing the recovery marker.
-      // If the app closes between these writes, it will require the same
-      // employee to authenticate again instead of exposing the saved draft.
+    try {
+      await saveSecureMobileSession({ employeeId: result.employee.id, token: result.token });
+      // Persist only non-secret session metadata before publishing the session
+      // to React state. A crash can therefore restore the secure credential,
+      // while normal app storage never contains the bearer token.
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
-        session: result,
+        session: locallyPersistedSession(result),
         workState,
         outlets,
         queue: queueRef.current,
         activeVisit,
         territoryPolicy,
+        operationsPolicy,
         contextDate,
         serverActivity,
+        teamContact,
+        teamMessages,
+        deals,
         lastSyncAt,
       } satisfies PersistedState));
-      await AsyncStorage.removeItem(RECOVERY_EMPLOYEE_STORAGE_KEY);
+      if (recoveryOwner) await AsyncStorage.removeItem(RECOVERY_EMPLOYEE_STORAGE_KEY);
+    } catch (error) {
+      await clearSecureMobileSession().catch(() => undefined);
+      await revokeMobileSession(result);
+      const detail = error instanceof Error ? error.message : "Secure phone storage was unavailable.";
+      throw new Error(`FieldOPS could not safely finish sign-in. ${detail}`);
+    }
+    if (recoveryOwner) {
       recoveryEmployeeIdRef.current = "";
       setRecoveryEmployeeId("");
     }
@@ -1065,12 +1479,23 @@ function FieldOpsApp() {
       setContextDate("");
       setTerritoryPolicy(unrestrictedTerritoryPolicy);
       setTerritoryPosition("checking");
+      setTeamContact(null);
+      setTeamMessages([]);
+      setDeals([]);
     }
     sessionEpochRef.current += 1;
     sessionRef.current = result;
     setSession(result);
+    setOfficeSyncError("");
     permissionPrompted.current = false;
     setScreen("today");
+    setQueueDurably((items) => resumeAuthFailedOutboxRecords(items, result.employee.id))
+      .then(() => syncOperations())
+      .catch((error) => setOfficeSyncError(error instanceof Error ? error.message : "Saved work could not resume after sign-in."));
+    resumeLocationQueueAfterAuthentication(result.employee.id)
+      .then(() => flushLocationQueue(result.employee.id, result.token))
+      .then(() => refreshLocationCount())
+      .catch(() => refreshLocationCount().catch(() => undefined));
   }
 
   async function getGpsFix(accuracy = Location.Accuracy.High) {
@@ -1109,38 +1534,11 @@ function FieldOpsApp() {
     return point;
   }
 
-  async function captureLiveHeartbeat(force = false, permissions: PermissionState = permissionState) {
-    const authenticatedSession = sessionRef.current;
-    if (!authenticatedSession || workState !== "active") return;
-    const sessionEpoch = sessionEpochRef.current;
-    if (!permissions.foreground || !permissions.services) return;
-    if (heartbeatRunningRef.current) return;
-    if (!force && Date.now() - lastHeartbeatAtRef.current < 45_000) {
-      await flushLocationQueue(authenticatedSession.employee.id, authenticatedSession.token);
-      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
-      await refreshLocationCount();
-      return;
-    }
-
-    heartbeatRunningRef.current = true;
-    try {
-      const point = await gps(Location.Accuracy.High);
-      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
-      await queueLocationObjects(authenticatedSession.employee.id, [point], "foreground");
-      lastHeartbeatAtRef.current = Date.now();
-      await flushLocationQueue(authenticatedSession.employee.id, authenticatedSession.token);
-      if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
-      await refreshLocationCount();
-    } finally {
-      heartbeatRunningRef.current = false;
-    }
-  }
-
   async function startWork() {
     if (!session) return;
     let permissions = await refreshPermissions();
     if (!permissions.foreground || !permissions.services) {
-      Alert.alert("Location access required", "Turn on GPS and allow location while using FieldOPS before starting work.", [
+      Alert.alert("Location access required", "Turn on phone location and allow access while using FieldOPS before starting work.", [
         { text: "Cancel", style: "cancel" },
         { text: "Open settings", onPress: () => Linking.openSettings() },
       ]);
@@ -1151,6 +1549,10 @@ function FieldOpsApp() {
       const capturedAt = new Date(point.timestamp).toISOString();
       setWorkState("active");
       await queueLocationObjects(session.employee.id, [point], "foreground");
+      const initialRoutePoint = routeTrackPoint(point);
+      if (isReliableRoutePoint(initialRoutePoint, operationsPolicy)) {
+        lastCapturedRoutePointRef.current = initialRoutePoint;
+      }
       await enqueue("Start work", { type: "json", path: "/attendance", body: {
         action: "check_in",
         latitude: point.coords.latitude,
@@ -1163,7 +1565,7 @@ function FieldOpsApp() {
       await refreshLocationCount();
     } catch (error) {
       setWorkState("not_started");
-      Alert.alert("Work did not start", error instanceof Error ? error.message : "Turn on GPS and try again.");
+      Alert.alert("Work did not start", error instanceof Error ? error.message : "Turn on phone location and try again.");
     }
   }
 
@@ -1186,10 +1588,12 @@ function FieldOpsApp() {
         idempotencyKey: operationId("finish"),
       } });
       setWorkState("finished");
+      await stopBackgroundRouteTracking();
+      await refreshBackgroundRouteStatus().catch(() => undefined);
       await flushLocationQueue(session.employee.id, session.token);
       await refreshLocationCount();
     } catch (error) {
-      Alert.alert("GPS required to finish", error instanceof Error ? error.message : "Turn on GPS and try again.");
+      Alert.alert("Location needed to finish", error instanceof Error ? error.message : "Turn on phone location and try again.");
     }
   }
 
@@ -1204,7 +1608,10 @@ function FieldOpsApp() {
       return;
     }
     if (!workActuallyRunning) {
-      Alert.alert("Work is stopped", trackingReady ? "Tap Start work before beginning a visit." : "Turn on GPS and allow location first.");
+      Alert.alert(
+        workState === "active" ? "Route recording paused" : "Start work first",
+        trackingReady ? "Tap Start work before beginning a visit." : "Fix phone location before beginning a visit.",
+      );
       return;
     }
     try {
@@ -1239,7 +1646,7 @@ function FieldOpsApp() {
       setOutlets((items) => items.map((item) => item.id === outlet.id ? { ...item, status: "active" } : item));
       setScreen("visit");
     } catch (error) {
-      Alert.alert("Visit did not start", error instanceof Error ? error.message : "Turn on GPS and try again.");
+      Alert.alert("Visit did not start", error instanceof Error ? error.message : "Turn on phone location and try again.");
     }
   }
 
@@ -1250,7 +1657,10 @@ function FieldOpsApp() {
       return;
     }
     if (!workActuallyRunning) {
-      Alert.alert("Work is stopped", trackingReady ? "Tap Start work before beginning a visit." : "Turn on GPS and allow location first.");
+      Alert.alert(
+        workState === "active" ? "Route recording paused" : "Start work first",
+        trackingReady ? "Tap Start work before beginning a visit." : "Fix phone location before beginning a visit.",
+      );
       return;
     }
     try {
@@ -1297,7 +1707,7 @@ function FieldOpsApp() {
       setSelectedId(visitId);
       setScreen("visit");
     } catch (error) {
-      Alert.alert("Visit did not start", error instanceof Error ? error.message : "Turn on GPS and try again.");
+      Alert.alert("Visit did not start", error instanceof Error ? error.message : "Turn on phone location and try again.");
     }
   }
 
@@ -1430,7 +1840,7 @@ function FieldOpsApp() {
           : "The photo, voice report, and GPS are safe. The visit completes after server confirmation.",
       );
     } catch (error) {
-      Alert.alert("Visit not finished", error instanceof Error ? error.message : "Turn on GPS and try again.");
+      Alert.alert("Visit not finished", error instanceof Error ? error.message : "Turn on phone location and try again.");
     } finally {
       visitSubmittingRef.current = false;
     }
@@ -1478,8 +1888,150 @@ function FieldOpsApp() {
       Alert.alert("Order saved", "The location is saved and this order will sync automatically.");
       setScreen("today");
     } catch (error) {
-      Alert.alert("Order not saved", error instanceof Error ? error.message : "Turn on GPS and try again.");
+      Alert.alert("Order not saved", error instanceof Error ? error.message : "Turn on phone location and try again.");
     }
+  }
+
+  function applyTeamConfirmation(item: QueueItem, confirmation: unknown) {
+    const operation = item.operation;
+    if (operation?.type !== "json" || !confirmation || typeof confirmation !== "object") return;
+    const result = confirmation as Record<string, unknown>;
+    if (operation.path === "/team/messages" && result.message) {
+      const message = normalizeTeamMessages([result.message])[0];
+      if (!message) return;
+      const localId = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
+      setTeamMessages((current) => normalizeTeamMessages([
+        ...current.filter((entry) => entry.id !== localId && entry.id !== message.id),
+        message,
+      ]));
+      return;
+    }
+    if (operation.path === "/team/messages" && operation.body.action === "mark_read") {
+      const readAt = typeof result.readAt === "string" && Number.isFinite(new Date(result.readAt).valueOf())
+        ? result.readAt
+        : new Date().toISOString();
+      setTeamMessages((current) => current.map((message) => (
+        message.senderRole === "manager" && !message.readAt ? { ...message, readAt } : message
+      )));
+      return;
+    }
+    if (operation.path === "/deals" && result.deal) {
+      const deal = normalizeDeals([result.deal])[0];
+      if (!deal) return;
+      const localId = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
+      setDeals((current) => normalizeDeals([
+        ...current.filter((entry) => entry.id !== localId && entry.id !== deal.id),
+        deal,
+      ]));
+    }
+  }
+
+  async function sendTeamMessage(body: string) {
+    const cleanBody = body.trim();
+    if (!cleanBody) throw new Error("Write a message before sending it.");
+    if (cleanBody.length > 2_000) throw new Error("Keep the message under 2,000 characters.");
+    const idempotencyKey = operationId("team_message");
+    const sentAt = new Date().toISOString();
+    await enqueue("Message to manager", {
+      type: "json",
+      path: "/team/messages",
+      body: { body: cleanBody, idempotencyKey },
+    });
+    setTeamMessages((current) => normalizeTeamMessages([...current, {
+      id: idempotencyKey,
+      body: cleanBody,
+      senderRole: "salesperson",
+      sentAt,
+      readAt: "",
+    }]));
+  }
+
+  async function markManagerMessagesRead() {
+    if (!teamMessages.some((message) => message.senderRole === "manager" && !message.readAt)) return;
+    const idempotencyKey = operationId("team_read");
+    const readAt = new Date().toISOString();
+    await enqueue("Manager messages read", {
+      type: "json",
+      path: "/team/messages",
+      body: { action: "mark_read", idempotencyKey },
+    });
+    setTeamMessages((current) => current.map((message) => (
+      message.senderRole === "manager" && !message.readAt ? { ...message, readAt } : message
+    )));
+  }
+
+  async function createDeal(draft: DealDraft) {
+    const customerName = draft.customerName.trim();
+    const title = draft.title.trim();
+    if (!customerName || !title) throw new Error("Customer and opportunity title are required.");
+    if (draft.amount !== null && (!Number.isFinite(draft.amount) || draft.amount < 0)) {
+      throw new Error("Enter a valid non-negative deal amount.");
+    }
+    const followUpDate = draft.followUpAt ? new Date(draft.followUpAt) : null;
+    if (followUpDate && !Number.isFinite(followUpDate.valueOf())) throw new Error("Enter a valid follow-up date.");
+    const followUpAt = followUpDate?.toISOString() ?? "";
+    const idempotencyKey = operationId("deal");
+    const updatedAt = new Date().toISOString();
+    const deal: Deal = {
+      id: idempotencyKey,
+      outletId: draft.outletId,
+      customerName,
+      title,
+      stage: draft.stage,
+      amount: draft.amount,
+      nextAction: draft.nextAction.trim(),
+      followUpAt,
+      notes: draft.notes.trim(),
+      updatedAt,
+    };
+    await enqueue(`Deal · ${customerName}`, {
+      type: "json",
+      path: "/deals",
+      body: {
+        action: "create",
+        outletId: deal.outletId,
+        customerName: deal.customerName,
+        title: deal.title,
+        stage: deal.stage,
+        amount: deal.amount,
+        nextAction: deal.nextAction,
+        followUpAt: deal.followUpAt,
+        notes: deal.notes,
+        idempotencyKey,
+      },
+    });
+    setDeals((current) => normalizeDeals([...current, deal]));
+  }
+
+  async function updateDealStage(dealId: string, stage: DealStage) {
+    const deal = deals.find((item) => item.id === dealId);
+    if (!deal) throw new Error("This deal is no longer available. Update Team and try again.");
+    const staleConflictIds = queueRef.current.flatMap((item) => {
+      const operation = item.operation;
+      return item.state === "failed"
+        && item.errorKind === "conflict"
+        && operation?.type === "json"
+        && operation.path === "/deals"
+        && operation.body.action === "stage_update"
+        && operation.body.dealId === dealId
+        ? [item.id]
+        : [];
+    });
+    const idempotencyKey = operationId("deal_stage");
+    await enqueue(`Deal stage · ${deal.customerName}`, {
+      type: "json",
+      path: "/deals",
+      body: { action: "stage_update", dealId, stage, expectedUpdatedAt: deal.updatedAt, idempotencyKey },
+    });
+    if (staleConflictIds.length > 0) {
+      const stale = new Set(staleConflictIds);
+      await setQueueDurably((items) => items.filter((item) => !stale.has(item.id))).catch(() => undefined);
+    }
+    setDeals((current) => current.map((item) => item.id === dealId ? {
+      ...item,
+      stage,
+      updatedAt: new Date().toISOString(),
+    } : item));
   }
 
   function moveOutlet(id: string, direction: -1 | 1) {
@@ -1493,13 +2045,28 @@ function FieldOpsApp() {
     });
   }
 
-  async function retryEverything() {
-    await Promise.all([
-      syncOperations({ force: true }),
-      session ? flushLocationQueue(session.employee.id, session.token) : Promise.resolve(0),
-    ]);
-    await refreshLocationCount();
-    await refreshContext(false);
+  function retryEverything(): Promise<void> {
+    if (manualSyncPromiseRef.current) return manualSyncPromiseRef.current;
+    setManualSyncing(true);
+    const operation = (async () => {
+      try {
+        await Promise.all([
+          syncOperations({ force: true }),
+          session ? flushLocationQueue(session.employee.id, session.token, { force: true }) : Promise.resolve(0),
+        ]);
+        await refreshLocationCount();
+        await refreshContext(false);
+      } catch (error) {
+        Alert.alert("Sync could not continue", error instanceof Error ? error.message : "Saved work could not be updated on this phone.");
+      }
+    })();
+    manualSyncPromiseRef.current = operation;
+    return operation.finally(() => {
+      if (manualSyncPromiseRef.current === operation) {
+        manualSyncPromiseRef.current = null;
+        setManualSyncing(false);
+      }
+    });
   }
 
   async function signOut() {
@@ -1509,6 +2076,7 @@ function FieldOpsApp() {
       Alert.alert("Stop the recording first", "Stop and save the audio note before signing out.");
       return;
     }
+    await stopBackgroundRouteTracking();
     const employeeId = authenticatedSession.employee.id;
     const unconfirmed = queueRef.current.filter((item) => (
       item.employeeId === employeeId && item.state !== "confirmed"
@@ -1526,26 +2094,33 @@ function FieldOpsApp() {
             queue: queueRef.current,
             activeVisit,
             territoryPolicy,
+            operationsPolicy,
             contextDate,
             serverActivity,
+            teamContact,
+            teamMessages,
+            deals,
             lastSyncAt,
           } satisfies PersistedState)],
         ]);
       } catch {
+        await refreshBackgroundRouteStatus().catch(() => undefined);
         Alert.alert("Could not protect saved work", "FieldOPS could not update local storage. Please try again before signing out.");
         return;
       }
       await revokeMobileSession(authenticatedSession);
+      await clearSecureMobileSession().catch(() => undefined);
       recoveryEmployeeIdRef.current = employeeId;
       setRecoveryEmployeeId(employeeId);
       sessionEpochRef.current += 1;
       sessionRef.current = null;
       syncPromiseRef.current = null;
-      heartbeatRunningRef.current = false;
+      lastCapturedRoutePointRef.current = null;
       setSession(null);
       setLocationPending(0);
       setLocationRejected(0);
       setLocationSyncError("");
+      setBackgroundRoute(defaultBackgroundRouteStatus);
       setNetworkOnline(null);
       setRefreshing(false);
       setScreen("today");
@@ -1565,19 +2140,25 @@ function FieldOpsApp() {
         queue: [],
         activeVisit: null,
         territoryPolicy: unrestrictedTerritoryPolicy,
+        operationsPolicy: defaultOperationsPolicy,
         contextDate: "",
         serverActivity: [],
+        teamContact: null,
+        teamMessages: [],
+        deals: [],
         lastSyncAt: "",
       } satisfies PersistedState));
     } catch {
+      await refreshBackgroundRouteStatus().catch(() => undefined);
       Alert.alert("Could not sign out safely", "FieldOPS could not update local storage. Please try again.");
       return;
     }
     await revokeMobileSession(authenticatedSession);
+    await clearSecureMobileSession().catch(() => undefined);
     sessionEpochRef.current += 1;
     sessionRef.current = null;
     syncPromiseRef.current = null;
-    heartbeatRunningRef.current = false;
+    lastCapturedRoutePointRef.current = null;
     recoveryEmployeeIdRef.current = "";
     setSession(null);
     setRecoveryEmployeeId("");
@@ -1588,13 +2169,19 @@ function FieldOpsApp() {
     setLocationPending(0);
     setLocationRejected(0);
     setLocationSyncError("");
+    setBackgroundRoute(defaultBackgroundRouteStatus);
     setNetworkOnline(null);
     setRefreshing(false);
     setTerritoryPolicy(unrestrictedTerritoryPolicy);
+    setOperationsPolicy(defaultOperationsPolicy);
     setContextDate("");
     setTerritoryPosition("checking");
     setServerActivity([]);
+    setTeamContact(null);
+    setTeamMessages([]);
+    setDeals([]);
     setLastSyncAt("");
+    setOfficeSyncError("");
     setScreen("today");
   }
 
@@ -1609,6 +2196,7 @@ function FieldOpsApp() {
   if (!permissionChecked) {
     return <PermissionGate
       state={permissionState}
+      backgroundRoute={backgroundRoute}
       busy={permissionBusy}
       onRequest={requestLocationPermission}
       onSettings={() => Linking.openSettings()}
@@ -1627,7 +2215,7 @@ function FieldOpsApp() {
             onSync={() => setScreen("sync")}
             onRefresh={() => refreshContext()}
           />
-          {screen !== "sync" && screen !== "profile" && <TerritoryBanner
+          {screen !== "sync" && screen !== "team" && screen !== "profile" && <TerritoryBanner
             policy={territoryPolicy}
             policyReady={territoryPolicyReady}
             position={territoryPosition}
@@ -1703,6 +2291,19 @@ function FieldOpsApp() {
             territoryMessage={territoryMessage}
             onSubmit={createOrder}
           />}
+          {screen === "team" && <Team
+            contact={teamContact}
+            messages={teamMessages}
+            deals={deals}
+            outlets={outlets}
+            queue={employeeQueue}
+            refreshing={refreshing}
+            onRefresh={() => refreshContext()}
+            onSendMessage={sendTeamMessage}
+            onMarkMessagesRead={markManagerMessagesRead}
+            onCreateDeal={createDeal}
+            onUpdateDealStage={updateDealStage}
+          />}
           {screen === "sync" && <SyncQueue
             queue={employeeQueue}
             locationPending={locationPending}
@@ -1711,17 +2312,24 @@ function FieldOpsApp() {
             activity={serverActivity}
             online={networkOnline}
             lastSyncAt={lastSyncAt}
+            officeSyncError={officeSyncError}
+            checking={manualSyncing || refreshing}
             onRetry={retryEverything}
             onRetryItem={retryQueueItem}
             onClearRejectedLocations={removeRejectedRoutePoints}
-            onRefresh={() => refreshContext(false)}
           />}
           {screen === "profile" && <Profile
             session={session}
             workState={workState}
             trackingReady={trackingReady}
+            routePolicy={operationsPolicy}
+            backgroundRoute={backgroundRoute}
+            backgroundRouteBusy={backgroundRouteBusy}
             pending={pending}
             territoryMessage={territoryMessage}
+            onEnableBackgroundRoute={enableBackgroundRoute}
+            onDisableBackgroundRoute={disableBackgroundRoute}
+            onOpenSettings={() => Linking.openSettings()}
             onLogout={signOut}
           />}
         </View>
@@ -1803,12 +2411,14 @@ function Login({
 
 function PermissionGate({
   state,
+  backgroundRoute,
   busy,
   onRequest,
   onSettings,
   onLogout,
 }: {
   state: PermissionState;
+  backgroundRoute: BackgroundRouteStatus;
   busy: boolean;
   onRequest: () => void;
   onSettings: () => void;
@@ -1820,15 +2430,17 @@ function PermissionGate({
         <Eyebrow>ONE-TIME SETUP</Eyebrow>
         <ScreenTitle>Turn on location</ScreenTitle>
         <BodyText>
-          Location proves you are at the customer when you check in or mark a new place. You can still open Activity and sync saved work if location is turned off later.
+          Phone location proves you are at the customer when you check in or mark a new place. Your manager’s work-area map is checked separately after this setup.
         </BodyText>
         <View className="rounded-2xl border border-line bg-white px-4">
           <PermissionRow label="Allow FieldOPS location" ready={state.foreground} />
           <PermissionRow label="Phone location switched on" ready={state.services} />
+          <PermissionRow label="Route through screen lock" ready={backgroundRoute.enabled && backgroundRoute.permission === "granted"} later />
           <PermissionRow label="Camera for storefront photo" ready={state.camera} later />
           <PermissionRow label="Microphone for voice report" ready={state.microphone} later />
         </View>
         <Button label={busy ? "Checking…" : "Allow location & continue"} disabled={busy} onPress={onRequest} />
+        <Text className="text-xs leading-5 text-muted">Screen-lock route continuity is optional. Set it up later in Profile; choosing no does not block field work.</Text>
         <GhostButton dark label="Open phone settings" onPress={onSettings} />
         <GhostButton dark label="Sign out" onPress={onLogout} />
       </View>
@@ -1859,7 +2471,7 @@ function Header({
   onSync: () => void;
   onRefresh: () => void;
 }) {
-  const section = screen === "sync" ? "Activity" : screen === "profile" ? "Profile" : "Field work";
+  const section = screen === "sync" ? "Activity" : screen === "team" ? "Team" : screen === "profile" ? "Profile" : "Field work";
   return <View className="flex-row items-center gap-2">
     <View className="min-w-0 flex-1 flex-row items-center gap-2.5">
       <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-ink">
@@ -1958,7 +2570,7 @@ function TerritoryBanner({
     </View>
     <Text className="mt-2 leading-5 text-[#586273]">{detail}</Text>
     {lastCheck && policyReady && !permissionProblem && <Text className="mt-2 text-[11px] font-bold text-[#607063]">
-      Checked {new Date(lastCheck.checkedAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })} · accuracy about {lastCheck.accuracy} m
+      Checked {new Date(lastCheck.checkedAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })} · ±{lastCheck.accuracy} m · smaller is better
     </Text>}
   </View>;
 }
@@ -2002,7 +2614,7 @@ function Today({
     : running
       ? "Work in progress"
       : workState === "active"
-        ? "Work stopped"
+        ? "Route recording paused"
         : "Ready to start";
   const detail = workState === "active" && !trackingReady
         ? "Location is paused — saved work can still sync"
@@ -2024,7 +2636,7 @@ function Today({
       </View>
       {workState !== "active" && <Button label={workState === "finished" ? "Start again" : "Start work"} onPress={onStartWork} />}
       {workState === "active" && trackingReady && <Button label="Finish session" onPress={onFinishWork} />}
-      {workState === "active" && !trackingReady && <Button label="Fix GPS" onPress={onFixGps} />}
+      {workState === "active" && !trackingReady && <Button label="Fix location" onPress={onFixGps} />}
     </View>
 
     <SectionTitle>Assigned commitments</SectionTitle>
@@ -2322,7 +2934,7 @@ function Visit({
         body={`Stay within ${GEOFENCE_METERS} m of the starting point. Add one clear storefront photo and a short voice sales report before sending.`}
       />
       <SectionTitle>Sales outcome</SectionTitle>
-      <View className="flex-row flex-wrap gap-2">
+      <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
         {outcomes.map((item) => <Choice
           key={item}
           label={item}
@@ -2402,7 +3014,7 @@ function Order({
     {!accessAllowed && <WarningNotice title="Orders unavailable here" body={territoryMessage} />}
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
       <InputLabel>ASSIGNED VISIT · OPTIONAL</InputLabel>
-      <View className="flex-row flex-wrap gap-2">
+      <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
         <Choice label="Any customer" selected={!outletId} onPress={() => setOutletId("")} />
         {outlets.map((outlet) => <Choice
           key={outlet.id}
@@ -2473,6 +3085,437 @@ function Order({
   </>;
 }
 
+function Team({
+  contact,
+  messages,
+  deals,
+  outlets,
+  queue,
+  refreshing,
+  onRefresh,
+  onSendMessage,
+  onMarkMessagesRead,
+  onCreateDeal,
+  onUpdateDealStage,
+}: {
+  contact: TeamContact | null;
+  messages: TeamMessage[];
+  deals: Deal[];
+  outlets: Outlet[];
+  queue: QueueItem[];
+  refreshing: boolean;
+  onRefresh: () => void;
+  onSendMessage: (body: string) => Promise<void>;
+  onMarkMessagesRead: () => Promise<void>;
+  onCreateDeal: (draft: DealDraft) => Promise<void>;
+  onUpdateDealStage: (dealId: string, stage: DealStage) => Promise<void>;
+}) {
+  const [messageDraft, setMessageDraft] = useState("");
+  const [messageBusy, setMessageBusy] = useState(false);
+  const [readBusy, setReadBusy] = useState(false);
+  const [creatingDeal, setCreatingDeal] = useState(false);
+  const [dealBusy, setDealBusy] = useState(false);
+  const [updatingDealId, setUpdatingDealId] = useState("");
+  const [stageEditorId, setStageEditorId] = useState("");
+  const [dealOutletId, setDealOutletId] = useState("");
+  const [dealCustomer, setDealCustomer] = useState("");
+  const [dealTitle, setDealTitle] = useState("");
+  const [dealStage, setDealStage] = useState<DealStage>("lead");
+  const [dealAmount, setDealAmount] = useState("");
+  const [dealNextAction, setDealNextAction] = useState("");
+  const [dealFollowUpDate, setDealFollowUpDate] = useState("");
+  const [dealNotes, setDealNotes] = useState("");
+
+  const pendingTeamItems = useMemo(() => queue.filter((item) => (
+    item.state !== "confirmed"
+    && item.operation?.type === "json"
+    && (item.operation.path === "/team/messages" || item.operation.path === "/deals")
+  )), [queue]);
+  const optimisticTeamItems = useMemo(() => pendingTeamItems.filter((item) => !(
+    item.state === "failed" && item.retryable === false
+  )), [pendingTeamItems]);
+
+  const pendingMessageIds = useMemo(() => new Set(optimisticTeamItems.flatMap((item) => {
+    const operation = item.operation;
+    if (operation?.type !== "json" || operation.path !== "/team/messages") return [];
+    const key = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
+    return key ? [key] : [];
+  })), [optimisticTeamItems]);
+
+  const pendingReadAt = useMemo(() => optimisticTeamItems.reduce((latest, item) => {
+    const operation = item.operation;
+    return operation?.type === "json"
+      && operation.path === "/team/messages"
+      && operation.body.action === "mark_read"
+      && item.createdAt > latest
+      ? item.createdAt
+      : latest;
+  }, ""), [optimisticTeamItems]);
+
+  const visibleMessages = useMemo(() => {
+    const combined = new Map(messages.map((message) => [message.id, message]));
+    for (const item of optimisticTeamItems) {
+      const operation = item.operation;
+      if (operation?.type !== "json" || operation.path !== "/team/messages") continue;
+      const id = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
+      const body = typeof operation.body.body === "string" ? operation.body.body : "";
+      if (id && body && !combined.has(id)) combined.set(id, {
+        id,
+        body,
+        senderRole: "salesperson",
+        sentAt: item.createdAt,
+        readAt: "",
+      });
+    }
+    return normalizeTeamMessages([...combined.values()].map((message) => (
+      pendingReadAt && message.senderRole === "manager" && !message.readAt
+        ? { ...message, readAt: pendingReadAt }
+        : message
+    ))).slice(-20);
+  }, [messages, optimisticTeamItems, pendingReadAt]);
+
+  const unreadManagerMessages = pendingReadAt
+    ? 0
+    : messages.filter((message) => message.senderRole === "manager" && !message.readAt).length;
+
+  const pendingDealCreateIds = useMemo(() => new Set(optimisticTeamItems.flatMap((item) => {
+    const operation = item.operation;
+    if (operation?.type !== "json" || operation.path !== "/deals" || operation.body.action !== "create") return [];
+    const key = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
+    return key ? [key] : [];
+  })), [optimisticTeamItems]);
+
+  const pendingStageDealIds = useMemo(() => new Set(optimisticTeamItems.flatMap((item) => {
+    const operation = item.operation;
+    if (operation?.type !== "json" || operation.path !== "/deals" || operation.body.action !== "stage_update") return [];
+    const dealId = typeof operation.body.dealId === "string" ? operation.body.dealId : "";
+    return dealId ? [dealId] : [];
+  })), [optimisticTeamItems]);
+
+  const stageConflicts = useMemo(() => new Map(pendingTeamItems.flatMap((item) => {
+    const operation = item.operation;
+    if (item.state !== "failed"
+      || item.errorKind !== "conflict"
+      || operation?.type !== "json"
+      || operation.path !== "/deals"
+      || operation.body.action !== "stage_update") return [];
+    const dealId = typeof operation.body.dealId === "string" ? operation.body.dealId : "";
+    const expectedUpdatedAt = typeof operation.body.expectedUpdatedAt === "string" ? operation.body.expectedUpdatedAt : "";
+    return dealId ? [[dealId, expectedUpdatedAt] as const] : [];
+  })), [pendingTeamItems]);
+
+  const localDealIds = useMemo(() => new Set(queue.flatMap((item) => {
+    const operation = item.operation;
+    if (operation?.type !== "json" || operation.path !== "/deals" || operation.body.action !== "create") return [];
+    const key = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
+    return key ? [key] : [];
+  })), [queue]);
+
+  const visibleDeals = useMemo(() => {
+    const combined = new Map(deals.map((deal) => [deal.id, deal]));
+    const pendingStages = new Map<string, DealStage>();
+    for (const item of optimisticTeamItems) {
+      const operation = item.operation;
+      if (operation?.type !== "json" || operation.path !== "/deals") continue;
+      if (operation.body.action === "create") {
+        const id = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
+        if (!id || combined.has(id)) continue;
+        const pending = normalizeDeals([{ ...operation.body, id, updatedAt: item.createdAt }])[0];
+        if (pending) combined.set(id, pending);
+      }
+      if (operation.body.action === "stage_update") {
+        const id = typeof operation.body.dealId === "string" ? operation.body.dealId : "";
+        const stage = typeof operation.body.stage === "string" ? operation.body.stage : "";
+        if (id && isDealStage(stage)) pendingStages.set(id, stage);
+      }
+    }
+    return normalizeDeals([...combined.values()].map((deal) => (
+      pendingStages.has(deal.id) ? { ...deal, stage: pendingStages.get(deal.id) } : deal
+    )));
+  }, [deals, optimisticTeamItems]);
+
+  const phoneUrl = contact ? teamContactUrl("phone", contact.phone) : null;
+  const whatsappUrl = contact ? teamContactUrl("whatsapp", contact.whatsapp) : null;
+  const openContact = (url: string, label: string) => {
+    Linking.openURL(url).catch(() => Alert.alert(`${label} unavailable`, `${label} could not open on this phone.`));
+  };
+  const stageName = (stage: string) => stage ? `${stage[0]?.toUpperCase() ?? ""}${stage.slice(1)}` : "Lead";
+  const formatDate = (value: string) => {
+    const date = new Date(value);
+    return Number.isFinite(date.valueOf())
+      ? date.toLocaleDateString("en-PK", { day: "numeric", month: "short", year: "numeric" })
+      : "Not scheduled";
+  };
+  const validFollowUp = (value: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(Date.UTC(year!, month! - 1, day!));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day;
+  };
+
+  return <>
+    <View className="flex-row items-start justify-between gap-3">
+      <View className="flex-1">
+        <Eyebrow>FIELD TEAM</Eyebrow>
+        <ScreenTitle>Team desk</ScreenTitle>
+        <BodyText>Reach your manager, keep decisions in one thread, and move customer opportunities forward.</BodyText>
+      </View>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Update team messages and deals"
+        accessibilityState={{ disabled: refreshing }}
+        className="min-h-12 min-w-20 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
+        onPress={onRefresh}
+        disabled={refreshing}
+      >
+        <Text className="text-xs font-black text-field">{refreshing ? "Updating…" : "Update"}</Text>
+      </TouchableOpacity>
+    </View>
+
+    {contact ? <View className="gap-3 overflow-hidden rounded-2xl bg-ink p-5">
+      <Eyebrow>YOUR FIELD CONTACT</Eyebrow>
+      <Text className="text-2xl font-black text-white">{contact.name || "Field manager"}</Text>
+      {contact.phone ? <Text className="text-sm font-bold text-[#C9D3E6]">{contact.phone}</Text> : null}
+      {phoneUrl || whatsappUrl ? <View className="flex-row gap-2.5">
+        {phoneUrl && <TouchableOpacity
+          accessibilityRole="link"
+          accessibilityLabel={`Call ${contact.name || "field manager"}`}
+          className="min-h-12 flex-1 items-center justify-center rounded-xl bg-white px-3"
+          onPress={() => openContact(phoneUrl, "Phone")}
+        ><Text className="font-black text-ink">Call</Text></TouchableOpacity>}
+        {whatsappUrl && <TouchableOpacity
+          accessibilityRole="link"
+          accessibilityLabel={`Open WhatsApp with ${contact.name || "field manager"}`}
+          className="min-h-12 flex-1 items-center justify-center rounded-xl bg-[#2A9D6F] px-3"
+          onPress={() => openContact(whatsappUrl, "WhatsApp")}
+        ><Text className="font-black text-white">WhatsApp</Text></TouchableOpacity>}
+      </View> : <Text className="text-xs leading-5 text-[#C9D3E6]">Your office has not configured a phone or WhatsApp number.</Text>}
+    </View> : <InfoNotice title="Field contact not configured" body="Messages and deals still work. Ask an admin to add the team phone or WhatsApp number." />}
+
+    <View className="mt-1 flex-row items-center justify-between gap-3">
+      <SectionTitle>Messages</SectionTitle>
+      {unreadManagerMessages > 0 && <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`Mark ${unreadManagerMessages} manager ${unreadManagerMessages === 1 ? "message" : "messages"} read`}
+        accessibilityState={{ disabled: readBusy }}
+        className="min-h-12 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
+        disabled={readBusy}
+        onPress={() => {
+          setReadBusy(true);
+          onMarkMessagesRead().catch((error) => {
+            Alert.alert("Read state not saved", error instanceof Error ? error.message : "Try again.");
+          }).finally(() => setReadBusy(false));
+        }}
+      ><Text className="text-xs font-black text-field">{readBusy ? "Saving…" : `Mark read · ${unreadManagerMessages}`}</Text></TouchableOpacity>}
+    </View>
+    {visibleMessages.length === 0
+      ? <EmptyState title="No team messages yet" body="Write the first update below. It will stay safely queued if you are offline." />
+      : <View className="gap-2 rounded-2xl border border-line bg-[#F4F6FA] p-3">
+        {visibleMessages.map((message) => {
+          const mine = message.senderRole.toLowerCase().includes("sales");
+          const pendingMessage = pendingMessageIds.has(message.id);
+          return <View key={message.id} className={classes("max-w-[88%] rounded-2xl px-4 py-3", mine ? "self-end bg-field" : "self-start border border-line bg-white")}>
+            <Text className={classes("text-[10px] font-black uppercase tracking-wider", mine ? "text-[#C4D2F2]" : "text-muted")}>{mine ? "You" : stageName(message.senderRole)}</Text>
+            <Text className={classes("mt-1 leading-5", mine ? "text-white" : "text-ink")}>{message.body}</Text>
+            <Text className={classes("mt-1.5 text-[10px] font-bold", mine ? "text-[#C4D2F2]" : "text-muted")}>
+              {new Date(message.sentAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })} · {pendingMessage ? "Waiting to send" : message.readAt ? "Read" : mine ? "Sent" : "New"}
+            </Text>
+          </View>;
+        })}
+      </View>}
+    <View className="gap-3 rounded-2xl border border-line bg-white p-4">
+      <TextInput
+        accessibilityLabel="Message to manager"
+        className="min-h-[88px] rounded-xl border border-line px-3 py-3 text-base text-ink"
+        value={messageDraft}
+        onChangeText={setMessageDraft}
+        placeholder="Ask a question or share a field update"
+        placeholderTextColor="#697184"
+        maxLength={2_000}
+        multiline
+        textAlignVertical="top"
+      />
+      <Button
+        label={messageBusy ? "Saving message…" : "Send message"}
+        disabled={messageBusy || !messageDraft.trim()}
+        onPress={() => {
+          const body = messageDraft.trim();
+          if (!body) return;
+          setMessageBusy(true);
+          onSendMessage(body).then(() => {
+            setMessageDraft("");
+          }).catch((error) => {
+            Alert.alert("Message not saved", error instanceof Error ? error.message : "Try again.");
+          }).finally(() => setMessageBusy(false));
+        }}
+      />
+      <Text className="text-xs leading-5 text-muted">Send returns after the message is safely stored on this phone; upload continues automatically.</Text>
+    </View>
+
+    <View className="mt-1 flex-row items-center justify-between gap-3">
+      <View className="flex-1">
+        <SectionTitle>Customer deals</SectionTitle>
+        <Text className="mt-1 text-xs leading-5 text-muted">{visibleDeals.length} active and completed {visibleDeals.length === 1 ? "opportunity" : "opportunities"}</Text>
+      </View>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={creatingDeal ? "Close new deal form" : "Create a new deal"}
+        className="min-h-12 items-center justify-center rounded-xl bg-gold px-4"
+        onPress={() => setCreatingDeal((value) => !value)}
+      ><Text className="font-black text-ink">{creatingDeal ? "Close" : "New deal"}</Text></TouchableOpacity>
+    </View>
+
+    {creatingDeal && <View className="gap-3 rounded-2xl border border-[#D8A629] bg-[#FFFAEB] p-4">
+      <InputLabel>LINKED VISIT · OPTIONAL</InputLabel>
+      <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
+        <Choice label="No linked visit" selected={!dealOutletId} onPress={() => setDealOutletId("")} />
+        {outlets.map((outlet) => <Choice
+          key={outlet.id}
+          label={outlet.name}
+          selected={dealOutletId === outlet.id}
+          onPress={() => {
+            setDealOutletId(outlet.id);
+            if (!dealCustomer.trim()) setDealCustomer(outlet.name);
+          }}
+        />)}
+      </View>
+      <FieldInput label="Customer or shop" value={dealCustomer} onChangeText={setDealCustomer} placeholder="Customer or shop · required" />
+      <FieldInput label="Opportunity title" value={dealTitle} onChangeText={setDealTitle} placeholder="Example: Monthly rice supply" />
+      <InputLabel>STAGE</InputLabel>
+      <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
+        {dealStages.map((stage) => <Choice key={stage} label={stageName(stage)} selected={dealStage === stage} onPress={() => setDealStage(stage)} />)}
+      </View>
+      <FieldInput label="Expected amount" value={dealAmount} onChangeText={setDealAmount} placeholder="PKR · optional" keyboardType="decimal-pad" />
+      <FieldInput label="Next action" value={dealNextAction} onChangeText={setDealNextAction} placeholder="Example: Send price list" />
+      <FieldInput label="Follow-up date" value={dealFollowUpDate} onChangeText={setDealFollowUpDate} placeholder="YYYY-MM-DD · optional" />
+      <TextInput
+        accessibilityLabel="Deal notes"
+        className="min-h-[88px] rounded-xl border border-line bg-white px-3 py-3 text-base text-ink"
+        value={dealNotes}
+        onChangeText={setDealNotes}
+        placeholder="Decision maker, requirements, risks, or useful context"
+        placeholderTextColor="#697184"
+        maxLength={2_000}
+        multiline
+        textAlignVertical="top"
+      />
+      <Button
+        label={dealBusy ? "Saving deal…" : "Save deal"}
+        disabled={dealBusy || !dealCustomer.trim() || !dealTitle.trim()}
+        onPress={() => {
+          const amount = dealAmount.trim() ? Number(dealAmount) : null;
+          if (amount !== null && (!Number.isFinite(amount) || amount < 0)) {
+            Alert.alert("Check the amount", "Enter a valid non-negative amount, or leave it blank.");
+            return;
+          }
+          if (dealFollowUpDate.trim() && !validFollowUp(dealFollowUpDate.trim())) {
+            Alert.alert("Check the follow-up date", "Use a real date in YYYY-MM-DD format.");
+            return;
+          }
+          const followUpAt = dealFollowUpDate.trim()
+            ? new Date(`${dealFollowUpDate.trim()}T09:00:00+05:00`).toISOString()
+            : "";
+          setDealBusy(true);
+          onCreateDeal({
+            outletId: dealOutletId,
+            customerName: dealCustomer.trim(),
+            title: dealTitle.trim(),
+            stage: dealStage,
+            amount,
+            nextAction: dealNextAction.trim(),
+            followUpAt,
+            notes: dealNotes.trim(),
+          }).then(() => {
+            setDealOutletId("");
+            setDealCustomer("");
+            setDealTitle("");
+            setDealStage("lead");
+            setDealAmount("");
+            setDealNextAction("");
+            setDealFollowUpDate("");
+            setDealNotes("");
+            setCreatingDeal(false);
+          }).catch((error) => {
+            Alert.alert("Deal not saved", error instanceof Error ? error.message : "Try again.");
+          }).finally(() => setDealBusy(false));
+        }}
+      />
+    </View>}
+
+    {visibleDeals.length === 0
+      ? <EmptyState title="No deals yet" body="Create a deal when a customer shows buying intent, then keep its next action and stage current." />
+      : visibleDeals.map((deal) => {
+        const pendingCreate = pendingDealCreateIds.has(deal.id);
+        const conflictVersion = stageConflicts.get(deal.id);
+        const conflictRefreshed = Boolean(conflictVersion && deal.updatedAt && conflictVersion !== deal.updatedAt);
+        const pendingStage = pendingStageDealIds.has(deal.id) || Boolean(conflictVersion && !conflictRefreshed);
+        const localDeal = localDealIds.has(deal.id);
+        const knownStage = isDealStage(deal.stage) ? deal.stage : null;
+        const followUpStatus = dealFollowUpStatus(deal.followUpAt, deal.stage);
+        return <View key={deal.id} className="gap-3 rounded-2xl border border-line bg-white p-4">
+          <View className="flex-row items-start justify-between gap-3">
+            <View className="flex-1">
+              <Text className="text-lg font-black text-ink">{deal.title}</Text>
+              <Text className="mt-1 font-bold text-muted">{deal.customerName}</Text>
+            </View>
+            <View className={classes("rounded-full px-3 py-1.5", deal.stage === "won" ? "bg-[#DFF3E9]" : deal.stage === "lost" ? "bg-[#FCEDEA]" : "bg-[#E8EEF9]")}>
+              <Text className={classes("text-[10px] font-black uppercase tracking-wider", deal.stage === "won" ? "text-success" : deal.stage === "lost" ? "text-danger" : "text-field")}>{stageName(deal.stage)}</Text>
+            </View>
+          </View>
+          <View className="flex-row justify-between border-y border-line py-3">
+            <View><Text className="text-[10px] font-black uppercase tracking-wider text-muted">VALUE</Text><Text className="mt-1 font-black text-ink">{deal.amount === null ? "Not entered" : `PKR ${deal.amount.toLocaleString("en-PK")}`}</Text></View>
+            <View className="items-end">
+              <Text className="text-[10px] font-black uppercase tracking-wider text-muted">FOLLOW UP</Text>
+              <Text className={classes("mt-1 font-black", followUpStatus === "Overdue" ? "text-danger" : followUpStatus ? "text-[#9A6700]" : "text-ink")}>
+                {followUpStatus || formatDate(deal.followUpAt)}
+              </Text>
+              {followUpStatus ? <Text className="mt-0.5 text-[10px] font-bold text-muted">{formatDate(deal.followUpAt)}</Text> : null}
+            </View>
+          </View>
+          {deal.nextAction ? <Text className="leading-5 text-ink"><Text className="font-black">Next:</Text> {deal.nextAction}</Text> : null}
+          {deal.notes ? <Text className="text-xs leading-5 text-muted">{deal.notes}</Text> : null}
+          {conflictVersion && <InfoNotice
+            title={conflictRefreshed ? "Stage changed at the office" : "Update this deal first"}
+            body={conflictRefreshed
+              ? "The latest office version is shown. Choose the stage again to replace the stale saved change."
+              : "Tap Update at the top while online, then choose the stage again."}
+          />}
+          {localDeal ? <InfoNotice title={pendingCreate ? "Deal saved on this phone" : "Deal reached the office"} body="Stage changes will unlock after the official deal record downloads." /> : <>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={conflictVersion && !conflictRefreshed
+                ? `Update Team before changing stage for ${deal.title}`
+                : pendingStage
+                  ? `Stage change for ${deal.title} is waiting to sync`
+                  : `Change stage for ${deal.title}`}
+              accessibilityState={{ disabled: pendingStage }}
+              className="min-h-12 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
+              disabled={pendingStage}
+              onPress={() => setStageEditorId((current) => current === deal.id ? "" : deal.id)}
+            ><Text className="font-black text-field">{conflictVersion && !conflictRefreshed ? "Update Team to continue" : pendingStage ? "Stage waiting to sync" : stageEditorId === deal.id ? "Close stages" : conflictVersion ? "Choose stage again" : "Change stage"}</Text></TouchableOpacity>
+            {!pendingStage && stageEditorId === deal.id && <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
+              {dealStages.map((stage) => <Choice
+                key={stage}
+                label={stageName(stage)}
+                selected={knownStage === stage}
+                onPress={() => {
+                  if (stage === knownStage || updatingDealId) return;
+                  setUpdatingDealId(deal.id);
+                  onUpdateDealStage(deal.id, stage).then(() => {
+                    setStageEditorId("");
+                  }).catch((error) => {
+                    Alert.alert("Stage not saved", error instanceof Error ? error.message : "Try again.");
+                  }).finally(() => setUpdatingDealId("") );
+                }}
+              />)}
+              {updatingDealId === deal.id && <Text className="w-full text-xs font-bold text-muted">Saving stage safely…</Text>}
+            </View>}
+          </>}
+        </View>;
+      })}
+  </>;
+}
+
 function SyncQueue({
   queue,
   locationPending,
@@ -2481,10 +3524,11 @@ function SyncQueue({
   activity,
   online,
   lastSyncAt,
+  officeSyncError,
+  checking,
   onRetry,
   onRetryItem,
   onClearRejectedLocations,
-  onRefresh,
 }: {
   queue: QueueItem[];
   locationPending: number;
@@ -2493,14 +3537,15 @@ function SyncQueue({
   activity: ServerActivity[];
   online: boolean | null;
   lastSyncAt: string;
+  officeSyncError: string;
+  checking: boolean;
   onRetry: () => void;
   onRetryItem: (id: string) => void;
   onClearRejectedLocations: () => void;
-  onRefresh: () => void;
 }) {
   const [filter, setFilter] = useState<"all" | "places" | "sales">("all");
   const pendingOperations = queue.filter((item) => item.state !== "confirmed");
-  const failed = pendingOperations.filter((item) => item.state === "failed").length + locationRejected + (locationSyncError ? 1 : 0);
+  const failed = pendingOperations.filter((item) => item.state === "failed").length + locationRejected + (locationSyncError ? 1 : 0) + (officeSyncError ? 1 : 0);
   const authFailed = pendingOperations.some((item) => item.errorKind === "auth");
   const syncing = pendingOperations.some((item) => item.state === "syncing");
   const pending = pendingOperations.length + locationPending + locationRejected;
@@ -2520,7 +3565,7 @@ function SyncQueue({
     <View className="gap-2">
       <Eyebrow>ACTIVITY & SYNC</Eyebrow>
       <ScreenTitle>Your field timeline</ScreenTitle>
-      <BodyText>See what happened today, what reached the office, and which new places are waiting for admin review.</BodyText>
+      <BodyText>See recent field work, what reached the office, and the latest admin decisions on new places.</BodyText>
     </View>
     <View className="overflow-hidden rounded-2xl bg-ink p-5">
       <View className="flex-row items-start justify-between gap-4">
@@ -2532,6 +3577,8 @@ function SyncQueue({
           <Text className="mt-2 leading-5 text-[#C9D3E6]">
             {authFailed
               ? "Your session expired. Saved work is safe—open Profile, sign out, then sign in with the same account."
+              : officeSyncError
+                ? `The latest office activity could not be checked. ${officeSyncError}`
               : failed > 0
               ? `${failed} ${failed === 1 ? "upload needs" : "uploads need"} attention. Open the details below to retry.`
               : lastSyncAt
@@ -2543,15 +3590,10 @@ function SyncQueue({
           <Text className="font-black text-white">{pending}</Text>
         </View>
       </View>
-      <View className="mt-5 flex-row gap-2">
-        <View className="flex-1"><Button label={syncing ? "Sending…" : "Sync now"} onPress={onRetry} disabled={syncing || online === false} /></View>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh activity from office" className="min-h-12 flex-1 items-center justify-center rounded-xl border border-[#7081A8] px-3" onPress={onRefresh}>
-          <Text className="font-black text-white">Refresh activity</Text>
-        </TouchableOpacity>
-      </View>
+      <View className="mt-5"><Button label={syncing || checking ? "Checking & sending…" : "Check & send now"} onPress={onRetry} disabled={syncing || checking || online === false} /></View>
     </View>
     <View className="flex-row justify-between border-y border-line py-4">
-      <Stat value={`${activity.length}`} label="Today’s events" />
+      <Stat value={`${activity.length}`} label="Recent activity" />
       <Stat value={`${awaitingReview}`} label="Awaiting admin" />
       <Stat value={`${approvedPlaces}`} label="Places approved" />
     </View>
@@ -2620,7 +3662,7 @@ function SyncQueue({
                 {item.state === "syncing"
                   ? "Sending now…"
                   : item.state === "failed"
-                    ? item.errorKind === "validation" || item.errorKind === "auth" ? "Needs attention" : "Retry scheduled"
+                    ? item.retryable === false ? "Needs attention" : "Retry scheduled"
                     : "Queued safely on this phone"}
               </Text>
               {item.error && <Text className="mt-1 text-xs leading-4 text-muted">{item.error}</Text>}
@@ -2637,17 +3679,34 @@ function Profile({
   session,
   workState,
   trackingReady,
+  routePolicy,
+  backgroundRoute,
+  backgroundRouteBusy,
   pending,
   territoryMessage,
+  onEnableBackgroundRoute,
+  onDisableBackgroundRoute,
+  onOpenSettings,
   onLogout,
 }: {
   session: Session;
   workState: WorkState;
   trackingReady: boolean;
+  routePolicy: MobileOperationsPolicy;
+  backgroundRoute: BackgroundRouteStatus;
+  backgroundRouteBusy: boolean;
   pending: number;
   territoryMessage: string;
+  onEnableBackgroundRoute: () => void;
+  onDisableBackgroundRoute: () => void;
+  onOpenSettings: () => void;
   onLogout: () => void;
 }) {
+  const continuityState = backgroundRoute.enabled && backgroundRoute.permission === "granted"
+    ? workState === "active" && backgroundRoute.running ? "On now" : "Ready"
+    : backgroundRoute.enabled
+      ? "Needs permission"
+      : "Optional";
   return <>
     <ScreenTitle>Field profile</ScreenTitle>
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
@@ -2658,12 +3717,44 @@ function Profile({
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
       <Text className="text-xl font-black text-ink">Tracking & privacy</Text>
       <BodyText>
-        While FieldOPS is open during active work, it records the work route about once per minute and uploads offline points when a connection returns.
+        Route recording runs only during an active work session. Saved points upload automatically when a connection returns.
       </BodyText>
       <ProfileLine>Today: {workState.replace("_", " ")}</ProfileLine>
-      <ProfileLine>GPS tracking: {workState === "active" && trackingReady ? "Recording" : "Stopped"}</ProfileLine>
+      <ProfileLine>Phone location: {trackingReady ? "Ready" : "Needs attention"}</ProfileLine>
+      <ProfileLine>Work area: {territoryMessage}</ProfileLine>
+      <ProfileLine>Capture rule: check every {routePolicy.sampleIntervalSeconds} s and after about {routePolicy.distanceIntervalMeters} m of movement</ProfileLine>
+      <ProfileLine>Route quality: fixes weaker than about ±{routePolicy.maxAcceptedAccuracyMeters} m are left out of the drawn line</ProfileLine>
+      <ProfileLine>Route recording: {workState === "active" && trackingReady ? "Active" : "Stopped"}</ProfileLine>
       <ProfileLine>Records waiting: {pending}</ProfileLine>
-      <ProfileLine>Territory: {territoryMessage}</ProfileLine>
+    </View>
+    <View className="gap-3 rounded-[14px] border border-[#B7C7E6] bg-[#EEF3FB] p-[18px]">
+      <View className="flex-row items-start justify-between gap-3">
+        <View className="flex-1">
+          <Eyebrow>OPTIONAL CONTINUITY</Eyebrow>
+          <Text className="mt-1 text-xl font-black text-ink">Keep the route through screen lock</Text>
+        </View>
+        <View className={classes(
+          "rounded-full px-3 py-1.5",
+          backgroundRoute.enabled && backgroundRoute.permission === "granted" ? "bg-[#DFF3E9]" : "bg-white",
+        )}>
+          <Text className={classes(
+            "text-[10px] font-black uppercase tracking-wider",
+            backgroundRoute.enabled && backgroundRoute.permission === "granted" ? "text-success" : "text-muted",
+          )}>{continuityState}</Text>
+        </View>
+      </View>
+      <BodyText>
+        If you enable this, FieldOPS can keep recording while the screen is locked or another app is open. It starts only after Start work and stops at Finish session or sign out.
+      </BodyText>
+      {!backgroundRoute.supported
+        ? <InfoNotice title="Not supported here" body="Foreground route recording still works while FieldOPS is open. Test this feature in an installed production build, not Expo Go." />
+        : backgroundRoute.enabled && backgroundRoute.permission !== "granted"
+          ? <InfoNotice title="Permission changed" body="Allow Always or background location in phone settings, or turn this option off. Foreground work is not blocked." />
+          : null}
+      {backgroundRoute.enabled
+        ? <GhostButton dark label={backgroundRouteBusy ? "Updating…" : "Turn off screen-lock continuity"} disabled={backgroundRouteBusy} onPress={onDisableBackgroundRoute} />
+        : <Button label={backgroundRouteBusy ? "Checking permission…" : "Enable screen-lock continuity"} disabled={backgroundRouteBusy || !backgroundRoute.supported} onPress={onEnableBackgroundRoute} />}
+      {backgroundRoute.enabled && backgroundRoute.permission !== "granted" && <GhostButton dark label="Open phone settings" onPress={onOpenSettings} />}
     </View>
     <GhostButton dark label="Sign out" onPress={onLogout} />
   </>;
@@ -2673,11 +3764,13 @@ function Nav({ screen, pending, setScreen }: { screen: Screen; pending: number; 
   const items: { key: Screen; label: string; icon: string }[] = [
     { key: "today", label: "Today", icon: "●" },
     { key: "route", label: "Visits", icon: "⌖" },
-    { key: "order", label: "Order", icon: "▤" },
+    { key: "team", label: "Team", icon: "◆" },
     { key: "sync", label: "Activity", icon: "↻" },
     { key: "profile", label: "Profile", icon: "○" },
   ];
-  const selectedKey: Screen = screen === "visit" || screen === "new_visit" ? "route" : screen;
+  const selectedKey: Screen = screen === "visit" || screen === "new_visit"
+    ? "route"
+    : screen === "order" ? "today" : screen;
   return <View accessibilityRole="tablist" className="mx-3.5 mb-2 flex-row rounded-2xl border border-[#253652] bg-ink p-1.5">
     {items.map((item) => <TouchableOpacity
       key={item.key}
@@ -2715,15 +3808,17 @@ function Button({ label, onPress, disabled = false }: { label: string; onPress: 
   </TouchableOpacity>;
 }
 
-function GhostButton({ label, onPress, dark = false }: { label: string; onPress: () => void; dark?: boolean }) {
+function GhostButton({ label, onPress, dark = false, disabled = false }: { label: string; onPress: () => void; dark?: boolean; disabled?: boolean }) {
   return <TouchableOpacity
     accessibilityRole="button"
     accessibilityLabel={label}
     className={classes(
       "min-h-12 items-center justify-center rounded-[9px] border px-4 py-3",
       dark ? "border-ink" : "border-[#7081A8]",
+      disabled && "opacity-45",
     )}
     onPress={onPress}
+    disabled={disabled}
   >
     <Text className={classes("font-black", dark ? "text-ink" : "text-white")}>{label}</Text>
   </TouchableOpacity>;

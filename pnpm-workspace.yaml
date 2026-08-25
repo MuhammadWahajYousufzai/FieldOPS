@@ -8,4 +8,5 @@ allowBuilds:
   esbuild: true
   sharp: true
 overrides:
+  expo-modules-jsi: 57.0.5
   react-native-worklets: 0.10.1

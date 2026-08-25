@@ -11,6 +11,7 @@ export type LiveLocationPoint = {
   latitude: number;
   longitude: number;
   accuracy: number;
+  speed: number | null;
   source: string;
 };
 

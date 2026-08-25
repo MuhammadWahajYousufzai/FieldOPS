@@ -1,7 +1,9 @@
 import { Query } from "node-appwrite";
 import { createAdminTablesDb, createSessionAccount } from "@fieldops/appwrite/server";
+import { FIELD_SALESPERSON_ROLE, hasEffectiveRoleAssignment } from "./mobile-authorization";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
+type AdminTablesDb = ReturnType<typeof createAdminTablesDb>;
 
 export async function mobileActor(request: Request) {
   const header = request.headers.get("authorization") ?? "";
@@ -15,13 +17,41 @@ export async function mobileActor(request: Request) {
     if (status === 401) return null;
     throw error;
   }
-  const result = await createAdminTablesDb().listRows({
+  const db = createAdminTablesDb();
+  const employee = await activeSalespersonEmployeeForUser(user.$id, db);
+  return employee ? { user, employee, session } : null;
+}
+
+export async function activeSalespersonEmployeeForUser(userId: string, db: AdminTablesDb = createAdminTablesDb()) {
+  const result = await db.listRows({
     databaseId,
     tableId: "employees",
-    queries: [Query.equal("user_id", user.$id), Query.equal("status", "active"), Query.limit(1)],
+    queries: [Query.equal("user_id", userId), Query.equal("status", "active"), Query.limit(1)],
   });
   const employee = result.rows[0];
-  return employee ? { user, employee, session } : null;
+  if (!employee) return null;
+  return await employeeHasEffectiveRole(employee.$id, FIELD_SALESPERSON_ROLE, db)
+    ? employee
+    : null;
+}
+
+export async function employeeHasEffectiveRole(
+  employeeId: string,
+  roleCode: string,
+  db: AdminTablesDb = createAdminTablesDb(),
+) {
+  const role = (await db.listRows({
+    databaseId,
+    tableId: "roles",
+    queries: [Query.equal("code", roleCode), Query.equal("active", true), Query.limit(1)],
+  })).rows[0];
+  if (!role) return false;
+  const assignments = await db.listRows({
+    databaseId,
+    tableId: "employee_assignments",
+    queries: [Query.equal("employee_id", employeeId), Query.limit(100)],
+  });
+  return hasEffectiveRoleAssignment(assignments.rows, role.$id, Date.now());
 }
 
 export function workDate(date = new Date()) {
