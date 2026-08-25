@@ -1,7 +1,7 @@
 import { Query, type Models } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { requireManager } from "../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../lib/auth";
 import {
   isAppwriteConflict,
   managementAuditIdentity,
@@ -15,8 +15,8 @@ import { text } from "../../../../lib/mobile-auth";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
 export async function POST(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const employeeId = text(body.employeeId, 36), territoryId = text(body.territoryId, 36);
   if (!employeeId || !territoryId) return NextResponse.json({ error: "Salesperson and territory are required." }, { status: 400 });
@@ -75,8 +75,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const employeeId = text(body.employeeId, 36), territoryId = text(body.territoryId, 36);
   if (!employeeId || !territoryId) return NextResponse.json({ error: "Salesperson and territory are required." }, { status: 400 });

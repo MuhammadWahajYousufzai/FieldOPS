@@ -64,6 +64,10 @@ test("message and deal create replays require the same employee and payload", ()
   assert.equal(messageReplayMatches(message, expectedMessage), true);
   assert.equal(messageReplayMatches(message, { ...expectedMessage, employeeId: "emp_2" }), false);
   assert.equal(messageReplayMatches(message, { ...expectedMessage, body: "Different" }), false);
+  const managerExpected = { ...expectedMessage, senderRole: "manager", senderEmployeeId: null };
+  assert.equal(messageReplayMatches({ ...message, sender_role: "manager", sender_employee_id: null }, managerExpected), true);
+  assert.equal(messageReplayMatches({ ...message, sender_role: "manager", sender_employee_id: undefined }, managerExpected), true);
+  assert.equal(messageReplayMatches({ ...message, sender_role: "manager", sender_employee_id: "legacy_manager_employee" }, managerExpected), false);
 
   const parsed = validateDealCommand({
     action: "create",

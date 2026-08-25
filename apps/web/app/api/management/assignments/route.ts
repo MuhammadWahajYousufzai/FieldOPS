@@ -1,7 +1,7 @@
 import { Query } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { requireManager } from "../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../lib/auth";
 import {
   isAppwriteConflict,
   isAppwriteNotFound,
@@ -17,8 +17,8 @@ import { employeeHasTerritory, territoryAccessForEmployee } from "../../../../li
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
 export async function POST(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const outletId = text(body.outletId, 36), employeeId = text(body.employeeId, 36), date = text(body.workDate, 10) || workDate();
   if (!outletId || !employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -86,8 +86,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const routeId = text(body.routeId, 36);
   if (!routeId) return NextResponse.json({ error: "Route assignment is required." }, { status: 400 });

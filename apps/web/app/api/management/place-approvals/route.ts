@@ -3,7 +3,7 @@ import { ID, Query, type Models } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { hasRequiredVisitEvidence, MAX_PLACE_MARK_ACCURACY_METERS, parseTerritoryBoundary, pointInTerritory } from "@fieldops/domain";
-import { requireManager } from "../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../lib/auth";
 import { number, text } from "../../../../lib/mobile-auth";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
@@ -22,8 +22,8 @@ async function rollback(db: ReturnType<typeof createAdminTablesDb>, transactionI
 }
 
 export async function POST(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
 
   const body = await request.json().catch(() => ({}));
   const visitId = text(body.visitId, 36);

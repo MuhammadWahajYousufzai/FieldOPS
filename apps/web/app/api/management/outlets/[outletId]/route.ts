@@ -3,7 +3,7 @@ import { parseTerritoryBoundary, pointInTerritory } from "@fieldops/domain";
 import { ID, Query } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { requireManager } from "../../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../../lib/auth";
 import {
   isAppwriteConflict,
   isAppwriteNotFound,
@@ -16,8 +16,8 @@ import { text } from "../../../../../lib/mobile-auth";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
 export async function PATCH(request: Request, context: { params: Promise<{ outletId: string }> }) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
 
   const { outletId } = await context.params;
   const body = await request.json().catch(() => ({}));

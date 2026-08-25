@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { Query } from "node-appwrite";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { hasRequiredVisitEvidence, MAX_PLACE_MARK_ACCURACY_METERS, parseTerritoryBoundary, pointInTerritory } from "@fieldops/domain";
-import { requireManager } from "../../lib/auth";
+import { requireDashboardAdmin } from "../../lib/auth";
 import { workDate } from "../../lib/mobile-auth";
 import { operationalPolicyFromRow } from "../../lib/operational-policy";
 import { listAllRows } from "../../lib/table-data";
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
 export default async function ManagementPage() {
-  const actor = await requireManager();
+  const actor = await requireDashboardAdmin();
   if (!actor) redirect("/login");
   const db = createAdminTablesDb();
   const today = workDate();
@@ -45,7 +45,7 @@ export default async function ManagementPage() {
       ? [String(assignment.employee_id)]
       : []
   )));
-  const salespersonRows = employeeRows.filter((row) => salespersonIds.has(row.$id) && row.$id !== actor.employee.$id);
+  const salespersonRows = employeeRows.filter((row) => salespersonIds.has(row.$id));
   const allEmployeeLabels = new Map(employeeRows.map((row) => [row.$id, String(row.display_name)]));
   const employees = salespersonRows.map((row) => ({ id: row.$id, label: String(row.display_name) }));
   const teamEmployees: TeamDeskEmployee[] = salespersonRows.map((row) => ({

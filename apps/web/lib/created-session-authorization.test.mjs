@@ -3,18 +3,18 @@ import test from "node:test";
 
 import { authorizeCreatedSession } from "./created-session-authorization.ts";
 
-test("a created session is retained only after employee authorization succeeds", async () => {
+test("a created session is retained only after authorization succeeds", async () => {
   let revocations = 0;
-  const employee = { id: "employee-1" };
+  const actor = { user: { id: "admin-1" } };
   const result = await authorizeCreatedSession(
-    async () => employee,
+    async () => actor,
     async () => { revocations += 1; },
   );
-  assert.equal(result, employee);
+  assert.equal(result, actor);
   assert.equal(revocations, 0);
 });
 
-test("an unassigned account's newly created session is revoked", async () => {
+test("an unauthorized account's newly created session is revoked", async () => {
   let revocations = 0;
   const result = await authorizeCreatedSession(
     async () => null,
@@ -25,7 +25,7 @@ test("an unassigned account's newly created session is revoked", async () => {
 });
 
 test("a post-create authorization error still revokes the new session", async () => {
-  const authorizationError = new Error("employee lookup failed");
+  const authorizationError = new Error("admin label lookup failed");
   let revocations = 0;
   await assert.rejects(
     authorizeCreatedSession(

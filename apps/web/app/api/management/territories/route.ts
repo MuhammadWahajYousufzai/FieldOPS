@@ -3,7 +3,7 @@ import { parseTerritoryBoundary } from "@fieldops/domain";
 import { ID, Query } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { requireManager } from "../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../lib/auth";
 import {
   isAppwriteConflict,
   isAppwriteNotFound,
@@ -19,8 +19,8 @@ import { territoryBoundaryImpact } from "../../../../lib/territory-impact";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
 export async function POST(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const name = text(body.name, 128);
   const boundary = parseTerritoryBoundary(body.boundary);
@@ -117,8 +117,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const territoryId = text(body.territoryId, 36), boundary = parseTerritoryBoundary(body.boundary);
   if (!territoryId || !boundary) return NextResponse.json({ error: "Territory and a valid closed map boundary are required." }, { status: 400 });

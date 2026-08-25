@@ -2,7 +2,7 @@ import type { Models } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { parseTerritoryBoundary, pointInTerritory } from "@fieldops/domain";
-import { requireManager } from "../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../lib/auth";
 import {
   isAppwriteConflict,
   isAppwriteNotFound,
@@ -18,8 +18,8 @@ import { employeeHasTerritory, territoryAccessForEmployee } from "../../../../li
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
 export async function POST(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const code = text(body.code, 32).toUpperCase(), name = text(body.name, 160), address = text(body.address, 500);
   const latitude = number(body.latitude), longitude = number(body.longitude);

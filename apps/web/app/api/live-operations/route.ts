@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Query, type Models } from "node-appwrite";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { requireManager } from "../../../lib/auth";
+import { requireDashboardAdmin } from "../../../lib/auth";
 import { listAllRows, withTimeout } from "../../../lib/table-data";
 import type { LiveOperationsPayload } from "../../../lib/live-types";
 
@@ -10,8 +10,8 @@ const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
 export async function GET(request: Request) {
   try {
-    const actor = await withTimeout(requireManager(), 8_000, "Manager verification timed out");
-    if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 401 });
+    const actor = await withTimeout(requireDashboardAdmin(), 8_000, "Admin verification timed out");
+    if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 401 });
 
     const url = new URL(request.url);
     const date = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("date") ?? "") ? String(url.searchParams.get("date")) : "";

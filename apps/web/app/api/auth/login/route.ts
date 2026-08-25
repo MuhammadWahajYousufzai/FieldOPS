@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Models } from "node-appwrite";
 import { createAdminAccount, createAdminTablesDb, createAdminUsers } from "@fieldops/appwrite/server";
-import { managerForUser, SESSION_COOKIE } from "../../../../lib/auth";
+import { dashboardAdminForUser, SESSION_COOKIE } from "../../../../lib/auth";
 import { authorizeCreatedSession } from "../../../../lib/created-session-authorization";
 import { consumeCredentialAttempt } from "../../../../lib/credential-attempt-throttle";
 
@@ -67,12 +67,12 @@ export async function POST(request: Request) {
     const actor = await authorizeCreatedSession(
       async () => {
         const user = await users.get({ userId: session.userId });
-        return managerForUser(user);
+        return dashboardAdminForUser(user);
       },
       () => users.deleteSession({ userId: session.userId, sessionId: session.$id }),
     );
     if (!actor) {
-      return NextResponse.json({ error: "This account is not authorized for management access." }, { status: 403 });
+      return NextResponse.json({ error: "This Appwrite account does not have the admin label." }, { status: 403 });
     }
 
     const response = NextResponse.json({ ok: true });

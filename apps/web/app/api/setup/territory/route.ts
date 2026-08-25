@@ -2,14 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { ID, Permission, Query, Role } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { requireSuperAdmin } from "../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../lib/auth";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 const stableId = (prefix:string,value:string)=>`${prefix}_${createHash("sha256").update(value).digest("hex").slice(0,24)}`;
 const text = (value:unknown,max:number) => typeof value === "string" ? value.trim().slice(0,max) : "";
 
 export async function POST(request:Request){
-  const actor=await requireSuperAdmin();
+  const actor=await requireDashboardAdmin();
   if(!actor)return NextResponse.json({error:"You do not have permission to manage territories."},{status:403});
   const body=await request.json();
   const regionName=text(body.regionName,128),regionCode=text(body.regionCode,32).toUpperCase();

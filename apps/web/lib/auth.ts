@@ -1,8 +1,8 @@
 import { cookies, headers } from "next/headers";
 import { createSessionAccount } from "@fieldops/appwrite/server";
-import { Query } from "node-appwrite";
-import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { assignmentIsEffective, hasDashboardAdminLabel, isManagementRoleCode } from "./management-authorization";
+import { dashboardAdminForUser } from "./management-authorization";
+
+export { dashboardAdminForUser } from "./management-authorization";
 
 export const SESSION_COOKIE = `a_session_${process.env.APPWRITE_PROJECT_ID}`;
 
@@ -18,30 +18,8 @@ export async function currentUser() {
   }
 }
 
-export async function requireSuperAdmin() {
-  return requireManager();
-}
-
-export async function requireManager() {
+export async function requireDashboardAdmin() {
   const user = await currentUser();
   if (!user) return null;
-  return managerForUser(user);
-}
-
-export async function managerForUser(user: { $id: string; name: string; labels?: unknown }) {
-  if (!hasDashboardAdminLabel(user)) return null;
-  const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
-  const db = createAdminTablesDb();
-  const employeeResult = await db.listRows({ databaseId, tableId: "employees", queries: [Query.equal("user_id", user.$id), Query.limit(1)] });
-  const employee = employeeResult.rows[0];
-  if (!employee || employee.status !== "active") return null;
-  const assignmentResult = await db.listRows({ databaseId, tableId: "employee_assignments", queries: [Query.equal("employee_id", employee.$id), Query.limit(25)] });
-  const now = Date.now();
-  for (const assignment of assignmentResult.rows) {
-    const role = await db.getRow({ databaseId, tableId: "roles", rowId: String(assignment.role_id) });
-    if (role.active === true
-      && isManagementRoleCode(role.code)
-      && assignmentIsEffective(assignment, now)) return { user, employee, role };
-  }
-  return null;
+  return dashboardAdminForUser(user);
 }

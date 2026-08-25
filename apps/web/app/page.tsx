@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { Query } from "node-appwrite";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { hasRequiredVisitEvidence } from "@fieldops/domain";
-import { requireManager } from "../lib/auth";
+import { requireDashboardAdmin } from "../lib/auth";
 import { workDate } from "../lib/mobile-auth";
 import { operationalPolicyFromRow } from "../lib/operational-policy";
 import { listRowsResult } from "../lib/table-data";
@@ -30,7 +30,7 @@ function latestAttendanceByEmployee<T extends object>(rows: T[]) {
 }
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ date?: string; employee?: string }> }) {
-  const actor = await requireManager();
+  const actor = await requireDashboardAdmin();
   if (!actor) redirect("/login");
   const params = await searchParams;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(params.date ?? "") ? String(params.date) : workDate();
@@ -49,6 +49,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   ]);
   const [employeeResult, outletResult, routeResult, attendanceResult, visitResult, locationResult, orderResult, organizationResult] = initialResults;
   const employeeRows = employeeResult.rows, outletRows = outletResult.rows, routeRows = routeResult.rows;
+  const dashboardAdminEmployeeId = employeeRows.find((employee) => String(employee.user_id) === actor.user.$id)?.$id;
   const attendanceRows = attendanceResult.rows, rawVisitRows = visitResult.rows, locationRows = locationResult.rows, orderRows = orderResult.rows;
   const operationsPolicy = operationalPolicyFromRow(organizationResult.rows[0] as Record<string, unknown> | undefined);
   const evidenceResult = rawVisitRows.length > 0 ? await listRowsResult(db, databaseId, "visit_evidence", [], 5_000) : null;
@@ -124,7 +125,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       {dataErrors.length > 0 && <section className="mb-6 border-l-4 border-amber-600 bg-amber-50 p-4 text-amber-950" role="alert"><strong className="block">Some dashboard records could not be loaded.</strong><p className="mt-1 text-sm leading-6">The visible totals may be incomplete; an unavailable table is not being reported as zero. Refresh to retry: {dataErrors.map((result) => result.tableId.replaceAll("_", " ")).join(", ")}.</p><a className="mt-3 inline-flex font-black text-amber-950 underline decoration-2 underline-offset-4" href={`/?date=${date}&employee=${selectedEmployee}`}>Retry dashboard data</a></section>}
       <form className="mb-7 flex flex-col items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-end" method="get" id="reports">
         <label className={`${ui.label} sm:min-w-48`}>Date<input className={ui.input} type="date" name="date" defaultValue={date} /></label>
-        <label className={`${ui.label} sm:min-w-56`}>Salesperson<select className={ui.input} name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => employee.$id !== actor.employee.$id).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
+        <label className={`${ui.label} sm:min-w-56`}>Salesperson<select className={ui.input} name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => !dashboardAdminEmployeeId || employee.$id !== dashboardAdminEmployeeId).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
         <button className={ui.button}>View history</button>
       </form>
       <section className="mb-7 grid border-y border-slate-200 sm:grid-cols-2 xl:grid-cols-4" aria-label="Filtered totals">

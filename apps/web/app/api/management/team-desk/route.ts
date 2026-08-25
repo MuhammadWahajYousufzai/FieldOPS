@@ -1,7 +1,7 @@
 import { Query } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { requireManager } from "../../../../lib/auth";
+import { requireDashboardAdmin } from "../../../../lib/auth";
 import { stableOperationId } from "../../../../lib/mobile-write-idempotency";
 import {
   canonicalJson,
@@ -32,8 +32,8 @@ class ActiveSalespersonRequired extends Error {}
 class ActiveOutletRequired extends Error {}
 
 export async function POST(request: Request) {
-  const actor = await requireManager();
-  if (!actor) return NextResponse.json({ error: "Manager access is required." }, { status: 403 });
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const db = createAdminTablesDb();
 
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
 
 async function markSalespersonMessagesRead(
   db: ReturnType<typeof createAdminTablesDb>,
-  actor: NonNullable<Awaited<ReturnType<typeof requireManager>>>,
+  actor: NonNullable<Awaited<ReturnType<typeof requireDashboardAdmin>>>,
   body: Record<string, unknown>,
 ) {
   const employeeId = exactText(body.employeeId, 36);
@@ -135,7 +135,7 @@ async function markSalespersonMessagesRead(
 
 async function sendManagerMessage(
   db: ReturnType<typeof createAdminTablesDb>,
-  actor: NonNullable<Awaited<ReturnType<typeof requireManager>>>,
+  actor: NonNullable<Awaited<ReturnType<typeof requireDashboardAdmin>>>,
   body: Record<string, unknown>,
 ) {
   const employeeId = exactText(body.employeeId, 36);
@@ -143,11 +143,12 @@ async function sendManagerMessage(
   if (!employeeId) return NextResponse.json({ error: "Choose an active salesperson." }, { status: 400 });
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const command = parsed.value;
+  const senderEmployeeId = await employeeIdForUser(db, actor.user.$id);
   const expected = {
     ...command,
     employeeId,
     senderRole: "manager" as const,
-    senderEmployeeId: actor.employee.$id,
+    senderEmployeeId,
   };
   const existing = await messageByOperation(db, command.idempotencyKey);
   if (existing) return managerMessageReplayResponse(existing, expected);
@@ -184,7 +185,7 @@ async function sendManagerMessage(
         data: {
           employee_id: employeeId,
           sender_role: "manager",
-          sender_employee_id: actor.employee.$id,
+          ...(senderEmployeeId ? { sender_employee_id: senderEmployeeId } : {}),
           body: command.body,
           sent_at: now,
           idempotency_key: command.idempotencyKey,
@@ -230,7 +231,7 @@ async function sendManagerMessage(
 
 async function updateManagerContact(
   db: ReturnType<typeof createAdminTablesDb>,
-  actor: NonNullable<Awaited<ReturnType<typeof requireManager>>>,
+  actor: NonNullable<Awaited<ReturnType<typeof requireDashboardAdmin>>>,
   body: Record<string, unknown>,
 ) {
   const parsed = validateManagerContactCommand(body);
@@ -301,7 +302,7 @@ async function updateManagerContact(
 
 async function updateEmployeePhone(
   db: ReturnType<typeof createAdminTablesDb>,
-  actor: NonNullable<Awaited<ReturnType<typeof requireManager>>>,
+  actor: NonNullable<Awaited<ReturnType<typeof requireDashboardAdmin>>>,
   body: Record<string, unknown>,
 ) {
   const parsed = validateEmployeePhoneCommand(body);
@@ -367,7 +368,7 @@ async function updateEmployeePhone(
 
 async function updateDeal(
   db: ReturnType<typeof createAdminTablesDb>,
-  actor: NonNullable<Awaited<ReturnType<typeof requireManager>>>,
+  actor: NonNullable<Awaited<ReturnType<typeof requireDashboardAdmin>>>,
   body: Record<string, unknown>,
 ) {
   const parsed = validateDealCommand({ ...body, action: "update", idempotencyKey: body.operationId ?? body.idempotencyKey });
@@ -589,6 +590,19 @@ function managerReceiptId(operationId: string) {
 
 function managerCorrelationId(operationId: string) {
   return stableManagementId("corr", "manager-team-command", operationId);
+}
+
+async function employeeIdForUser(
+  db: ReturnType<typeof createAdminTablesDb>,
+  userId: string,
+) {
+  const rows = await db.listRows({
+    databaseId,
+    tableId: "employees",
+    queries: [Query.equal("user_id", userId), Query.limit(1)],
+    total: false,
+  });
+  return rows.rows[0]?.$id ?? null;
 }
 
 function exactText(value: unknown, maximum: number) {

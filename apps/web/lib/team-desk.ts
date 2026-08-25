@@ -201,12 +201,12 @@ export function validateEmployeePhoneCommand(input: Record<string, unknown>): Va
 
 export function messageReplayMatches(
   row: TeamDeskRow,
-  expected: TeamMessageCommand & { employeeId: string; senderRole: "manager" | "salesperson"; senderEmployeeId: string },
+  expected: TeamMessageCommand & { employeeId: string; senderRole: "manager" | "salesperson"; senderEmployeeId: string | null },
 ) {
   return String(row.idempotency_key ?? "") === expected.idempotencyKey
     && String(row.employee_id ?? "") === expected.employeeId
     && String(row.sender_role ?? "") === expected.senderRole
-    && String(row.sender_employee_id ?? "") === expected.senderEmployeeId
+    && (row.sender_employee_id ? String(row.sender_employee_id) : null) === expected.senderEmployeeId
     && String(row.body ?? "") === expected.body;
 }
 
