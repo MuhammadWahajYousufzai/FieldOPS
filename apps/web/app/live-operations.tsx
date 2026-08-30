@@ -1,6 +1,7 @@
 "use client";
 
 import { buildRouteGapConnectors, buildRouteSegments, isReliableRoutePoint, type RouteTrackingPolicy } from "@fieldops/domain";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LiveAttendance, LiveEmployee, LiveLocationPoint, LiveOperationsPayload } from "../lib/live-types";
 import { type MapPoint, OperationsMap, type RouteLine } from "./operations-map";
@@ -8,7 +9,10 @@ import { ui } from "./ui";
 
 const routeColors = ["#D8A629", "#2F75A8", "#B5523B", "#267057", "#75579B", "#CA7134"];
 const staleAfterMs = 150_000;
-const pollEveryMs = 15_000;
+// Mobile uploads begin immediately when connectivity is available. A short,
+// visibility-aware dashboard poll makes confirmed work appear to management
+// within a few seconds without polling from hidden tabs.
+const pollEveryMs = 5_000;
 const liveGpsCountEvent = "fieldops:live-gps-count";
 
 type ConnectionState = "updating" | "live" | "delayed" | "history";
@@ -19,6 +23,7 @@ type LiveOperationsProps = {
   selectedEmployee: string;
   pollingEnabled: boolean;
   generatedAt: string;
+  initialProgressRevision: string;
   staticPoints: MapPoint[];
   initialEmployees: LiveEmployee[];
   initialAttendance: LiveAttendance[];
@@ -43,12 +48,14 @@ export function LiveOperations({
   selectedEmployee,
   pollingEnabled,
   generatedAt,
+  initialProgressRevision,
   staticPoints,
   initialEmployees,
   initialAttendance,
   initialLocations,
   routePolicy,
 }: LiveOperationsProps) {
+  const router = useRouter();
   const [employees, setEmployees] = useState(initialEmployees);
   const [attendance, setAttendance] = useState(initialAttendance);
   const [locations, setLocations] = useState(initialLocations);
@@ -58,16 +65,20 @@ export function LiveOperations({
   const [clock, setClock] = useState(() => new Date(generatedAt).valueOf());
   const requestRunning = useRef(false);
   const backlogCursor = useRef("");
+  const latestReceivedAt = useRef(latestServerReceipt(initialLocations));
+  const progressRevision = useRef(initialProgressRevision);
 
   useEffect(() => {
     backlogCursor.current = "";
+    latestReceivedAt.current = latestServerReceipt(initialLocations);
+    progressRevision.current = initialProgressRevision;
     setEmployees(initialEmployees);
     setAttendance(initialAttendance);
     setLocations(initialLocations);
     setLastUpdatedAt(generatedAt);
     setConnection(pollingEnabled ? "updating" : "history");
     setRouteView("quality");
-  }, [date, generatedAt, initialAttendance, initialEmployees, initialLocations, pollingEnabled, selectedEmployee]);
+  }, [date, generatedAt, initialAttendance, initialEmployees, initialLocations, initialProgressRevision, pollingEnabled, selectedEmployee]);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent<number>(liveGpsCountEvent, { detail: locations.length }));
@@ -77,10 +88,6 @@ export function LiveOperations({
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  // Poll by server receipt time so an old point uploaded after reconnect is not
-  // hidden behind a newer device capture timestamp that is already on screen.
-  const latestReceivedAt = useMemo(() => locations.reduce((latest, point) => point.receivedAt > latest ? point.receivedAt : latest, ""), [locations]);
 
   useEffect(() => {
     if (!pollingEnabled) return;
@@ -93,13 +100,21 @@ export function LiveOperations({
       const timeout = window.setTimeout(() => controller.abort(), 8_000);
       try {
         const params = new URLSearchParams({ date, employee: selectedEmployee });
-        if (latestReceivedAt) params.set("since", latestReceivedAt);
+        if (latestReceivedAt.current) params.set("since", latestReceivedAt.current);
         if (backlogCursor.current) params.set("cursor", backlogCursor.current);
         const response = await fetch(`/api/live-operations?${params}`, { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error(`Live update returned ${response.status}`);
         const payload = await response.json() as LiveOperationsPayload;
         if (!active) return;
         backlogCursor.current = payload.nextCursor ?? "";
+        latestReceivedAt.current = payload.points.reduce(
+          (latest, point) => point.receivedAt > latest ? point.receivedAt : latest,
+          latestReceivedAt.current,
+        );
+        if (payload.progressRevision !== progressRevision.current) {
+          progressRevision.current = payload.progressRevision;
+          router.refresh();
+        }
         setEmployees(payload.employees);
         setAttendance(payload.attendance);
         setLocations((current) => mergeLocations(current, payload.points));
@@ -123,7 +138,7 @@ export function LiveOperations({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [date, latestReceivedAt, pollingEnabled, selectedEmployee]);
+  }, [date, pollingEnabled, router, selectedEmployee]);
 
   const employeeById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees]);
   const locationsByEmployee = useMemo(() => {
@@ -230,7 +245,7 @@ export function LiveOperations({
         </p>
       </div>
       <OperationsMap points={mapPoints} routes={routes} />
-      <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500"><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-blue-700" /> Assigned visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-emerald-700" /> Completed visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Latest reliable GPS</span><span className="inline-flex items-center gap-2"><i className="w-7 border-t-2 border-dashed border-slate-500" /> Estimated GPS gap</span>{pollingEnabled && <small className="sm:ml-auto">Checks for new server-saved GPS every 15 seconds</small>}</div>
+      <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500"><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-blue-700" /> Assigned visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-emerald-700" /> Completed visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Latest reliable GPS</span><span className="inline-flex items-center gap-2"><i className="w-7 border-t-2 border-dashed border-slate-500" /> Estimated GPS gap</span>{pollingEnabled && <small className="sm:ml-auto">Checks confirmed GPS and progress every {pollEveryMs / 1_000} seconds</small>}</div>
     </article>
     <aside className="self-start rounded-2xl bg-[#14213D] p-6 text-white"><p className="text-[11px] font-black uppercase tracking-[0.13em] text-slate-400">Workday status</p><h2 className="my-1 text-2xl font-black tracking-tight text-white">{date}</h2><ul className="my-6 list-none p-0">{attendance.map((record) => {
       const points = locationsByEmployee.get(record.employeeId) ?? [];
@@ -265,6 +280,10 @@ function mergeLocations(current: LiveLocationPoint[], additions: LiveLocationPoi
   const byId = new Map(current.map((point) => [point.id, point]));
   for (const point of additions) byId.set(point.id, point);
   return [...byId.values()].sort(compareLocationPoints);
+}
+
+function latestServerReceipt(points: readonly LiveLocationPoint[]) {
+  return points.reduce((latest, point) => point.receivedAt > latest ? point.receivedAt : latest, "");
 }
 
 function compareLocationPoints(a: LiveLocationPoint, b: LiveLocationPoint) {

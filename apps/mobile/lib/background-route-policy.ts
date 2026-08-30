@@ -26,6 +26,22 @@ export function routePointFromLocation(location: RouteLocationLike): RouteTrackP
   };
 }
 
+/** Native providers should deliver fixes without a movement gate; the shared
+ * route policy applies the time cadence and quality filters consistently on
+ * both platforms. This matters on iOS, where foreground timeInterval is not
+ * used and a non-zero distance filter can otherwise suppress 15-second fixes.
+ */
+export function routeLocationCadence(rawPolicy: RouteTrackingPolicy) {
+  const policy = normalizeRouteTrackingPolicy(rawPolicy);
+  const interval = policy.sampleIntervalSeconds * 1_000;
+  return {
+    timeInterval: interval,
+    distanceInterval: 0,
+    deferredUpdatesInterval: interval,
+    deferredUpdatesDistance: 0,
+  } as const;
+}
+
 /**
  * Expo can deliver several background fixes in one callback. Sort that batch,
  * then apply the same accuracy, drift, speed, and heartbeat policy used by the

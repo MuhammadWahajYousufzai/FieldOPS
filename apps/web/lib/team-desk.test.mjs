@@ -147,6 +147,7 @@ test("large commands use a bounded digest receipt without weakening replay check
 test("manager contact is single-organization contact data, not a tenant selector", () => {
   const expectedUpdatedAt = "2026-08-25T08:00:00.000Z";
   assert.equal(validateManagerContactCommand({ operationId: "contact_1", name: "Sales Manager", phone: "+92 300 1234567", expectedUpdatedAt }).ok, true);
+  assert.equal(validateManagerContactCommand({ operationId: "contact_screenshot", name: "Danish Hayat", phone: "+923332339557", whatsapp: "+923332339557", expectedUpdatedAt }).ok, true);
   assert.equal(validateManagerContactCommand({ operationId: "contact_2", name: "Sales Manager", expectedUpdatedAt }).ok, false);
   assert.equal(validateManagerContactCommand({ operationId: "contact_3", name: "Sales Manager", phone: "invalid-number", expectedUpdatedAt }).ok, false);
   assert.equal(validateManagerContactCommand({ operationId: "contact_4", name: "Sales Manager", phone: "+92 300 1234567" }).ok, false);

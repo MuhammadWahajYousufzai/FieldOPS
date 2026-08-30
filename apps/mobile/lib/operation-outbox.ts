@@ -192,8 +192,8 @@ export function canAttemptOutboxRecord(
   { force = false, nowMs = Date.now() }: { force?: boolean; nowMs?: number } = {},
 ) {
   if (!record.operation || record.state === "confirmed" || record.state === "syncing") return false;
-  if (force) return true;
   if (record.state === "failed" && record.retryable === false) return false;
+  if (force) return true;
   if (!record.nextAttemptAt) return true;
   const nextAttempt = new Date(record.nextAttemptAt).valueOf();
   return !Number.isFinite(nextAttempt) || nextAttempt <= nowMs;
@@ -235,6 +235,20 @@ export function resumeAuthFailedOutboxRecords<RecordType extends OutboxRecord>(
         retryable: undefined,
         nextAttemptAt: undefined,
       }
+      : record
+  ));
+}
+
+/** A session can end after a durable item enters syncing but before its request
+ * finishes. The same employee's next session resumes it without requiring an
+ * app restart; other employees' protected queues remain untouched. */
+export function resumeInterruptedOutboxRecords<RecordType extends OutboxRecord>(
+  records: readonly RecordType[],
+  employeeId: string,
+) {
+  return records.map((record) => (
+    record.employeeId === employeeId && record.state === "syncing"
+      ? { ...record, state: "pending" as const }
       : record
   ));
 }

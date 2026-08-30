@@ -115,8 +115,8 @@ export function canAttemptLocationItem(
   { force = false, nowMs = Date.now() }: { force?: boolean; nowMs?: number } = {},
 ) {
   if (item.syncRejectedAt || item.syncAuthPausedAt) return false;
-  if (force) return true;
   if (item.syncRetryable === false) return false;
+  if (force) return true;
   if (!item.nextSyncAttemptAt) return true;
   const nextAttempt = new Date(item.nextSyncAttemptAt).valueOf();
   return !Number.isFinite(nextAttempt) || nextAttempt <= nowMs;

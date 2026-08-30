@@ -4,6 +4,7 @@ import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { requireDashboardAdmin } from "../../../lib/auth";
 import { listAllRows, withTimeout } from "../../../lib/table-data";
 import type { LiveOperationsPayload } from "../../../lib/live-types";
+import { liveProgressRevision } from "../../../lib/live-progress";
 
 export const dynamic = "force-dynamic";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
@@ -32,14 +33,22 @@ export async function GET(request: Request) {
     // captured much earlier after reconnecting; captured_at would skip them.
     const locationQueries = [Query.equal("work_date", date), ...employeeFilter, ...(since ? [Query.greaterThanEqual("received_at", since)] : []), ...(near ? [Query.distanceLessThan("coordinates", near, radius)] : []), Query.orderAsc("received_at")];
     const db = createAdminTablesDb();
-    const [employeeRows, attendanceRows, locationRows] = await withTimeout(Promise.all([
+    const [employeeRows, attendanceRows, locationRows, routeProgress, visitProgress, orderProgress] = await withTimeout(Promise.all([
       listAllRows(db, databaseId, "employees", [Query.equal("status", "active")], 500),
       listAllRows(db, databaseId, "attendance_records", [Query.equal("work_date", date), ...employeeFilter], 500),
       listLocationRows(db, locationQueries, cursor, 2_000),
+      latestProgressRow(db, "route_assignments", [Query.equal("work_date", date), ...employeeFilter]),
+      latestProgressRow(db, "visits", [Query.equal("work_date", date), Query.equal("status", "completed"), ...employeeFilter]),
+      latestProgressRow(db, "orders", [Query.equal("work_date", date), ...employeeFilter]),
     ]), 8_000, "Live location query timed out");
 
     const payload: LiveOperationsPayload = {
       serverTime: new Date().toISOString(),
+      progressRevision: liveProgressRevision([
+        { name: "routes", rows: routeProgress.rows, total: routeProgress.total },
+        { name: "visits", rows: visitProgress.rows, total: visitProgress.total },
+        { name: "orders", rows: orderProgress.rows, total: orderProgress.total },
+      ]),
       ...(locationRows.length === 2_000 ? { nextCursor: locationRows.at(-1)!.$id } : {}),
       employees: employeeRows.map((row) => ({ id: row.$id, name: String(row.display_name ?? "Salesperson") })),
       attendance: latestAttendanceByEmployee(attendanceRows).map((row) => ({
@@ -69,6 +78,18 @@ export async function GET(request: Request) {
     console.error("Could not refresh live FieldOPS locations", error);
     return NextResponse.json({ error: "Live locations are temporarily delayed. The last confirmed positions remain visible." }, { status: 503, headers: { "Cache-Control": "private, no-store, max-age=0" } });
   }
+}
+
+function latestProgressRow(
+  db: ReturnType<typeof createAdminTablesDb>,
+  tableId: "route_assignments" | "visits" | "orders",
+  queries: string[],
+) {
+  return db.listRows({
+    databaseId,
+    tableId,
+    queries: [...queries, Query.orderDesc("$updatedAt"), Query.limit(1)],
+  });
 }
 
 async function listLocationRows(

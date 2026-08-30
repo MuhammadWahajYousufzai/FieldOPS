@@ -68,29 +68,13 @@ export async function PATCH(request: Request) {
     };
     const operationKey = managementOperationKey(body.operationId, "operations.policy", organization.$id, expectedUpdatedAt, policy);
     const { auditId, correlationId } = managementAuditIdentity("operations.policy_updated", organization.$id, operationKey);
-    const update = await db.updateRows({
+    await db.updateRow({
       databaseId,
       tableId: "organizations",
+      rowId: organization.$id,
       transactionId: transaction.$id,
       data,
-      queries: [
-        Query.equal("$id", organization.$id),
-        Query.equal("$updatedAt", organization.$updatedAt),
-      ],
     });
-    if (update.rows.length === 0) {
-      await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
-      const current = await getActiveOrganization(db).catch(() => null);
-      if (current && operationalPolicyMatches(current, policy)) {
-        return NextResponse.json({
-          ok: true,
-          policy: operationalPolicyFromRow(current),
-          changed: false,
-          replayed: true,
-        });
-      }
-      return policyConflictResponse();
-    }
     await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId: transaction.$id, data: {
       actor_user_id: actor.user.$id,
       action: "operations.policy_updated",

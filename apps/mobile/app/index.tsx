@@ -59,6 +59,7 @@ import {
   stopBackgroundRouteTracking,
   type BackgroundRouteStatus,
 } from "../lib/background-location";
+import { networkSyncMode, shouldAttemptImmediateUpload } from "../lib/automatic-sync";
 import { fetchWithTimeout, retryAfterDelayMs } from "../lib/network";
 import {
   appendUniqueOutboxRecord,
@@ -67,9 +68,13 @@ import {
   normalizeRestoredOutbox,
   operationRetryDecision,
   resumeAuthFailedOutboxRecords,
+  resumeInterruptedOutboxRecords,
   selectOutboxCandidates,
   type DurableOutboxController,
 } from "../lib/operation-outbox";
+import {
+  routeLocationCadence,
+} from "../lib/background-route-policy";
 import {
   clearSecureMobileSession,
   readSecureMobileSession,
@@ -682,6 +687,7 @@ function FieldOpsApp() {
   const permissionPrompted = useRef(false);
   const lastCapturedRoutePointRef = useRef<RouteTrackPoint | null>(null);
   const routeCapturePromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const networkOnlineRef = useRef<boolean | null>(null);
 
   if (!durableQueueControllerRef.current) {
     durableQueueControllerRef.current = createDurableOutboxController<QueueItem>({
@@ -709,6 +715,8 @@ function FieldOpsApp() {
     [queue, session?.employee.id],
   );
   const pending = employeeQueue.filter((item) => item.state === "failed" || item.state === "pending" || item.state === "syncing").length + locationPending + locationRejected;
+  const syncing = manualSyncing || employeeQueue.some((item) => item.state === "syncing");
+  const needsSyncAttention = employeeQueue.filter((item) => item.state === "failed" && item.retryable === false).length + locationRejected;
   const pendingVisitOutletIds = useMemo(() => new Set(employeeQueue.flatMap((item) => {
     if (item.state === "confirmed") return [];
     const outletId = visitSubmissionOutletId(item.operation);
@@ -959,6 +967,11 @@ function FieldOpsApp() {
         lastCapturedRoutePointRef.current = candidate;
         if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return;
         await refreshLocationCount();
+        if (shouldAttemptImmediateUpload(networkOnlineRef.current)) {
+          void flushLocationQueue(authenticatedSession.employee.id, authenticatedSession.token)
+            .then(() => sessionIsCurrent(authenticatedSession, sessionEpoch) ? refreshLocationCount() : undefined)
+            .catch(() => undefined);
+        }
       }).catch((error) => {
         if (!cancelled) setLocationSyncError(error instanceof Error ? error.message : "Route point could not be saved on this phone.");
       });
@@ -966,10 +979,11 @@ function FieldOpsApp() {
 
     const startTracking = async () => {
       try {
+        const cadence = routeLocationCadence(operationsPolicy);
         const started = await Location.watchPositionAsync({
           accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: operationsPolicy.sampleIntervalSeconds * 1_000,
-          distanceInterval: operationsPolicy.distanceIntervalMeters,
+          timeInterval: cadence.timeInterval,
+          distanceInterval: cadence.distanceInterval,
         }, receiveLocation);
         if (cancelled) started.remove();
         else subscription = started;
@@ -1010,11 +1024,14 @@ function FieldOpsApp() {
     });
     const networkSubscription = NetInfo.addEventListener((state) => {
       const online = Boolean(state.isConnected && state.isInternetReachable !== false);
+      const mode = networkSyncMode(networkOnlineRef.current, online);
+      networkOnlineRef.current = online;
       setNetworkOnline(online);
-      if (online) {
+      if (mode !== "none") {
+        const force = mode === "force";
         Promise.all([
-          syncOperations(),
-          flushLocationQueue(session.employee.id, session.token),
+          syncOperations({ force }),
+          flushLocationQueue(session.employee.id, session.token, { force }),
         ]).then(() => refreshLocationCount()).catch(() => undefined);
         refreshPermissions(false).catch(() => undefined);
         refreshContext(false).catch(() => undefined);
@@ -1363,11 +1380,15 @@ function FieldOpsApp() {
     const existing = findEquivalentOutboxRecord(queueRef.current, item);
     if (existing) {
       await durableQueueControllerRef.current!.persistCurrent();
-      if (existing.state !== "confirmed") setTimeout(() => syncOperations().catch(() => undefined), 0);
+      if (existing.state !== "confirmed" && shouldAttemptImmediateUpload(networkOnlineRef.current)) {
+        setTimeout(() => syncOperations().catch(() => undefined), 0);
+      }
       return existing;
     }
     await setQueueDurably((items) => appendUniqueOutboxRecord(items, item));
-    setTimeout(() => syncOperations().catch(() => undefined), 0);
+    if (shouldAttemptImmediateUpload(networkOnlineRef.current)) {
+      setTimeout(() => syncOperations().catch(() => undefined), 0);
+    }
     return item;
   }
 
@@ -1489,7 +1510,10 @@ function FieldOpsApp() {
     setOfficeSyncError("");
     permissionPrompted.current = false;
     setScreen("today");
-    setQueueDurably((items) => resumeAuthFailedOutboxRecords(items, result.employee.id))
+    setQueueDurably((items) => resumeAuthFailedOutboxRecords(
+      resumeInterruptedOutboxRecords(items, result.employee.id),
+      result.employee.id,
+    ))
       .then(() => syncOperations())
       .catch((error) => setOfficeSyncError(error instanceof Error ? error.message : "Saved work could not resume after sign-in."));
     resumeLocationQueueAfterAuthentication(result.employee.id)
@@ -2121,6 +2145,7 @@ function FieldOpsApp() {
       setLocationRejected(0);
       setLocationSyncError("");
       setBackgroundRoute(defaultBackgroundRouteStatus);
+      networkOnlineRef.current = null;
       setNetworkOnline(null);
       setRefreshing(false);
       setScreen("today");
@@ -2170,6 +2195,7 @@ function FieldOpsApp() {
     setLocationRejected(0);
     setLocationSyncError("");
     setBackgroundRoute(defaultBackgroundRouteStatus);
+    networkOnlineRef.current = null;
     setNetworkOnline(null);
     setRefreshing(false);
     setTerritoryPolicy(unrestrictedTerritoryPolicy);
@@ -2211,6 +2237,9 @@ function FieldOpsApp() {
           <Header
             screen={screen}
             pending={pending}
+            online={networkOnline}
+            syncing={syncing}
+            needsAttention={needsSyncAttention}
             refreshing={refreshing}
             onSync={() => setScreen("sync")}
             onRefresh={() => refreshContext()}
@@ -2461,17 +2490,46 @@ function PermissionRow({ label, ready, later = false }: { label: string; ready: 
 function Header({
   screen,
   pending,
+  online,
+  syncing,
+  needsAttention,
   refreshing,
   onSync,
   onRefresh,
 }: {
   screen: Screen;
   pending: number;
+  online: boolean | null;
+  syncing: boolean;
+  needsAttention: number;
   refreshing: boolean;
   onSync: () => void;
   onRefresh: () => void;
 }) {
   const section = screen === "sync" ? "Activity" : screen === "team" ? "Team" : screen === "profile" ? "Profile" : "Field work";
+  const syncLabel = needsAttention > 0
+    ? "Check"
+    : online === false
+      ? pending > 0 ? `${pending} safe` : "Offline"
+      : syncing
+        ? "Sending"
+        : pending > 0
+          ? `${pending} queued`
+          : online === null ? "Checking" : "Live";
+  const syncBackgroundClass = needsAttention > 0
+    ? "bg-[#FCEDEA]"
+    : online === false
+      ? "bg-[#FFF1D0]"
+      : syncing || online === null
+        ? "bg-[#E8EEF9]"
+        : pending > 0 ? "bg-[#FFF1D0]" : "bg-[#DFF3E9]";
+  const syncTextClass = needsAttention > 0
+    ? "text-danger"
+    : online === false
+      ? "text-[#805C00]"
+      : syncing || online === null
+        ? "text-field"
+        : pending > 0 ? "text-[#805C00]" : "text-success";
   return <View className="flex-row items-center gap-2">
     <View className="min-w-0 flex-1 flex-row items-center gap-2.5">
       <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-ink">
@@ -2493,11 +2551,11 @@ function Header({
       </TouchableOpacity>
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel={`Open activity. ${pending} records pending`}
-        className="min-h-11 min-w-11 items-center justify-center rounded-full bg-[#FFF1D0] px-2"
+        accessibilityLabel={`Open activity. Automatic upload status: ${syncLabel}`}
+        className={classes("min-h-11 min-w-11 items-center justify-center rounded-full px-2", syncBackgroundClass)}
         onPress={onSync}
       >
-        <Text className="text-[11px] font-black text-[#805C00]">{pending > 0 ? `${pending} wait` : "Saved"}</Text>
+        <Text className={classes("text-[11px] font-black", syncTextClass)}>{syncLabel}</Text>
       </TouchableOpacity>
     </View>
   </View>;
@@ -3722,7 +3780,8 @@ function Profile({
       <ProfileLine>Today: {workState.replace("_", " ")}</ProfileLine>
       <ProfileLine>Phone location: {trackingReady ? "Ready" : "Needs attention"}</ProfileLine>
       <ProfileLine>Work area: {territoryMessage}</ProfileLine>
-      <ProfileLine>Capture rule: check every {routePolicy.sampleIntervalSeconds} s and after about {routePolicy.distanceIntervalMeters} m of movement</ProfileLine>
+      <ProfileLine>Capture rule: save a reliable GPS fix about every {routePolicy.sampleIntervalSeconds} s</ProfileLine>
+      <ProfileLine>Map cleanup: ignore movement smaller than about {routePolicy.distanceIntervalMeters} m</ProfileLine>
       <ProfileLine>Route quality: fixes weaker than about ±{routePolicy.maxAcceptedAccuracyMeters} m are left out of the drawn line</ProfileLine>
       <ProfileLine>Route recording: {workState === "active" && trackingReady ? "Active" : "Stopped"}</ProfileLine>
       <ProfileLine>Records waiting: {pending}</ProfileLine>

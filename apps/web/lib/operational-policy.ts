@@ -69,11 +69,11 @@ export function operationalPolicyMatches(
 
 export const preciseOperationalPolicy: OperationalPolicy = {
   ...DEFAULT_ROUTE_TRACKING_POLICY,
-  sampleIntervalSeconds: 10,
+  sampleIntervalSeconds: 15,
   distanceIntervalMeters: 5,
   maxAcceptedAccuracyMeters: 25,
   stationaryJitterMeters: 12,
   segmentGapMinutes: 3,
-  syncIntervalSeconds: 10,
+  syncIntervalSeconds: 15,
   updatedAt: "",
 };

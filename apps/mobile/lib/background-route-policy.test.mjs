@@ -4,6 +4,7 @@ import test from "node:test";
 import { DEFAULT_ROUTE_TRACKING_POLICY } from "../../../packages/domain/src/index.ts";
 import {
   backgroundSessionIsCurrent,
+  routeLocationCadence,
   routePointFromLocation,
   secureBackgroundTokenForEmployee,
   selectBackgroundRouteLocations,
@@ -14,7 +15,7 @@ const point = (timestamp, latitude, longitude, accuracy = 8, speed = null) => ({
   coords: { latitude, longitude, accuracy, speed },
 });
 
-test("background batches use the route policy and retain the latest accepted point", () => {
+test("background batches keep each due reliable raw fix", () => {
   const start = Date.parse("2026-08-25T08:00:00.000Z");
   const weak = point(start + 15_000, 24.8208, 67.0313, 82);
   const moved = point(start + 30_000, 24.82115, 67.0313);
@@ -27,8 +28,8 @@ test("background batches use the route policy and retain the latest accepted poi
     DEFAULT_ROUTE_TRACKING_POLICY,
   );
 
-  assert.deepEqual(result.accepted, [moved]);
-  assert.equal(result.lastAccepted?.capturedAt, new Date(moved.timestamp).toISOString());
+  assert.deepEqual(result.accepted, [moved, jitter]);
+  assert.equal(result.lastAccepted?.capturedAt, new Date(jitter.timestamp).toISOString());
 });
 
 test("background batches are sorted before filtering", () => {
@@ -43,11 +44,11 @@ test("background batches are sorted before filtering", () => {
   assert.deepEqual(result.accepted, [first, second]);
 });
 
-test("stationary GPS wander is retained only as a periodic audit heartbeat", () => {
+test("stationary GPS is retained on the configured audit cadence", () => {
   const start = Date.parse("2026-08-25T08:00:00.000Z");
   const initial = routePointFromLocation(point(start, 24.8208, 67.0313, 8, 0));
-  const earlyDrift = point(start + 15_000, 24.82105, 67.0313, 8, 0);
-  const heartbeat = point(start + 120_000, 24.82105, 67.0313, 8, 0);
+  const earlyDrift = point(start + 14_999, 24.82105, 67.0313, 8, 0);
+  const heartbeat = point(start + 15_000, 24.82105, 67.0313, 8, 0);
 
   const result = selectBackgroundRouteLocations(
     [heartbeat, earlyDrift],
@@ -57,6 +58,15 @@ test("stationary GPS wander is retained only as a periodic audit heartbeat", () 
 
   assert.deepEqual(result.accepted, [heartbeat]);
   assert.equal(result.lastAccepted?.capturedAt, new Date(heartbeat.timestamp).toISOString());
+});
+
+test("native tracking removes movement gates and uses the 15-second policy cadence", () => {
+  assert.deepEqual(routeLocationCadence(DEFAULT_ROUTE_TRACKING_POLICY), {
+    timeInterval: 15_000,
+    distanceInterval: 0,
+    deferredUpdatesInterval: 15_000,
+    deferredUpdatesDistance: 0,
+  });
 });
 
 test("malformed native fixes are ignored without discarding the valid batch", () => {

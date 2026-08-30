@@ -254,26 +254,23 @@ async function updateManagerContact(
       if (!commandReceiptMatches(receipt, receiptExpected)) throw new TeamCommandConflict();
       return { row: organization, changed: false, replayed: true };
     }
-    if (command.expectedUpdatedAt && organization.$updatedAt !== command.expectedUpdatedAt) throw new TeamRecordChanged();
     const same = String(organization.manager_contact_name ?? "") === command.name
       && String(organization.manager_contact_phone ?? "") === command.phone
       && String(organization.manager_contact_whatsapp ?? "") === command.whatsapp;
+    if (!same && command.expectedUpdatedAt && organization.$updatedAt !== command.expectedUpdatedAt) throw new TeamRecordChanged();
     let row = organization;
     if (!same) {
-      const updated = await db.updateRows({
+      row = await db.updateRow({
         databaseId,
         tableId: "organizations",
+        rowId: organization.$id,
         transactionId,
         data: {
           manager_contact_name: command.name,
           manager_contact_phone: command.phone,
           manager_contact_whatsapp: command.whatsapp,
         },
-        queries: [Query.equal("$id", organization.$id), Query.equal("$updatedAt", organization.$updatedAt)],
       });
-      const updatedRow = updated.rows[0] as TeamDeskRow | undefined;
-      if (!updatedRow) throw new TeamRecordChanged();
-      row = updatedRow;
     }
     await createCommandReceipt(db, transactionId, receiptId, {
       actorUserId: actor.user.$id,
@@ -291,10 +288,11 @@ async function updateManagerContact(
     });
     return { row, changed: !same, replayed: false };
   });
+  const committed = await db.getRow({ databaseId, tableId: "organizations", rowId: outcome.row.$id });
   return NextResponse.json({
     action: "contact",
     ok: true,
-    contact: serializeContact(outcome.row),
+    contact: serializeContact(committed),
     changed: outcome.changed,
     replayed: outcome.replayed,
   });

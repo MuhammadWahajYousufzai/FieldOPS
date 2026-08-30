@@ -10,6 +10,7 @@ import {
   operationIdentity,
   operationRetryDecision,
   resumeAuthFailedOutboxRecords,
+  resumeInterruptedOutboxRecords,
   selectOutboxCandidates,
   summarizeOutbox,
 } from "./operation-outbox.ts";
@@ -87,7 +88,7 @@ test("retry policy uses bounded jitter and respects Retry-After", () => {
   );
 });
 
-test("automatic selection waits for backoff and skips conflicts until a manual retry", () => {
+test("forced reconnect bypasses backoff but not permanent failures", () => {
   const records = [
     record({ id: "later", state: "failed", retryable: true, nextAttemptAt: "2026-08-25T10:01:00.000Z" }),
     record({ id: "conflict", state: "failed", retryable: false, operation: { type: "json", path: "/orders", body: { idempotencyKey: "order-2" } } }),
@@ -97,8 +98,8 @@ test("automatic selection waits for backoff and skips conflicts until a manual r
     selectOutboxCandidates(records, "employee-1", { nowMs: new Date("2026-08-25T10:00:30.000Z").valueOf() }).map((item) => item.id),
     ["ready"],
   );
-  assert.equal(canAttemptOutboxRecord(records[1], { force: true }), true);
-  assert.deepEqual(selectOutboxCandidates(records, "employee-1", { force: true }).map((item) => item.id), ["ready", "later", "conflict"]);
+  assert.equal(canAttemptOutboxRecord(records[1], { force: true }), false);
+  assert.deepEqual(selectOutboxCandidates(records, "employee-1", { force: true }).map((item) => item.id), ["ready", "later"]);
 });
 
 test("summarizeOutbox exposes progress and records that need attention", () => {
@@ -233,6 +234,18 @@ test("fresh authentication resumes only that employee's auth-failed work", () =>
     retryable: undefined,
     nextAttemptAt: undefined,
   });
+  assert.equal(resumed[1], records[1]);
+  assert.equal(resumed[2], records[2]);
+});
+
+test("fresh authentication resumes only that employee's interrupted upload", () => {
+  const records = [
+    record({ id: "mine", employeeId: "employee-1", state: "syncing" }),
+    record({ id: "other", employeeId: "employee-2", state: "syncing" }),
+    record({ id: "done", employeeId: "employee-1", state: "confirmed" }),
+  ];
+  const resumed = resumeInterruptedOutboxRecords(records, "employee-1");
+  assert.equal(resumed[0].state, "pending");
   assert.equal(resumed[1], records[1]);
   assert.equal(resumed[2], records[2]);
 });

@@ -87,29 +87,32 @@ describe("route tracking fidelity", () => {
     });
   });
 
-  it("captures real movement, rejects weak fixes, and keeps a stationary live heartbeat", () => {
+  it("keeps one reliable raw fix per configured interval", () => {
     const start = point(0, origin.latitude, origin.longitude);
-    const jitter = point(15, origin.latitude + 0.00002, origin.longitude);
+    const earlyMovement: RouteTrackPoint = {
+      ...point(14, origin.latitude + 0.0002, origin.longitude),
+      capturedAt: "2026-08-18T08:00:14.999Z",
+    };
+    const stationary = point(15, origin.latitude + 0.00002, origin.longitude, 6, "stationary", 0);
     const moved = point(30, origin.latitude + 0.0002, origin.longitude);
     const weak = point(45, origin.latitude + 0.0004, origin.longitude, 82);
-    const heartbeat = point(120, origin.latitude + 0.00001, origin.longitude);
 
     expect(shouldCaptureRoutePoint(null, start)).toBe(true);
-    expect(shouldCaptureRoutePoint(start, jitter)).toBe(false);
-    expect(shouldCaptureRoutePoint(start, moved)).toBe(true);
+    expect(shouldCaptureRoutePoint(start, earlyMovement)).toBe(false);
+    expect(shouldCaptureRoutePoint(start, stationary)).toBe(true);
+    expect(shouldCaptureRoutePoint(stationary, moved)).toBe(true);
     expect(shouldCaptureRoutePoint(moved, weak)).toBe(false);
-    expect(shouldCaptureRoutePoint(start, heartbeat)).toBe(true);
   });
 
-  it("does not mistake native-reported stationary drift for movement", () => {
+  it("keeps stationary audit heartbeats while route drawing removes their drift", () => {
     const start = point(0, origin.latitude, origin.longitude, 8, "start", 0);
-    const earlyDrift = point(15, origin.latitude + 0.00025, origin.longitude, 8, "early-drift", 0);
-    const heartbeat = point(120, origin.latitude + 0.00025, origin.longitude, 8, "heartbeat", 0);
-    const walking = point(135, origin.latitude + 0.00025, origin.longitude, 8, "walking", 1.2);
+    const heartbeat = point(15, origin.latitude + 0.00025, origin.longitude, 8, "heartbeat", 0);
+    const walking = point(30, origin.latitude + 0.0005, origin.longitude, 8, "walking", 1.2);
 
-    expect(shouldCaptureRoutePoint(start, earlyDrift)).toBe(false);
     expect(shouldCaptureRoutePoint(start, heartbeat)).toBe(true);
-    expect(shouldCaptureRoutePoint(start, walking)).toBe(true);
+    expect(shouldCaptureRoutePoint(heartbeat, walking)).toBe(true);
+    expect(buildRouteSegments([start, heartbeat, walking]).flat().map((item) => item.id))
+      .toEqual(["start", "walking"]);
   });
 
   it("preserves an accurate outbound turn and return along the same road", () => {

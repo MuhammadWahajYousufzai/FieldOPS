@@ -268,7 +268,7 @@ test("normal reconnect respects location rejection, permanent failure, and retry
   assert.equal(canAttemptLocationItem({ syncRetryable: false }, { nowMs }), false);
   assert.equal(canAttemptLocationItem({ syncRetryable: true, nextSyncAttemptAt: "2026-08-25T10:01:00.000Z" }, { nowMs }), false);
   assert.equal(canAttemptLocationItem({ syncRetryable: true, nextSyncAttemptAt: "2026-08-25T09:59:00.000Z" }, { nowMs }), true);
-  assert.equal(canAttemptLocationItem({ syncRetryable: false }, { force: true, nowMs }), true);
+  assert.equal(canAttemptLocationItem({ syncRetryable: false }, { force: true, nowMs }), false);
   // Server-rejected points are quarantined even during an explicit override.
   assert.equal(canAttemptLocationItem({ syncRejectedAt: "2026-08-25T09:00:00.000Z" }, { force: true, nowMs }), false);
   // Authentication pause is lifted only after a fresh session explicitly

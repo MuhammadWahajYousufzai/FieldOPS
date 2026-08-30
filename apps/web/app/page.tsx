@@ -5,6 +5,7 @@ import { hasRequiredVisitEvidence } from "@fieldops/domain";
 import { requireDashboardAdmin } from "../lib/auth";
 import { workDate } from "../lib/mobile-auth";
 import { operationalPolicyFromRow } from "../lib/operational-policy";
+import { liveProgressRevision } from "../lib/live-progress";
 import { listRowsResult } from "../lib/table-data";
 import type { LiveAttendance, LiveEmployee, LiveLocationPoint } from "../lib/live-types";
 import { LogoutButton } from "./logout-button";
@@ -108,6 +109,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     const coordinates = validPoint(row.coordinates) ? row.coordinates : [Number(row.longitude), Number(row.latitude)];
     return { id: row.$id, employeeId: String(row.employee_id), capturedAt: String(row.captured_at), receivedAt: String(row.received_at), latitude: Number(coordinates[1]), longitude: Number(coordinates[0]), accuracy: Number(row.accuracy), speed: storedSpeed(row.speed), source: String(row.source) };
   });
+  const initialProgressRevision = liveProgressRevision([
+    { name: "routes", rows: visibleRoutes },
+    { name: "visits", rows: rawVisitRows },
+    { name: "orders", rows: orderRows },
+  ]);
 
   const metricClass = "border-b border-slate-200 py-5 sm:border-b-0 sm:border-r sm:px-6 sm:first:pl-0 sm:last:border-r-0";
   const metricValue = "my-2 block text-3xl font-black";
@@ -134,7 +140,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <article className={metricClass}><span className={metricLabel}>Orders recorded</span><b className={metricValue}>{orderRows.length}</b><small className={metricDetail}>PKR {sales.toLocaleString()}</small></article>
         <article className={metricClass}><span className={metricLabel}>GPS route points</span><span className={metricValue}><LiveGpsCount initialCount={locationRows.length} /></span><small className={metricDetail}>Raw fixes preserved for audit</small></article>
       </section>
-      <LiveOperations key={`${date}:${selectedEmployee}`} date={date} selectedEmployee={selectedEmployee} pollingEnabled={date === workDate()} generatedAt={new Date().toISOString()} staticPoints={staticMapPoints} initialEmployees={liveEmployees} initialAttendance={liveAttendance} initialLocations={liveLocations} routePolicy={operationsPolicy} />
+      <LiveOperations key={`${date}:${selectedEmployee}`} date={date} selectedEmployee={selectedEmployee} pollingEnabled={date === workDate()} generatedAt={new Date().toISOString()} initialProgressRevision={initialProgressRevision} staticPoints={staticMapPoints} initialEmployees={liveEmployees} initialAttendance={liveAttendance} initialLocations={liveLocations} routePolicy={operationsPolicy} />
       <section className={ui.tableCard} id="assignments"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Management commitments</p><h2 className={ui.h2}>Assigned visit completion status</h2></div><span className="text-sm font-bold text-slate-500">{assignedPending} need follow-up</span></div>
         <div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Salesperson</th><th>Assigned customer</th><th>Sequence</th><th>Status</th><th>Completed</th></tr></thead><tbody>
           {visibleRoutes.map((route) => <tr key={route.$id}><td>{String(employees.get(String(route.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(route.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(route.outlet_id))?.address ?? "")}</small></td><td>{Number(route.sequence)}</td><td><span className={route.status === "completed" ? "font-extrabold text-emerald-700" : "font-extrabold text-amber-700"}>{String(route.status).replaceAll("_", " ")}</span></td><td>{time(route.completed_at)}</td></tr>)}

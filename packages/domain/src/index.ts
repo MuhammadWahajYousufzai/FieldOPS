@@ -98,10 +98,10 @@ export function isReliableRoutePoint(
 }
 
 /**
- * Applies the phone-side capture policy. A stationary heartbeat is retained
- * about every two minutes so managers can distinguish a stopped employee from
- * a stopped GPS receiver, while small interim movements inside the fix's
- * uncertainty are ignored.
+ * Applies the phone-side capture policy to the raw audit stream. Reliable fixes
+ * are retained on the configured cadence even while stationary, so a manager
+ * can distinguish a stopped employee from a stopped GPS receiver. Route
+ * drawing separately removes stationary drift and accuracy-sized jitter.
  */
 export function shouldCaptureRoutePoint(
   previous: RouteTrackPoint | null,
@@ -113,19 +113,11 @@ export function shouldCaptureRoutePoint(
 
   const elapsedMs = new Date(candidate.capturedAt).valueOf() - new Date(previous.capturedAt).valueOf();
   if (elapsedMs <= 0) return false;
+  if (elapsedMs < policy.sampleIntervalSeconds * 1_000) return false;
   const distance = distanceMeters(previous, candidate);
   const speed = distance / (elapsedMs / 1_000);
   if (speed > policy.maxPlausibleSpeedMps) return false;
-
-  const heartbeatSeconds = Math.max(60, Math.min(120, policy.sampleIntervalSeconds * 8));
-  // When the native motion estimate explicitly says the phone is stationary,
-  // a displaced coordinate is GPS wander rather than evidence of travel. Keep
-  // only the periodic raw heartbeat so a stop remains visible in the audit log.
-  if (reportsStationary(candidate)) return elapsedMs >= heartbeatSeconds * 1_000;
-
-  const movementThreshold = routeJitterThreshold(previous, candidate, policy);
-  if (distance >= movementThreshold) return true;
-  return elapsedMs >= heartbeatSeconds * 1_000;
+  return true;
 }
 
 /**

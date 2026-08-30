@@ -16,7 +16,6 @@ const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(r
 const db = new TablesDB(client);
 const users = new Users(client);
 const now = new Date().toISOString();
-const workDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 async function first(tableId, queries) {
   return (await db.listRows({ databaseId, tableId, queries: [...queries, Query.limit(1)] })).rows[0];
@@ -67,31 +66,10 @@ await ensureRow("employees", salesEmployeeId, { user_id: salesperson.$id, displa
 await ensureRow("employee_assignments", stableId("assign", `${managerEmployeeId}:manager`), { employee_id: managerEmployeeId, role_id: managerRoleId, territory_id: territoryId, effective_from: now, assigned_by: manager.$id, reason: "Initial FieldOPS deployment" });
 await ensureRow("employee_assignments", stableId("assign", `${salesEmployeeId}:sales`), { employee_id: salesEmployeeId, role_id: salesRoleId, territory_id: territoryId, effective_from: now, assigned_by: manager.$id, reason: "Pilot route assignment" });
 
-const stores = [
-  ["REHMAN", "Rehman General Store", "Clifton Block 2, Karachi", 24.8239, 67.0322, "09:10"],
-  ["ZAMZAMA", "Zamzama Mart", "Zamzama Commercial, DHA Phase 5", 24.8173, 67.0407, "10:05"],
-  ["MADINA", "Al-Madina Traders", "Clifton Block 5, Karachi", 24.8097, 67.0305, "11:20"],
-  ["SEAVIEW", "Sea View Supermarket", "Sea View Road, Clifton", 24.7914, 67.0432, "12:15"],
-];
-
-for (let index = 0; index < stores.length; index += 1) {
-  const [code, name, address, latitude, longitude, preferredTime] = stores[index];
-  const outletId = stableId("out", code);
-  await ensureRow("outlets", outletId, {
-    code, name, address, latitude, longitude, status: "active", territory_id: territoryId,
-    assigned_employee_id: salesEmployeeId, visit_frequency: "weekly", notes: `Pilot store · preferred ${preferredTime}`,
-    created_by: manager.$id,
-  });
-  await ensureRow("route_assignments", stableId("route", `${workDate}:${salesEmployeeId}:${outletId}`), {
-    work_date: workDate, employee_id: salesEmployeeId, outlet_id: outletId, sequence: index + 1,
-    status: "planned", assigned_by: manager.$id, published_at: now,
-  });
-}
-
 if (!(await first("audit_logs", [Query.equal("action", "system.seeded")]))) {
   await db.createRow({ databaseId, tableId: "audit_logs", rowId: ID.unique(), data: {
     actor_user_id: manager.$id, action: "system.seeded", entity_type: "organization", entity_id: organizationId,
-    occurred_at: now, after_json: JSON.stringify({ managerEmployeeId, salesEmployeeId, stores: stores.length }),
+    occurred_at: now, after_json: JSON.stringify({ managerEmployeeId, salesEmployeeId }),
     reason: "Production launch seed", correlation_id: crypto.randomUUID(),
   }, permissions: [] });
 }
@@ -100,6 +78,4 @@ console.log(JSON.stringify({
   managerEmail: manager.email,
   salespersonEmail: salesperson.email,
   salespersonEmployeeId: salesEmployeeId,
-  stores: stores.length,
-  workDate,
 }));

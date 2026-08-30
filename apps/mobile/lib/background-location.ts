@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import {
   backgroundSessionIsCurrent,
+  routeLocationCadence,
   secureBackgroundTokenForEmployee,
   selectBackgroundRouteLocations,
 } from "./background-route-policy";
@@ -289,10 +290,7 @@ export async function startBackgroundRouteTracking({
     try {
       await Location.startLocationUpdatesAsync(ACTIVE_ROUTE_TASK, {
         accuracy: Location.Accuracy.BestForNavigation,
-        timeInterval: policy.sampleIntervalSeconds * 1_000,
-        distanceInterval: policy.distanceIntervalMeters,
-        deferredUpdatesInterval: policy.sampleIntervalSeconds * 1_000,
-        deferredUpdatesDistance: policy.distanceIntervalMeters,
+        ...routeLocationCadence(policy),
         activityType: Location.ActivityType.OtherNavigation,
         pausesUpdatesAutomatically: false,
         showsBackgroundLocationIndicator: true,
