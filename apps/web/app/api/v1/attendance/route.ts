@@ -10,6 +10,7 @@ import {
   type DataRow,
 } from "../../../../lib/mobile-write-idempotency";
 import { mobileActor, number, text, workDate } from "../../../../lib/mobile-auth";
+import { attendanceTransition } from "../../../../lib/attendance-transition";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -67,10 +68,26 @@ export async function POST(request: Request) {
       Query.equal("work_date", date),
       Query.limit(100),
     ] })).rows;
-    const active = sessions.find((session) => session.status === "checked_in" && !session.check_out_at);
+    const transition = attendanceTransition(action, capturedAt, sessions as DataRow[]);
+
+    if (transition.kind === "confirm") {
+      await ensureAttendanceLocation(db, expected, date);
+      return NextResponse.json({
+        ok: true,
+        attendanceId: transition.session.$id,
+        status: transition.session.status,
+        reconciled: true,
+      });
+    }
+    if (transition.kind === "reject") {
+      return NextResponse.json({ error: transition.error }, { status: 409 });
+    }
 
     if (action === "check_out") {
-      if (!active) return NextResponse.json({ error: "Start work before finishing the session." }, { status: 409 });
+      if (transition.kind !== "update") {
+        return NextResponse.json({ error: "Start work before finishing the session." }, { status: 409 });
+      }
+      const active = transition.session;
       let row: DataRow;
       try {
         row = await db.updateRow({ databaseId, tableId: "attendance_records", rowId: active.$id, data: {
@@ -89,10 +106,6 @@ export async function POST(request: Request) {
       }
       await ensureAttendanceLocation(db, expected, date);
       return NextResponse.json({ ok: true, attendanceId: row.$id, status: row.status });
-    }
-
-    if (active) {
-      return NextResponse.json({ error: "Work is already active for this date." }, { status: 409 });
     }
 
     let row: DataRow;

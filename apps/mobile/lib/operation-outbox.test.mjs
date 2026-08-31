@@ -63,6 +63,29 @@ test("normalizeRestoredOutbox retains a confirmed copy over an unconfirmed dupli
   assert.equal(restored[0].id, "confirmed");
 });
 
+test("normalizeRestoredOutbox retries legacy attendance state conflicts after reconciliation ships", () => {
+  const restored = normalizeRestoredOutbox([
+    record({
+      state: "failed",
+      attempts: 4,
+      error: "Work is already active for this date.",
+      errorKind: "conflict",
+      httpStatus: 409,
+      retryable: false,
+      operation: {
+        type: "json",
+        path: "/attendance",
+        body: { action: "check_in", idempotencyKey: "attendance-1" },
+      },
+    }),
+  ]);
+
+  assert.equal(restored[0].state, "pending");
+  assert.equal(restored[0].attempts, 4);
+  assert.equal(restored[0].error, undefined);
+  assert.equal(restored[0].retryable, undefined);
+});
+
 test("failure classification separates authentication, conflicts, validation, server and connection errors", () => {
   assert.equal(classifyOperationFailure(401), "auth");
   assert.equal(classifyOperationFailure(409), "conflict");

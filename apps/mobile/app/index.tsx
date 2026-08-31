@@ -89,6 +89,10 @@ import {
   type Deal,
   type DealStage,
 } from "../lib/team-data";
+import {
+  createVisitEvidenceFormData,
+  type EvidenceAttachment,
+} from "../lib/visit-evidence-form";
 
 type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "deals" | "sync" | "profile";
 type VisitStatus = "planned" | "active" | "completed";
@@ -98,7 +102,6 @@ type FieldAction = "start_work" | "finish_work" | "start_visit" | "start_place" 
 type Session = { token: string; expiresAt: string; employee: { id: string; name: string } };
 type PersistedSessionMetadata = Omit<Session, "token">;
 type JsonOperation = { type: "json"; path: string; body: Record<string, unknown> };
-type EvidenceAttachment = { uri: string; name: string; type: string };
 type VisitUploadOperation = {
   type: "visit_submit" | "visit_complete";
   path: string;
@@ -1202,10 +1205,12 @@ function FieldOpsApp() {
     }
     validateStoredEvidence(operation.photo);
     validateStoredEvidence(operation.audio);
-    const form = new FormData();
-    for (const [key, value] of Object.entries(operation.fields)) form.append(key, value);
-    form.append("photo", operation.photo as never);
-    form.append("audio", operation.audio as never);
+    const form = createVisitEvidenceFormData(
+      operation.fields,
+      operation.photo,
+      operation.audio,
+      (uri) => new File(uri),
+    );
     const response = await fetchWithTimeout(`${API_BASE}${operation.path}`, {
       method: "POST",
       headers: { authorization: `Bearer ${authenticatedSession.token}` },
@@ -1428,6 +1433,7 @@ function FieldOpsApp() {
           item.operation?.type === "json"
           && item.operation.path === "/attendance"
           && item.state !== "confirmed"
+          && !(item.state === "failed" && item.retryable === false)
         ));
         if (!hasPendingAttendance) setWorkState(context.workState ?? (context.shiftActive ? "active" : "not_started"));
         setSelectedId((current) => current || String(context.route[0]?.id ?? ""));

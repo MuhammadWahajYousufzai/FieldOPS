@@ -118,11 +118,21 @@ export function normalizeRestoredOutbox<RecordType extends OutboxRecord>(records
 
   for (const raw of records) {
     const attempts = Number.isSafeInteger(raw.attempts) && raw.attempts >= 0 ? raw.attempts : 0;
+    const shouldReconcileAttendance = isLegacyAttendanceStateConflict(raw);
     const recovered = {
       ...raw,
       attempts,
       ...(raw.state === "syncing" ? { state: "pending" as const } : {}),
+      ...(shouldReconcileAttendance ? {
+        state: "pending" as const,
+        error: undefined,
+        errorKind: undefined,
+        httpStatus: undefined,
+        retryable: undefined,
+        nextAttemptAt: undefined,
+      } : {}),
       ...(raw.state === "failed" && raw.retryable === undefined
+        && !shouldReconcileAttendance
         ? { retryable: raw.errorKind === "connection" || raw.errorKind === "server" }
         : {}),
     } as RecordType;
@@ -147,6 +157,17 @@ export function normalizeRestoredOutbox<RecordType extends OutboxRecord>(records
     }
   }
   return normalized;
+}
+
+function isLegacyAttendanceStateConflict(record: OutboxRecord) {
+  if (
+    record.state !== "failed"
+    || record.httpStatus !== 409
+    || record.operation?.type !== "json"
+    || record.operation.path !== "/attendance"
+  ) return false;
+  return record.error === "Work is already active for this date."
+    || record.error === "Start work before finishing the session.";
 }
 
 export function classifyOperationFailure(status: number): OperationErrorKind {
