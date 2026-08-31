@@ -28,7 +28,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
   const [employeeRows, outletRows, territoryRows, assignmentRows, salesRoleRows, completedVisitRows, evidenceRows, organizationRows, dailyRouteRows, dealRows] = await Promise.all([
     listAllRows(db, databaseId, "employees"),
     listAllRows(db, databaseId, "outlets", [Query.equal("status", "active")]),
-    listAllRows(db, databaseId, "territories", [Query.equal("active", true)]),
+    listAllRows(db, databaseId, "territories"),
     listAllRows(db, databaseId, "employee_assignments", []),
     listAllRows(db, databaseId, "roles", [Query.equal("code", "sales_person")], 1),
     listAllRows(db, databaseId, "visits", [Query.equal("status", "completed")]),
@@ -64,24 +64,23 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     status: row.status === "active" && activeSalespersonIds.has(row.$id) ? "active" : "inactive",
   }));
   const outlets = outletRows.map((row) => ({ id: row.$id, label: `${String(row.name)} · ${String(row.code)}` }));
-  const territories = territoryRows.map((row) => ({ id: row.$id, name: String(row.name), code: String(row.code), boundary: parseTerritoryBoundary(row.boundary) }));
-  const territoryById = new Map(territories.map((territory) => [territory.id, territory]));
+  const allTerritories = territoryRows.map((row) => ({ id: row.$id, name: String(row.name), code: String(row.code), boundary: parseTerritoryBoundary(row.boundary), active: row.active === true }));
+  const territories = allTerritories.filter((territory) => territory.active);
+  const territoryById = new Map(allTerritories.map((territory) => [territory.id, territory]));
   const outletMapIssues = outletRows.flatMap((outlet) => {
     const territory = territoryById.get(String(outlet.territory_id));
     const latitude = Number(outlet.latitude), longitude = Number(outlet.longitude);
-    const reason = !territory
-      ? "territory is missing"
-      : !territory.boundary
-        ? `${territory.name} has no saved boundary`
-        : !Number.isFinite(latitude) || !Number.isFinite(longitude)
-          ? "GPS point is invalid"
-          : !pointInTerritory({ latitude, longitude }, territory.boundary)
-            ? `outside ${territory.name}`
-            : "";
+    let reason = "";
+    if (!territory) reason = "sales area is missing";
+    else if (territory.active) {
+      if (!territory.boundary) reason = `${territory.name} has no saved boundary`;
+      else if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) reason = "GPS point is invalid";
+      else if (!pointInTerritory({ latitude, longitude }, territory.boundary)) reason = `outside ${territory.name}`;
+    }
     return reason ? [{ id: outlet.$id, name: String(outlet.name), reason }] : [];
   });
   const employeeLabels = new Map(employees.map((employee) => [employee.id, employee.label]));
-  const territoryLabels = new Map(territories.map((territory) => [territory.id, territory.name]));
+  const territoryLabels = new Map(allTerritories.map((territory) => [territory.id, territory.name]));
   const outletRecords = outletRows.map((outlet) => ({
     id: outlet.$id,
     code: String(outlet.code),
@@ -89,7 +88,8 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     address: String(outlet.address),
     notes: String(outlet.notes || ""),
     territoryId: String(outlet.territory_id),
-    territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Unknown territory",
+    territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Unknown sales area",
+    territoryActive: territoryById.get(String(outlet.territory_id))?.active === true,
     source: outlet.source === "salesperson_mark" || outlet.origin_visit_id ? "Salesperson mark" : "Management",
     updatedAt: outlet.$updatedAt,
   }));
@@ -151,7 +151,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
         address: String(outlet.address),
         latitude: Number(outlet.latitude),
         longitude: Number(outlet.longitude),
-        territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Unknown territory",
+        territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Unknown sales area",
         submittedName: visit ? String(visit.customer_name || "") : "",
         salespersonName: visit ? allEmployeeLabels.get(String(visit.employee_id)) ?? "Unknown salesperson" : "Unknown salesperson",
         approvedAt: visit ? String(visit.reviewed_at || outlet.$createdAt) : String(outlet.$createdAt),
@@ -197,7 +197,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     reviews: { eyebrow: "Place review queue", title: "Verify salesperson-marked places.", lede: "Review GPS accuracy, photo and voice evidence, then approve the official place or reject it with a clear reason." },
     plan: { eyebrow: "Daily visit plan", title: "Publish today’s outlet commitments.", lede: "Assign existing outlets to active salespeople and keep started field records locked." },
     places: { eyebrow: "Permanent field directory", title: "Manage outlets and verified points.", lede: "Create management outlets or correct official details without moving a salesperson-verified GPS point." },
-    territories: { eyebrow: "Territory control", title: "Draw and protect work areas.", lede: "Create boundaries that contain active outlets before enforcing field access." },
+    territories: { eyebrow: "Sales area control", title: "Draw and protect sales areas.", lede: "Create boundaries that contain active outlets before enforcing field access." },
     team: { eyebrow: "People & access", title: "Manage salesperson access safely.", lede: "Create, update, disable, and scope field accounts without confusing them with dashboard administrators." },
     operations: { eyebrow: "Tracking & sync", title: "Set the phone’s operating policy.", lede: "Control capture quality, route gaps, and automatic sync while preserving raw GPS evidence." },
   }[view];
@@ -207,7 +207,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
         <div className="grid sm:grid-cols-2 xl:grid-cols-4">
           <IntegrityCell value={pendingReviews.length} label="Marks awaiting review" tone={pendingReviews.length ? "pending" : "good"} />
           <IntegrityCell value={outletMapIssues.length} label="Outlet map issues" tone={outletMapIssues.length ? "blocking" : "good"} />
-          <IntegrityCell value={`${territories.filter((territory) => territory.boundary).length}/${territories.length}`} label="Territories mapped" tone={territories.some((territory) => !territory.boundary) ? "pending" : "good"} />
+          <IntegrityCell value={`${territories.filter((territory) => territory.boundary).length}/${territories.length}`} label="Sales areas mapped" tone={territories.some((territory) => !territory.boundary) ? "pending" : "good"} />
           <IntegrityCell value={employees.length} label="Active salespersons" tone="neutral" />
         </div>
         {outletMapIssues.length > 0 && <details className="border-t border-red-200 bg-red-50 px-5 py-4 sm:px-6"><summary className="cursor-pointer text-sm font-black text-red-900">Review {outletMapIssues.length} outlet {outletMapIssues.length === 1 ? "location" : "locations"} before enforcing visits</summary><ul className="mt-3 grid gap-2 text-sm text-red-800 sm:grid-cols-2">{outletMapIssues.map((issue) => <li key={issue.id}><strong>{issue.name}</strong> · {issue.reason}</li>)}</ul></details>}

@@ -46,6 +46,27 @@ export function removalLeavesUnrestricted(activeTerritoryIds: Iterable<string>, 
   return remaining.size === 0;
 }
 
+export function salesAreaDeletionAssignmentPlan(
+  assignments: Array<Record<string, unknown> & { $id: string }>,
+  territoryId: string,
+  at: string,
+) {
+  const activeAssignments = assignments.filter((assignment) => assignmentIsEffectiveAt(assignment, at));
+  const targetAssignments = activeAssignments.filter((assignment) => String(assignment.territory_id || "") === territoryId);
+  const rolePairs = new Map<string, { employeeId: string; roleId: string }>();
+  for (const assignment of targetAssignments) {
+    const employeeId = String(assignment.employee_id || "");
+    const roleId = String(assignment.role_id || "");
+    if (employeeId && roleId) rolePairs.set(`${employeeId}:${roleId}`, { employeeId, roleId });
+  }
+  const rolesToRetain = [...rolePairs.values()].filter(({ employeeId, roleId }) => !activeAssignments.some((assignment) => (
+    String(assignment.employee_id || "") === employeeId
+    && String(assignment.role_id || "") === roleId
+    && String(assignment.territory_id || "") !== territoryId
+  )));
+  return { targetAssignments, rolesToRetain };
+}
+
 export function optimisticWriteDecision(
   expectedVersion: string,
   currentVersion: string,
@@ -104,4 +125,12 @@ function normalizePart(value: unknown) {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function assignmentIsEffectiveAt(assignment: Record<string, unknown>, at: string) {
+  const timestamp = new Date(at).valueOf();
+  const startsAt = new Date(String(assignment.effective_from || "")).valueOf();
+  const endsAt = assignment.effective_to ? new Date(String(assignment.effective_to)).valueOf() : null;
+  return Number.isFinite(timestamp) && Number.isFinite(startsAt) && startsAt <= timestamp
+    && (endsAt === null || (Number.isFinite(endsAt) && endsAt > timestamp));
 }

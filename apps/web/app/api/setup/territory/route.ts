@@ -10,7 +10,7 @@ const text = (value:unknown,max:number) => typeof value === "string" ? value.tri
 
 export async function POST(request:Request){
   const actor=await requireDashboardAdmin();
-  if(!actor)return NextResponse.json({error:"You do not have permission to manage territories."},{status:403});
+  if(!actor)return NextResponse.json({error:"You do not have permission to manage sales areas."},{status:403});
   const body=await request.json();
   const regionName=text(body.regionName,128),regionCode=text(body.regionCode,32).toUpperCase();
   const areaName=text(body.areaName,128),areaCode=text(body.areaCode,32).toUpperCase();

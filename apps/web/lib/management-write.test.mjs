@@ -7,6 +7,7 @@ import {
   removalLeavesUnrestricted,
   runManagementTransaction,
   runManagementTransactionWithRetry,
+  salesAreaDeletionAssignmentPlan,
   stableManagementId,
 } from "./management-write.ts";
 
@@ -38,6 +39,27 @@ test("removalLeavesUnrestricted detects only the last active territory", () => {
   assert.equal(removalLeavesUnrestricted(["clifton"], "clifton"), true);
   assert.equal(removalLeavesUnrestricted(["clifton", "dha"], "clifton"), false);
   assert.equal(removalLeavesUnrestricted(["clifton", "clifton"], "clifton"), true);
+});
+
+test("sales area deletion ends only active target assignments and preserves otherwise-lost roles", () => {
+  const at = "2026-08-31T12:00:00.000Z";
+  const result = salesAreaDeletionAssignmentPlan([
+    { $id: "sales_target", employee_id: "sales_1", role_id: "sales", territory_id: "area_old", effective_from: "2026-01-01T00:00:00.000Z" },
+    { $id: "manager_target", employee_id: "manager_1", role_id: "manager", territory_id: "area_old", effective_from: "2026-01-01T00:00:00.000Z" },
+    { $id: "multi_target", employee_id: "sales_2", role_id: "sales", territory_id: "area_old", effective_from: "2026-01-01T00:00:00.000Z" },
+    { $id: "multi_other", employee_id: "sales_2", role_id: "sales", territory_id: "area_other", effective_from: "2026-01-01T00:00:00.000Z" },
+    { $id: "role_only_target", employee_id: "sales_3", role_id: "sales", territory_id: "area_old", effective_from: "2026-01-01T00:00:00.000Z" },
+    { $id: "role_only", employee_id: "sales_3", role_id: "sales", effective_from: "2026-01-01T00:00:00.000Z" },
+    { $id: "expired", employee_id: "sales_4", role_id: "sales", territory_id: "area_old", effective_from: "2026-01-01T00:00:00.000Z", effective_to: "2026-08-01T00:00:00.000Z" },
+  ], "area_old", at);
+
+  assert.deepEqual(result.targetAssignments.map((assignment) => assignment.$id), [
+    "sales_target", "manager_target", "multi_target", "role_only_target",
+  ]);
+  assert.deepEqual(result.rolesToRetain, [
+    { employeeId: "sales_1", roleId: "sales" },
+    { employeeId: "manager_1", roleId: "manager" },
+  ]);
 });
 
 test("optimisticWriteDecision accepts identical retries before rejecting stale versions", () => {

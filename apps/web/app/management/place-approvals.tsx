@@ -92,7 +92,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
   async function reviewPlace(review: PlaceReviewItem, action: "approve" | "reject") {
     const draft = drafts[review.id] ?? reviewDraft(review);
     if (action === "approve" && (!draft.name.trim() || !draft.territoryId)) {
-      setMessage({ tone: "error", text: "Enter the official name and choose the territory containing the verified point." });
+      setMessage({ tone: "error", text: "Enter the official name and choose the sales area containing the verified point." });
       return;
     }
     if (action === "reject" && !draft.reason.trim()) {
@@ -131,7 +131,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
       <div>
         <p className={ui.eyebrow}>Verified field marks</p>
         <h2 className={ui.h2} id="place-approvals-title">Approve the place, preserve the report.</h2>
-        <p className={ui.lede}>Check the salesperson&apos;s photo, voice report and GPS point. You control the official name and territory before the place joins the permanent outlet list.</p>
+        <p className={ui.lede}>Check the salesperson&apos;s photo, voice report and GPS point. You control the official name and sales area before the place joins the permanent outlet list.</p>
       </div>
       <span className={`inline-flex min-h-10 items-center rounded-full px-4 text-xs font-black ${openReviews.length ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
         {openReviews.length ? `${openReviews.length} awaiting review` : "Review queue clear"}
@@ -182,7 +182,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
               <label className={ui.label} htmlFor={`official-name-${review.id}`}>Official place name<input id={`official-name-${review.id}`} className={ui.input} value={draft.name} maxLength={160} onChange={(event) => updateDraft(review.id, { name: event.target.value })} /></label>
               {draft.name.trim() !== review.submittedName.trim() && <p className="-mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800">Submitted as “{review.submittedName}” — this remains in the visit history.</p>}
               <label className={ui.label} htmlFor={`official-address-${review.id}`}>Official address<input id={`official-address-${review.id}`} className={ui.input} value={draft.address} maxLength={500} placeholder="Address recorded at the verified GPS point" onChange={(event) => updateDraft(review.id, { address: event.target.value })} /></label>
-              <label className={ui.label} htmlFor={`official-territory-${review.id}`}>Territory<select id={`official-territory-${review.id}`} className={ui.input} value={draft.territoryId} onChange={(event) => updateDraft(review.id, { territoryId: event.target.value })}><option value="">Choose the territory containing this point</option>{territories.map((territory) => <option key={territory.id} value={territory.id}>{territory.name}</option>)}</select></label>
+              <label className={ui.label} htmlFor={`official-territory-${review.id}`}>Sales area<select id={`official-territory-${review.id}`} className={ui.input} value={draft.territoryId} onChange={(event) => updateDraft(review.id, { territoryId: event.target.value })}><option value="">Choose the sales area containing this point</option>{territories.map((territory) => <option key={territory.id} value={territory.id}>{territory.name}</option>)}</select></label>
               <label className={ui.label} htmlFor={`review-reason-${review.id}`}>Review note <span className="font-medium text-slate-500">required only when rejecting</span><textarea id={`review-reason-${review.id}`} className={`${ui.input} min-h-24 resize-y`} value={draft.reason} maxLength={1000} placeholder="Why was it rejected, or what did you verify?" onChange={(event) => updateDraft(review.id, { reason: event.target.value })} /></label>
               <div className="grid gap-3 border-t border-slate-200 pt-4 sm:grid-cols-[1fr_auto]">
                 <button type="button" className={ui.button} disabled={Boolean(busy) || !review.evidenceComplete || !review.pointAccurate} onClick={() => reviewPlace(review, "approve")}>{approveBusy ? "Approving place…" : "Approve permanent place"}</button>

@@ -33,7 +33,7 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
   selectPointRef.current = (point) => {
     const territory = territoriesRef.current.find((item) => item.id === selectedTerritoryRef.current);
     if (!territory) {
-      setSelectionError("Choose a territory before placing the outlet.");
+      setSelectionError("Choose a sales area before placing the outlet.");
       return;
     }
     if (!territory.boundary) {
@@ -151,7 +151,7 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
   }, [points, ready]);
 
   return <div className="grid gap-3">
-    <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Territory boundary editor. Click to add boundary points. At least three points are required." />
+    <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Sales area boundary editor. Click to add boundary points. At least three points are required." />
     <div className="flex flex-wrap items-center gap-3">
       <button type="button" className={ui.quietButton} disabled={points.length === 0} onClick={() => update(points.slice(0, -1))}>Undo point</button>
       <button type="button" className={ui.dangerButton} disabled={points.length === 0} onClick={() => update([])}>Clear</button>

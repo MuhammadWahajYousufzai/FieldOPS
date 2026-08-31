@@ -46,14 +46,14 @@ export async function territoryAccessForEmployee(db: TablesDB, employeeId: strin
 }
 
 export function evaluateTerritoryAccess(access: TerritoryAccess, point: Coordinate) {
-  if (!access.restricted) return { allowed: true, reason: "No territory is assigned, so field activity is unrestricted." };
+  if (!access.restricted) return { allowed: true, reason: "No sales area is assigned, so field activity is unrestricted." };
   const boundaries = access.territories.flatMap((territory) => territory.boundary ? [territory.boundary] : []);
-  if (boundaries.length === 0) return { allowed: false, reason: "Your assigned territory does not have a saved map boundary yet. Ask a manager to draw it." };
+  if (boundaries.length === 0) return { allowed: false, reason: "Your assigned sales area does not have a saved map boundary yet. Ask a manager to draw it." };
   const allowed = pointInAnyTerritory(point, boundaries);
   return {
     allowed,
     reason: allowed
-      ? "You are inside an assigned territory."
+      ? "You are inside an assigned sales area."
       : `You are outside ${access.territories.map((territory) => territory.name).join(" or ")}. Visits and orders are disabled here.`,
   };
 }

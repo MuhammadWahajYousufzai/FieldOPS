@@ -22,7 +22,7 @@ const navigation: { label: string; items: NavigationItem[] }[] = [
     { href: "/management/reviews", label: "Place reviews", icon: "reviews" },
     { href: "/management/sales", label: "Sales pipeline", icon: "sales" },
     { href: "/management/places", label: "Outlets", icon: "places" },
-    { href: "/management/territories", label: "Territories", icon: "territories" },
+    { href: "/management/territories", label: "Sales areas", icon: "territories" },
     { href: "/management/team", label: "Team & access", icon: "team" },
   ] },
   { label: "System", items: [

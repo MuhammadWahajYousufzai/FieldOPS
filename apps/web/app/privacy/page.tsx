@@ -16,7 +16,7 @@ export default function PrivacyPolicy() {
       <p className="border-l-4 border-blue-600 pl-5 text-lg leading-8 text-slate-600">FieldOPS is a private workforce application used by authorized Yousuf Rice personnel. It does not sell data, display advertising, or use personal data for unrelated consumer profiling.</p>
 
       <section className={sectionClass}><h2>Data FieldOPS collects</h2><ul className="list-disc pl-6">
-        <li><strong>Account and employment data:</strong> work email, employee name, role, manager, and assigned territories or outlets.</li>
+        <li><strong>Account and employment data:</strong> work email, employee name, role, manager, and assigned sales areas or outlets.</li>
         <li><strong>Precise location:</strong> current visit/order coordinates and quality-checked route points from Start work until Finish session. The organization can configure the movement and timing thresholds used to capture the route.</li>
         <li><strong>Visit evidence:</strong> photos, audio notes, visit outcomes, notes, timestamps, and outlet distance checks.</li>
         <li><strong>Orders and customers:</strong> customer/shop name and optional phone/address, products, quantities, prices, notes, and capture location.</li>
@@ -24,7 +24,7 @@ export default function PrivacyPolicy() {
         <li><strong>Operational records:</strong> attendance, assigned completion, sync status, and security/audit events.</li>
       </ul></section>
 
-      <section className={sectionClass}><h2>How the data is used</h2><p>Data is used only to provide attendance, route history, territory enforcement, outlet assignment, visit verification, order capture, team communication, customer opportunity follow-up, offline synchronization, management reporting, troubleshooting, fraud prevention, and account security.</p></section>
+      <section className={sectionClass}><h2>How the data is used</h2><p>Data is used only to provide attendance, route history, sales area enforcement, outlet assignment, visit verification, order capture, team communication, customer opportunity follow-up, offline synchronization, management reporting, troubleshooting, fraud prevention, and account security.</p></section>
 
       <section className={sectionClass}><h2>Optional screen-lock continuity</h2><p>Foreground route recording works while FieldOPS is open. A salesperson can separately choose screen-lock continuity in Profile and grant “Always” or background access so route recording can continue when the screen is locked or another app is open. It runs only during an active work session and stops at Finish session or sign out. Denying or revoking this optional permission does not block field work; route recording falls back to times when FieldOPS is open. Phone power settings, force-quitting the app, and operating-system limits can still create honest gaps.</p></section>
 
@@ -32,7 +32,7 @@ export default function PrivacyPolicy() {
 
       <section className={sectionClass} id="data-deletion"><h2>Request account or data deletion</h2><p>Email <a href="mailto:support@ssricemills.com?subject=FieldOPS%20data%20deletion%20request">support@ssricemills.com</a> from your work email with the subject “FieldOPS data deletion request”, or ask your FieldOPS manager. Include your work email and whether you want your account, visit evidence, route history, or all eligible data deleted. We will verify the request, disable the account, and delete eligible account and operational data. Audit, security, order, or financial records may be retained only where required for legitimate business, legal, fraud-prevention, or accounting obligations, then deleted under the organization’s retention schedule.</p></section>
 
-      <section className={sectionClass}><h2>Permissions</h2><p>While-using location is requested for territory checks, route recording, and GPS evidence. Background location is requested only when the salesperson chooses optional screen-lock continuity in Profile. Camera and microphone access are requested only when required visit evidence is captured. FieldOPS does not access photos or recordings unrelated to a visit.</p></section>
+      <section className={sectionClass}><h2>Permissions</h2><p>While-using location is requested for sales area checks, route recording, and GPS evidence. Background location is requested only when the salesperson chooses optional screen-lock continuity in Profile. Camera and microphone access are requested only when required visit evidence is captured. FieldOPS does not access photos or recordings unrelated to a visit.</p></section>
 
       <section className={sectionClass}><h2>Children</h2><p>FieldOPS is an enterprise workforce tool and is not intended for children.</p></section>
 

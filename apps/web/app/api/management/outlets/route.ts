@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   const contactName = text(body.contactName, 128), phone = text(body.phone, 32);
   const visitFrequency = text(body.visitFrequency, 32) || "weekly", notes = text(body.notes, 4000);
   if (!code || !name || !address || latitude === null || longitude === null || Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || !territoryId) {
-    return NextResponse.json({ error: "Code, name, address, a map point, and territory are required." }, { status: 400 });
+    return NextResponse.json({ error: "Code, name, address, a map point, and sales area are required." }, { status: 400 });
   }
 
   const db = createAdminTablesDb();
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   try {
     const territory = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId });
     const boundary = territory.active === true ? parseTerritoryBoundary(territory.boundary) : null;
-    if (!boundary) return NextResponse.json({ error: "Draw and save this active territory's map boundary before adding outlets to it." }, { status: 409 });
+    if (!boundary) return NextResponse.json({ error: "Draw and save this active sales area's map boundary before adding outlets to it." }, { status: 409 });
     if (!pointInTerritory({ latitude, longitude }, boundary)) {
       return NextResponse.json({ error: `The selected point is outside ${territory.name}. Pick a point inside its shaded boundary.` }, { status: 422 });
     }
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       if (!employee || employee.status !== "active") return NextResponse.json({ error: "Select an active salesperson." }, { status: 409 });
       const access = await territoryAccessForEmployee(db, employeeId);
       if (access.restricted && !employeeHasTerritory(access, territoryId)) {
-        return NextResponse.json({ error: "This salesperson has other territory assignments. Assign this territory to them before assigning its outlets." }, { status: 409 });
+        return NextResponse.json({ error: "This salesperson has other sales area assignments. Assign this sales area to them before assigning its outlets." }, { status: 409 });
       }
     }
 

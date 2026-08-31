@@ -10,10 +10,11 @@ import {
   managementAuditIdentity,
   managementOperationKey,
   runManagementTransaction,
+  salesAreaDeletionAssignmentPlan,
   stableManagementId,
 } from "../../../../lib/management-write";
 import { text } from "../../../../lib/mobile-auth";
-import { listAllRows } from "../../../../lib/table-data";
+import { listAllRows, listAllRowsChecked } from "../../../../lib/table-data";
 import { territoryBoundaryImpact } from "../../../../lib/territory-impact";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
   const db = createAdminTablesDb();
   try {
     const area = (await db.listRows({ databaseId, tableId: "areas", queries: [Query.equal("active", true), Query.orderAsc("$createdAt"), Query.limit(1)] })).rows[0];
-    if (!area) return NextResponse.json({ error: "Organization geography must be set up before creating a territory." }, { status: 409 });
+    if (!area) return NextResponse.json({ error: "Organization geography must be set up before creating a sales area." }, { status: 409 });
     const areaId = area.$id;
     const code = `TER-${createHash("sha256").update(`${areaId}:${name.trim().toLowerCase()}`).digest("hex").slice(0, 10).toUpperCase()}`;
     const territoryId = stableManagementId("ter", `${areaId}:${code}`);
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
         && String(existing.code) === code
         && String(existing.name).trim() === name.trim()
         && JSON.stringify(savedBoundary?.coordinates ?? null) === JSON.stringify(boundary.coordinates);
-      if (!sameRequest) return NextResponse.json({ error: "A territory with that name already exists with different details." }, { status: 409 });
+      if (!sameRequest) return NextResponse.json({ error: "A sales area with that name already exists with different details." }, { status: 409 });
       return NextResponse.json({ ok: true, territoryId, created: false, replayed: true });
     }
 
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
           territory_id: territoryId,
           effective_from: now,
           assigned_by: actor.user.$id,
-          reason: "Assigned when territory was created",
+          reason: "Assigned when sales area was created",
         }, permissions: [] });
       }
       await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
       }
     }
     const codeValue = typeof error === "object" && error && "code" in error ? Number(error.code) : 500;
-    return NextResponse.json({ error: codeValue === 409 ? "A territory with that name already exists." : "The territory could not be created." }, { status: codeValue === 409 ? 409 : 500 });
+    return NextResponse.json({ error: codeValue === 409 ? "A sales area with that name already exists." : "The sales area could not be created." }, { status: codeValue === 409 ? 409 : 500 });
   }
 }
 
@@ -121,7 +122,7 @@ export async function PATCH(request: Request) {
   if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const territoryId = text(body.territoryId, 36), boundary = parseTerritoryBoundary(body.boundary);
-  if (!territoryId || !boundary) return NextResponse.json({ error: "Territory and a valid closed map boundary are required." }, { status: 400 });
+  if (!territoryId || !boundary) return NextResponse.json({ error: "A sales area and a valid closed map boundary are required." }, { status: 400 });
   const db = createAdminTablesDb();
   try {
     const before = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId });
@@ -138,7 +139,7 @@ export async function PATCH(request: Request) {
     const affected = [...impact.outside, ...impact.invalid];
     if (affected.length > 0) {
       return NextResponse.json({
-        error: `This boundary would leave ${affected.length} active ${affected.length === 1 ? "outlet" : "outlets"} outside the territory. Include them in the boundary or move them to the correct territory first.`,
+        error: `This boundary would leave ${affected.length} active ${affected.length === 1 ? "outlet" : "outlets"} outside the sales area. Include them in the boundary or move them to the correct sales area first.`,
         code: "territory_boundary_strands_outlets",
         affectedOutlets: affected.map((outlet) => ({ id: outlet.id, name: outlet.name })),
       }, { status: 409 });
@@ -165,7 +166,124 @@ export async function PATCH(request: Request) {
     }
     return NextResponse.json({ ok: true, territoryId });
   } catch {
-    return NextResponse.json({ error: "The territory boundary could not be updated." }, { status: 500 });
+    return NextResponse.json({ error: "The sales area boundary could not be updated." }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const actor = await requireDashboardAdmin();
+  if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
+  const body = await request.json().catch(() => ({}));
+  const territoryId = text(body.territoryId, 36);
+  if (!territoryId) return NextResponse.json({ error: "Choose a sales area to delete." }, { status: 400 });
+
+  const db = createAdminTablesDb();
+  const now = new Date().toISOString();
+  try {
+    const result = await runManagementTransaction(db, async (transactionId) => {
+      const territory = await db.getRow({
+        databaseId,
+        tableId: "territories",
+        rowId: territoryId,
+        transactionId,
+      }).catch((error) => {
+        if (isAppwriteNotFound(error)) return null;
+        throw error;
+      });
+      if (!territory) throw new SalesAreaDeletionProblem(404, "This sales area no longer exists.");
+      if (territory.active !== true) return { changed: false, name: String(territory.name), endedAssignments: 0 };
+
+      const assignments = await listAllRowsChecked(db, databaseId, "employee_assignments", [], 5_000, transactionId);
+      const { targetAssignments: activeTargetAssignments, rolesToRetain } = salesAreaDeletionAssignmentPlan(assignments, territoryId, now);
+
+      const operationKey = managementOperationKey(body.operationId, "territory.delete", territoryId, territory.$updatedAt);
+      const retainedRoleAssignments: string[] = [];
+      for (const { employeeId, roleId } of rolesToRetain) {
+        const assignmentId = stableManagementId("assign", "role-retained-after-area-delete", employeeId, roleId, territoryId);
+        await db.createRow({
+          databaseId,
+          tableId: "employee_assignments",
+          rowId: assignmentId,
+          transactionId,
+          data: {
+            employee_id: employeeId,
+            role_id: roleId,
+            effective_from: now,
+            assigned_by: actor.user.$id,
+            reason: "Role retained after sales area deletion",
+          },
+          permissions: [],
+        });
+        retainedRoleAssignments.push(assignmentId);
+      }
+
+      for (const assignment of activeTargetAssignments) {
+        await db.updateRow({
+          databaseId,
+          tableId: "employee_assignments",
+          rowId: assignment.$id,
+          transactionId,
+          data: { effective_to: now },
+        });
+      }
+      await db.updateRow({
+        databaseId,
+        tableId: "territories",
+        rowId: territoryId,
+        transactionId,
+        data: { active: false },
+      });
+
+      const { auditId, correlationId } = managementAuditIdentity("territory.deleted", territoryId, operationKey);
+      await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
+        actor_user_id: actor.user.$id,
+        action: "territory.deleted",
+        entity_type: "territory",
+        entity_id: territoryId,
+        occurred_at: now,
+        before_json: JSON.stringify({
+          name: String(territory.name),
+          code: String(territory.code),
+          active: true,
+          activeAssignmentIds: activeTargetAssignments.map((assignment) => assignment.$id),
+        }),
+        after_json: JSON.stringify({
+          active: false,
+          endedAssignments: activeTargetAssignments.map((assignment) => assignment.$id),
+          retainedRoleAssignments,
+          outletsPreserved: true,
+        }),
+        reason: "Temporary sales area restriction ended; outlets and historical records retained",
+        correlation_id: correlationId,
+      }, permissions: [] });
+
+      return {
+        changed: true,
+        name: String(territory.name),
+        endedAssignments: activeTargetAssignments.length,
+      };
+    });
+    return NextResponse.json({ ok: true, deleted: true, replayed: !result.changed, ...result });
+  } catch (error) {
+    if (error instanceof SalesAreaDeletionProblem) {
+      return NextResponse.json({
+        error: error.message,
+        code: "sales_area_not_found",
+      }, { status: error.status });
+    }
+    if (isAppwriteConflict(error)) {
+      const current = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId }).catch(() => null);
+      if (current?.active === false) {
+        return NextResponse.json({ ok: true, deleted: true, changed: false, replayed: true, name: String(current.name), endedAssignments: 0 });
+      }
+    }
+    return NextResponse.json({ error: "The sales area could not be deleted. No partial change was saved; retrying is safe." }, { status: 500 });
+  }
+}
+
+class SalesAreaDeletionProblem extends Error {
+  constructor(readonly status: 404, message: string) {
+    super(message);
   }
 }
 

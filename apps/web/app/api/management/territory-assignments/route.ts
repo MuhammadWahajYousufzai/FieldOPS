@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const employeeId = text(body.employeeId, 36), territoryId = text(body.territoryId, 36);
-  if (!employeeId || !territoryId) return NextResponse.json({ error: "Salesperson and territory are required." }, { status: 400 });
+  if (!employeeId || !territoryId) return NextResponse.json({ error: "Salesperson and sales area are required." }, { status: 400 });
   const db = createAdminTablesDb();
   const [employee, territory, role] = await Promise.all([
     db.getRow({ databaseId, tableId: "employees", rowId: employeeId }).catch(() => null),
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     salesRole(db),
   ]);
   if (!employee || employee.status !== "active" || !territory || territory.active !== true || !role) {
-    return NextResponse.json({ error: "Select an active salesperson and territory." }, { status: 409 });
+    return NextResponse.json({ error: "Select an active salesperson and sales area." }, { status: 409 });
   }
 
   const history = await assignmentRows(db, employeeId, territoryId);
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
         .filter((row) => String(row.role_id) === role.$id);
       if (replay[0]) return NextResponse.json({ ok: true, assignmentId: replay[0].$id, created: false, replayed: true });
     }
-    return NextResponse.json({ error: "Territory access could not be assigned. No partial assignment was saved; retrying is safe." }, { status: 500 });
+    return NextResponse.json({ error: "Sales area access could not be assigned. No partial assignment was saved; retrying is safe." }, { status: 500 });
   }
 }
 
@@ -80,7 +80,7 @@ export async function DELETE(request: Request) {
   if (!actor) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const employeeId = text(body.employeeId, 36), territoryId = text(body.territoryId, 36);
-  if (!employeeId || !territoryId) return NextResponse.json({ error: "Salesperson and territory are required." }, { status: 400 });
+  if (!employeeId || !territoryId) return NextResponse.json({ error: "Salesperson and sales area are required." }, { status: 400 });
   const db = createAdminTablesDb();
   const [targetHistory, employeeHistory, role] = await Promise.all([
     assignmentRows(db, employeeId, territoryId),
@@ -98,7 +98,7 @@ export async function DELETE(request: Request) {
   const unrestricted = removalLeavesUnrestricted(activeTerritoryIds, territoryId);
   if (unrestricted && body.confirmUnrestricted !== true) {
     return NextResponse.json({
-      error: "Removing this last territory will allow field work in every area. Confirm unrestricted access before continuing.",
+      error: "Removing this last sales area will allow field work in every area. Confirm unrestricted access before continuing.",
       code: "confirm_unrestricted_required",
       employeeId,
       territoryId,
@@ -131,7 +131,7 @@ export async function DELETE(request: Request) {
           role_id: role.$id,
           effective_from: now,
           assigned_by: actor.user.$id,
-          reason: "Role retained after territory removal",
+          reason: "Role retained after sales area removal",
         }, permissions: [] });
       }
       await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
@@ -159,7 +159,7 @@ export async function DELETE(request: Request) {
     if (remaining && remaining.length === 0) {
       return NextResponse.json({ ok: true, ended: 0, changed: false, replayed: true });
     }
-    return NextResponse.json({ error: "Territory access could not be removed. No partial change was saved; retrying is safe." }, { status: 500 });
+    return NextResponse.json({ error: "Sales area access could not be removed. No partial change was saved; retrying is safe." }, { status: 500 });
   }
 }
 

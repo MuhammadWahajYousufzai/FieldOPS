@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   if (!employee || employee.status !== "active") return NextResponse.json({ error: "Select an active salesperson." }, { status: 409 });
   const access = await territoryAccessForEmployee(db, employeeId);
   if (access.restricted && !employeeHasTerritory(access, String(outlet.territory_id))) {
-    return NextResponse.json({ error: "This outlet is outside the salesperson's assigned territories." }, { status: 409 });
+    return NextResponse.json({ error: "This outlet is outside the salesperson's assigned sales areas." }, { status: 409 });
   }
 
   const routeId = stableManagementId("route", `${date}:${employeeId}:${outletId}`);

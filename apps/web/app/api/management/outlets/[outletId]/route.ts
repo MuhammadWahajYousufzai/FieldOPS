@@ -73,7 +73,7 @@ async function updateOutletMetadata(outletId: string, body: Record<string, unkno
   const territoryId = text(body.territoryId, 36);
   const expectedUpdatedAt = text(body.expectedUpdatedAt, 40);
   if (!name || !address || !territoryId || !expectedUpdatedAt) {
-    return NextResponse.json({ error: "Name, address, territory, and the current record version are required." }, { status: 400 });
+    return NextResponse.json({ error: "Name, address, sales area, and the current record version are required." }, { status: 400 });
   }
 
   const db = createAdminTablesDb();
@@ -88,15 +88,20 @@ async function updateOutletMetadata(outletId: string, body: Record<string, unkno
       await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
       return NextResponse.json({ error: "The outlet was not found." }, { status: 404 });
     }
+    const keepsEndedSalesArea = Boolean(territory)
+      && territory?.active !== true
+      && String(outlet.territory_id) === territoryId;
     const boundary = territory?.active === true ? parseTerritoryBoundary(territory.boundary) : null;
-    if (!territory || !boundary) {
-      await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
-      return NextResponse.json({ error: "Choose an active territory with a saved boundary." }, { status: 409 });
-    }
     const latitude = Number(outlet.latitude), longitude = Number(outlet.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !pointInTerritory({ latitude, longitude }, boundary)) {
-      await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
-      return NextResponse.json({ error: `This outlet's locked GPS point is outside ${String(territory.name)}. Redraw the correct boundary or choose the territory containing the point.` }, { status: 422 });
+    if (!keepsEndedSalesArea) {
+      if (!territory || !boundary) {
+        await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
+        return NextResponse.json({ error: "Choose an active sales area with a saved boundary." }, { status: 409 });
+      }
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !pointInTerritory({ latitude, longitude }, boundary)) {
+        await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
+        return NextResponse.json({ error: `This outlet's locked GPS point is outside ${String(territory.name)}. Redraw the correct boundary or choose the sales area containing the point.` }, { status: 422 });
+      }
     }
 
     const before = outletMetadata(outlet);
@@ -149,7 +154,7 @@ async function updateOutletMetadata(outletId: string, body: Record<string, unkno
     if (isAppwriteNotFound(error)) {
       const current = await getRowOrNull(db, "outlets", outletId).catch(() => null);
       return current
-        ? NextResponse.json({ error: "Choose an active territory with a saved boundary." }, { status: 409 })
+        ? NextResponse.json({ error: "Choose an active sales area with a saved boundary." }, { status: 409 })
         : NextResponse.json({ error: "The outlet was not found." }, { status: 404 });
     }
     return NextResponse.json({

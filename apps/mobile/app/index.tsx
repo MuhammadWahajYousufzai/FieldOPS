@@ -2364,7 +2364,7 @@ function Login({
           </View>
           <Text className="mt-4 text-center text-[29px] font-black text-white">Yousuf Rice FieldOPS</Text>
           <Text className="mt-2 max-w-[360px] text-center leading-5 text-[#BAC4D8]">
-            Assigned visits, territory-aware field work, evidence, orders, and offline route tracking.
+            Assigned visits, sales-area-aware field work, evidence, orders, and offline route tracking.
           </Text>
         </View>
         <View className="gap-3.5 rounded-[18px] bg-white p-5">
@@ -2520,7 +2520,7 @@ function Header({
     <View className="flex-row gap-1.5">
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel="Refresh today’s assignments and territory"
+        accessibilityLabel="Refresh today’s assignments and sales area"
         accessibilityState={{ disabled: refreshing }}
         className="min-h-11 min-w-11 items-center justify-center rounded-full bg-[#E6ECF8] px-2"
         onPress={onRefresh}
@@ -3063,7 +3063,7 @@ function Order({
   const total = Math.max(0, Number(quantity) || 0) * Math.max(0, Number(unitPrice) || 0);
   return <>
     <ScreenTitle>Take an order</ScreenTitle>
-    <BodyText>The current GPS point is saved. If territories are assigned, orders are enabled only inside one of them.</BodyText>
+    <BodyText>The current GPS point is saved. If sales areas are assigned, orders are enabled only inside one of them.</BodyText>
     {!accessAllowed && <WarningNotice title="Orders unavailable here" body={territoryMessage} />}
     <View className="gap-3 rounded-[14px] border border-line bg-white p-[18px]">
       <InputLabel>ASSIGNED VISIT · OPTIONAL</InputLabel>
@@ -3866,7 +3866,7 @@ function PlaceReviewNotice({ outlet }: { outlet: Outlet }) {
   }
   return <WarningNotice
     title="Waiting for admin review"
-    body="Your point, photo, and voice sales report reached the office. Admin will confirm the territory and official name before saving this as a permanent outlet."
+    body="Your point, photo, and voice sales report reached the office. Admin will confirm the sales area and official name before saving this as a permanent outlet."
   />;
 }
 

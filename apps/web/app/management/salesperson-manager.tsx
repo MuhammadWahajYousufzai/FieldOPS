@@ -668,7 +668,7 @@ function RosterLoading() {
 
 function EmptyRoster({ onCreate }: { onCreate: () => void }) {
   return <div className="grid min-h-[430px] place-items-center bg-[linear-gradient(135deg,rgba(37,99,235,0.04),transparent_55%)] p-6 text-center">
-    <div className="max-w-md"><span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl border border-blue-200 bg-blue-50 text-xl font-black text-blue-700" aria-hidden="true">+</span><p className={`${ui.eyebrow} mt-5`}>Roster ready</p><h3 className="mt-1 text-2xl font-black text-[#14213D]">Add the first salesperson</h3><p className="mt-2 text-sm leading-6 text-slate-500">Create a field-only identity here, then assign territory and daily work from the rest of the management workspace.</p><button type="button" className={`${ui.button} mt-5`} onClick={onCreate}>Create first salesperson</button></div>
+    <div className="max-w-md"><span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl border border-blue-200 bg-blue-50 text-xl font-black text-blue-700" aria-hidden="true">+</span><p className={`${ui.eyebrow} mt-5`}>Roster ready</p><h3 className="mt-1 text-2xl font-black text-[#14213D]">Add the first salesperson</h3><p className="mt-2 text-sm leading-6 text-slate-500">Create a field-only identity here, then assign sales areas and daily work from the rest of the management workspace.</p><button type="button" className={`${ui.button} mt-5`} onClick={onCreate}>Create first salesperson</button></div>
   </div>;
 }
 

@@ -102,7 +102,7 @@ export async function POST(request: Request) {
   const address = text(body.address, 500) || text(visit.customer_address, 500) || "Address recorded at the verified GPS point";
   const latitude = number(visit.latitude), longitude = number(visit.longitude), accuracy = number(visit.accuracy);
   if (!officialName || !territoryId || latitude === null || longitude === null) {
-    return NextResponse.json({ error: "Official place name, territory, and a valid marked point are required." }, { status: 400 });
+    return NextResponse.json({ error: "Official place name, sales area, and a valid marked point are required." }, { status: 400 });
   }
   if (accuracy === null || accuracy < 0 || accuracy > MAX_PLACE_MARK_ACCURACY_METERS) {
     return NextResponse.json({ error: "This point has a weak GPS reading and cannot become permanent. Ask the salesperson to mark it again near the shop entrance after the accuracy number improves." }, { status: 409 });
@@ -117,10 +117,10 @@ export async function POST(request: Request) {
   const territory = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId }).catch(() => null);
   const boundary = territory && territory.active === true ? parseTerritoryBoundary(territory.boundary) : null;
   if (!territory || !boundary) {
-    return NextResponse.json({ error: "Choose an active territory with a saved map boundary." }, { status: 409 });
+    return NextResponse.json({ error: "Choose an active sales area with a saved map boundary." }, { status: 409 });
   }
   if (!pointInTerritory({ latitude, longitude }, boundary)) {
-    return NextResponse.json({ error: `The salesperson's verified point is outside ${String(territory.name)}. Choose the territory containing this point.` }, { status: 422 });
+    return NextResponse.json({ error: `The salesperson's verified point is outside ${String(territory.name)}. Choose the sales area containing this point.` }, { status: 422 });
   }
 
   const outletId = visitId;
