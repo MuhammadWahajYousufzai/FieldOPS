@@ -1,9 +1,10 @@
 "use client";
 
 import type { TerritoryBoundary } from "@fieldops/domain";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PointMapPicker, TerritoryBoundaryEditor, type SelectedPoint, type TerritoryMapOption } from "./map-editors";
+import { SalespersonManager } from "./salesperson-manager";
 import { ui } from "../ui";
 import { preciseOperationalPolicy, type OperationalPolicy } from "../../lib/operational-policy";
 
@@ -40,9 +41,9 @@ async function requestJson(path: string, body: object, method = "POST") {
   return result;
 }
 
-type ControlView = "plan" | "places" | "territories" | "team" | "operations";
+export type ControlView = "plan" | "places" | "territories" | "team" | "operations";
 
-export function ManagementForms({ employees, outlets, outletRecords, territories, territoryAssignments, dailyAssignments, today, operationsPolicy }: {
+export function ManagementForms({ employees, outlets, outletRecords, territories, territoryAssignments, dailyAssignments, today, operationsPolicy, view }: {
   employees: Option[];
   outlets: Option[];
   outletRecords: OutletRecord[];
@@ -51,28 +52,17 @@ export function ManagementForms({ employees, outlets, outletRecords, territories
   dailyAssignments: DailyAssignment[];
   today: string;
   operationsPolicy: OperationalPolicy;
+  view: ControlView;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [view, setView] = useState<ControlView>("plan");
   const [outletPoint, setOutletPoint] = useState<SelectedPoint | null>(null);
   const [outletTerritoryId, setOutletTerritoryId] = useState("");
   const [newBoundary, setNewBoundary] = useState<TerritoryBoundary | null>(null);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [editorKey, setEditorKey] = useState(0);
   const [policyDraft, setPolicyDraft] = useState(operationsPolicy);
-
-  useEffect(() => {
-    const openControl = (event: Event) => {
-      const requested = (event as CustomEvent<string>).detail;
-      if (["plan", "places", "territories", "team", "operations"].includes(requested)) {
-        setView(requested as ControlView);
-      }
-    };
-    window.addEventListener("fieldops:open-management-control", openControl);
-    return () => window.removeEventListener("fieldops:open-management-control", openControl);
-  }, []);
 
   function setActionBusy(key: string, value: boolean) {
     setBusy((current) => {
@@ -173,32 +163,8 @@ export function ManagementForms({ employees, outlets, outletRecords, territories
 
   return <>
     {status && <p role="status" aria-live="polite" className={`mb-5 ${status.includes("saved") || status.includes("removed") ? ui.messageSuccess : ui.messageError}`}>{status}</p>}
-    <section className="sticky top-3 z-20 mb-5 scroll-mt-5 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-[0_12px_32px_rgba(20,33,61,0.10)] backdrop-blur" id="management-controls" aria-label="Management tasks">
-      <div className="grid grid-cols-2 gap-1 sm:grid-cols-5">
-        {([
-          ["plan", "Daily plan", "Assign today"],
-          ["places", "Places", "Create outlets"],
-          ["territories", "Territories", "Draw boundaries"],
-          ["team", "Team & access", "People and scope"],
-          ["operations", "Tracking & sync", "Phone policy"],
-        ] as const).map(([key, label, detail]) => <button
-          type="button"
-          key={key}
-          className={`cursor-pointer rounded-xl px-3 py-2.5 text-left transition focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-blue-300 ${view === key ? "bg-[#14213D] text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
-          aria-pressed={view === key}
-          onClick={() => setView(key)}
-        ><strong className="block text-sm">{label}</strong><small className={`mt-0.5 block text-[10px] ${view === key ? "text-slate-300" : "text-slate-500"}`}>{detail}</small></button>)}
-      </div>
-    </section>
     <section className="grid items-start gap-5 lg:grid-cols-2">
-      {view === "team" && <form className={`${ui.card} grid gap-4`} onSubmit={(event) => runForm(event, "/api/management/employees", "Salesperson")}>
-        <div><p className={ui.eyebrow}>People</p><h2 className={ui.h2}>Create salesperson</h2><p className={ui.lede}>Creates a field-only login. Territory access can be assigned now or later.</p></div>
-        <label className={ui.label}>Full name<input className={ui.input} name="name" placeholder="Ali Raza" required /></label>
-        <label className={ui.label}>Email<input className={ui.input} name="email" type="email" placeholder="ali@example.com" autoComplete="email" required /></label>
-        <label className={ui.label}>Phone <span className="font-medium text-slate-500">optional</span><input className={ui.input} name="phone" type="tel" placeholder="+92 300 1234567" autoComplete="tel" /></label>
-        <label className={ui.label}>Salesperson password<input className={ui.input} name="password" type="password" placeholder="Create a separate password" minLength={8} autoComplete="new-password" required /></label>
-        <button className={ui.button} disabled={Boolean(busy.Salesperson)}>{busy.Salesperson ? "Creating…" : "Create salesperson"}</button>
-      </form>}
+      {view === "team" && <SalespersonManager />}
 
       {view === "territories" && <form className={`${ui.card} grid gap-4`} onSubmit={createTerritory}>
         <div><p className={ui.eyebrow}>Territory control</p><h2 className={ui.h2}>Draw a territory</h2><p className={ui.lede}>Tap around the area to create a closed boundary. Assigning salespeople is optional.</p></div>

@@ -1,20 +1,21 @@
 import { redirect } from "next/navigation";
 import { Query } from "node-appwrite";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { hasRequiredVisitEvidence } from "@fieldops/domain";
 import { requireDashboardAdmin } from "../lib/auth";
 import { workDate } from "../lib/mobile-auth";
 import { operationalPolicyFromRow } from "../lib/operational-policy";
 import { liveProgressRevision } from "../lib/live-progress";
 import { listRowsResult } from "../lib/table-data";
 import type { LiveAttendance, LiveEmployee, LiveLocationPoint } from "../lib/live-types";
-import { LogoutButton } from "./logout-button";
+import { OperationsDashboardShell } from "./dashboard-shells";
 import { LiveGpsCount, LiveOperations } from "./live-operations";
 import type { MapPoint } from "./operations-map";
 import { ui } from "./ui";
 
 export const dynamic = "force-dynamic";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
+export type OperationsView = "overview" | "routes" | "visits" | "orders";
+type DashboardProps = { searchParams: Promise<{ date?: string; employee?: string }> };
 
 function time(value: unknown) {
   if (!value) return "—";
@@ -30,7 +31,11 @@ function latestAttendanceByEmployee<T extends object>(rows: T[]) {
   return [...latest.values()];
 }
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ date?: string; employee?: string }> }) {
+export default function Dashboard(props: DashboardProps) {
+  return OperationsPage({ ...props, view: "overview" });
+}
+
+export async function OperationsPage({ searchParams, view }: DashboardProps & { view: OperationsView }) {
   const actor = await requireDashboardAdmin();
   if (!actor) redirect("/login");
   const params = await searchParams;
@@ -53,9 +58,15 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const dashboardAdminEmployeeId = employeeRows.find((employee) => String(employee.user_id) === actor.user.$id)?.$id;
   const attendanceRows = attendanceResult.rows, rawVisitRows = visitResult.rows, locationRows = locationResult.rows, orderRows = orderResult.rows;
   const operationsPolicy = operationalPolicyFromRow(organizationResult.rows[0] as Record<string, unknown> | undefined);
-  const evidenceResult = rawVisitRows.length > 0 ? await listRowsResult(db, databaseId, "visit_evidence", [], 5_000) : null;
-  const evidenceRows = evidenceResult?.rows ?? [];
-  const dataErrors = [...initialResults, ...(evidenceResult ? [evidenceResult] : [])].filter((result) => result.error);
+  const evidenceResults = await Promise.all(chunk(rawVisitRows.map((visit) => visit.$id), 75).map((visitIds) => listRowsResult(
+    db,
+    databaseId,
+    "visit_evidence",
+    [Query.equal("visit_id", visitIds)],
+    Math.max(100, visitIds.length * 3),
+  )));
+  const evidenceRows = evidenceResults.flatMap((result) => result.rows);
+  const dataErrors = [...initialResults, ...evidenceResults].filter((result) => result.error);
   employeeRows.sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
   outletRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   locationRows.sort((a, b) => String(a.captured_at).localeCompare(String(b.captured_at)));
@@ -70,10 +81,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     list.push(item);
     evidence.set(String(item.visit_id), list);
   }
-  const visitRows = rawVisitRows.filter((visit) => {
-    const types = new Set((evidence.get(visit.$id) ?? []).map((item) => String(item.type)));
-    return hasRequiredVisitEvidence({ photo: types.has("photo"), audio: types.has("audio") });
-  });
+  // Completed visits remain visible even when an evidence lookup fails. The row
+  // then reports the missing attachment instead of hiding the entire visit.
+  const visitRows = rawVisitRows;
   visitRows.sort((a, b) => String(b.check_in_at).localeCompare(String(a.check_in_at)));
   const visibleRoutes = routeRows.filter((row) => selectedEmployee === "all" || row.employee_id === selectedEmployee);
   const assignedOutletIds = new Set(visibleRoutes.map((row) => String(row.outlet_id)));
@@ -120,52 +130,80 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const metricLabel = "block text-sm text-slate-600";
   const metricDetail = "block text-xs text-slate-500";
   const tableLink = "font-extrabold text-blue-700 hover:text-blue-900";
-  return <main className={ui.shell}>
-    <aside className={ui.rail}>
-      <div className={ui.brand}><span className={ui.logo}>YR</span><div><strong className="block text-sm">Yousuf Rice FieldOps</strong><small className="mt-1 block text-slate-400">Field operations</small></div></div>
-      <nav className={ui.nav} aria-label="Primary"><a className={`${ui.navLink} ${ui.navSelected}`} href="/">Overview</a><a className={ui.navLink} href="/management">Management</a><a className={ui.navLink} href="#route-history">Route history</a><a className={ui.navLink} href="#visits">Visit history</a><a className={ui.navLink} href="#orders">Orders</a></nav>
-      <div className="mt-6 border-t border-white/15 px-2 pt-4 lg:mt-auto"><small className="mb-1 block text-slate-400">Signed in as</small><strong className="block">{actor.user.name}</strong><LogoutButton /></div>
-    </aside>
-    <section className={ui.workspace}>
-      <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>Date-wise field record</p><h1 className={ui.h1}>Every commitment and field visit.</h1><p className={ui.lede}>Quality-checked route history, unfinished assignments, salesperson-marked places, photo and voice evidence, and territory-aware orders.</p></div><a className={ui.button} href="/management">Open management controls</a></header>
-      {dataErrors.length > 0 && <section className="mb-6 border-l-4 border-amber-600 bg-amber-50 p-4 text-amber-950" role="alert"><strong className="block">Some dashboard records could not be loaded.</strong><p className="mt-1 text-sm leading-6">The visible totals may be incomplete; an unavailable table is not being reported as zero. Refresh to retry: {dataErrors.map((result) => result.tableId.replaceAll("_", " ")).join(", ")}.</p><a className="mt-3 inline-flex font-black text-amber-950 underline decoration-2 underline-offset-4" href={`/?date=${date}&employee=${selectedEmployee}`}>Retry dashboard data</a></section>}
-      <form className="mb-7 flex flex-col items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-end" method="get" id="reports">
-        <label className={`${ui.label} sm:min-w-48`}>Date<input className={ui.input} type="date" name="date" defaultValue={date} /></label>
-        <label className={`${ui.label} sm:min-w-56`}>Salesperson<select className={ui.input} name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => !dashboardAdminEmployeeId || employee.$id !== dashboardAdminEmployeeId).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
-        <button className={ui.button}>View history</button>
-      </form>
+  const pagePath = view === "overview" ? "/" : `/${view}`;
+  const queryString = new URLSearchParams({ date, employee: selectedEmployee }).toString();
+  const pageMeta = {
+    overview: { eyebrow: "Today at a glance", title: "Field work you can act on.", lede: "See unfinished commitments, confirmed visits, orders, and route coverage for the selected day." },
+    routes: { eyebrow: "Route truth", title: "Where the field team actually travelled.", lede: "Inspect live positions and quality-checked route history without turning GPS gaps into invented roads." },
+    visits: { eyebrow: "Visits & evidence", title: "Photos and voice notes, attached to the visit.", lede: "Review every confirmed visit with its storefront photo, playable voice report, GPS check, and outcome." },
+    orders: { eyebrow: "Order record", title: "Orders captured in the field.", lede: "Review customer orders with salesperson, value, time, and the GPS point where each order was recorded." },
+  }[view];
+  const header = <>
+    <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>{pageMeta.eyebrow}</p><h1 className={ui.h1}>{pageMeta.title}</h1><p className={ui.lede}>{pageMeta.lede}</p></div><a className={ui.button} href="/management">Open management controls</a></header>
+    {dataErrors.length > 0 && <section className="mb-6 border-l-4 border-amber-600 bg-amber-50 p-4 text-amber-950" role="alert"><strong className="block">Some dashboard records could not be loaded.</strong><p className="mt-1 text-sm leading-6">The visible totals may be incomplete; an unavailable table is not being reported as zero. Refresh to retry: {[...new Set(dataErrors.map((result) => result.tableId.replaceAll("_", " ")))].join(", ")}.</p><a className="mt-3 inline-flex font-black text-amber-950 underline decoration-2 underline-offset-4" href={`${pagePath}?${queryString}`}>Retry dashboard data</a></section>}
+    <form className="mb-7 flex flex-col items-stretch gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(20,33,61,0.04)] sm:flex-row sm:items-end" method="get" action={pagePath} id="reports">
+      <label className={`${ui.label} sm:min-w-48`}>Date<input className={ui.input} type="date" name="date" defaultValue={date} /></label>
+      <label className={`${ui.label} sm:min-w-56`}>Salesperson<select className={ui.input} name="employee" defaultValue={selectedEmployee}><option value="all">All salespersons</option>{employeeRows.filter((employee) => !dashboardAdminEmployeeId || employee.$id !== dashboardAdminEmployeeId).map((employee) => <option key={employee.$id} value={employee.$id}>{String(employee.display_name)}</option>)}</select></label>
+      <button className={ui.button}>View history</button>
+    </form>
+  </>;
+  const overview = <>
       <section className="mb-7 grid border-y border-slate-200 sm:grid-cols-2 xl:grid-cols-4" aria-label="Filtered totals">
         <article className={metricClass}><span className={metricLabel}>Assigned completion</span><b className={metricValue}>{assignedCompleted}/{visibleRoutes.length}</b><small className={metricDetail}>{assignedPending} still need follow-up</small></article>
         <article className={metricClass}><span className={metricLabel}>Visits recorded</span><b className={metricValue}>{completedVisits}</b><small className={metricDetail}>{selfInitiatedVisits} added by salespeople</small></article>
         <article className={metricClass}><span className={metricLabel}>Orders recorded</span><b className={metricValue}>{orderRows.length}</b><small className={metricDetail}>PKR {sales.toLocaleString()}</small></article>
         <article className={metricClass}><span className={metricLabel}>GPS route points</span><span className={metricValue}><LiveGpsCount initialCount={locationRows.length} /></span><small className={metricDetail}>Raw fixes preserved for audit</small></article>
       </section>
-      <LiveOperations key={`${date}:${selectedEmployee}`} date={date} selectedEmployee={selectedEmployee} pollingEnabled={date === workDate()} generatedAt={new Date().toISOString()} initialProgressRevision={initialProgressRevision} staticPoints={staticMapPoints} initialEmployees={liveEmployees} initialAttendance={liveAttendance} initialLocations={liveLocations} routePolicy={operationsPolicy} />
       <section className={ui.tableCard} id="assignments"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Management commitments</p><h2 className={ui.h2}>Assigned visit completion status</h2></div><span className="text-sm font-bold text-slate-500">{assignedPending} need follow-up</span></div>
         <div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Salesperson</th><th>Assigned customer</th><th>Sequence</th><th>Status</th><th>Completed</th></tr></thead><tbody>
           {visibleRoutes.map((route) => <tr key={route.$id}><td>{String(employees.get(String(route.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(outlets.get(String(route.outlet_id))?.name ?? "Unknown")}</strong><small>{String(outlets.get(String(route.outlet_id))?.address ?? "")}</small></td><td>{Number(route.sequence)}</td><td><span className={route.status === "completed" ? "font-extrabold text-emerald-700" : "font-extrabold text-amber-700"}>{String(route.status).replaceAll("_", " ")}</span></td><td>{time(route.completed_at)}</td></tr>)}
           {visibleRoutes.length === 0 && <tr><td colSpan={5} className="py-9 text-center text-slate-500">No visits were assigned for this filter.</td></tr>}
         </tbody></table></div>
       </section>
-      <section className={ui.tableCard} id="visits"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Visit history</p><h2 className={ui.h2}>Location, evidence, and place approval</h2></div><span className="text-sm font-bold text-slate-500">{visitRows.length} records</span></div>
-        <div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Time</th><th>Salesperson</th><th>Visit</th><th>Place approval</th><th>Location check</th><th>Outcome</th><th>Required evidence</th></tr></thead><tbody>
-          {visitRows.map((visit) => {
-            const assigned = Boolean(visit.route_assignment_id);
-            const approvalStatus = assigned ? "not_applicable" : String(visit.place_approval_status || "pending_review");
-            const outlet = outlets.get(String(visit.approved_outlet_id || visit.outlet_id));
-            const submittedName = String(visit.customer_name || "");
-            const officialName = String(outlet?.name || submittedName || "Unknown");
-            const submittedNameChanged = !assigned && approvalStatus === "approved" && Boolean(submittedName) && submittedName !== officialName;
-            const approvalLabel = assigned ? "Not required" : approvalStatus === "approved" ? "Permanent place" : approvalStatus === "rejected" ? "Rejected" : "Awaiting admin";
-            const approvalStyle = assigned ? "bg-slate-100 text-slate-700" : approvalStatus === "approved" ? "bg-emerald-50 text-emerald-800" : approvalStatus === "rejected" ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-800";
-            return <tr key={visit.$id}><td>{time(visit.check_in_at)}<small>{visit.check_out_at ? `Finished ${time(visit.check_out_at)}` : "In progress"}</small></td><td>{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown")}</td><td><span className={`mb-2 block w-max rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${assigned ? "bg-blue-50 text-blue-800" : "bg-emerald-50 text-emerald-800"}`}>{assigned ? "Assigned" : "Salesperson-added"}</span><strong>{officialName}</strong><small>{String(outlet?.address || visit.customer_address || "GPS location saved")}</small>{submittedNameChanged && <small className="font-bold text-blue-700">Submitted as “{submittedName}”</small>}</td><td><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${approvalStyle}`}>{approvalLabel}</span>{!assigned && visit.reviewed_at && <small>Reviewed {time(visit.reviewed_at)}</small>}{!assigned && visit.review_note && <small>{String(visit.review_note)}</small>}</td><td><a className={tableLink} href={`https://www.openstreetmap.org/?mlat=${visit.latitude}&mlon=${visit.longitude}#map=18/${visit.latitude}/${visit.longitude}`} target="_blank">Open visit point</a><small>{assigned ? `${Math.round(Number(visit.geofence_distance_m))} m at check-in` : `${Math.round(Number(visit.completion_distance_m ?? 0))} m from start at finish`} · maximum 70 m</small></td><td>{String(visit.outcome ?? visit.status)}</td><td><div className="grid gap-2">{(evidence.get(visit.$id) ?? []).map((item) => item.type === "photo" ? <a className={tableLink} key={item.$id} href={`/api/evidence/${item.file_id}`} target="_blank">View photo</a> : <audio className="h-9 w-48" key={item.$id} controls preload="none" src={`/api/evidence/${item.file_id}`} />)}</div></td></tr>;
-          })}
-          {visitRows.length === 0 && <tr><td colSpan={7} className="py-9 text-center text-slate-500">No visits are recorded for this filter.</td></tr>}
-        </tbody></table></div>
-      </section>
-      <section className={ui.tableCard} id="orders"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Order history</p><h2 className={ui.h2}>GPS-verified field orders</h2></div><span className="text-sm font-bold text-slate-500">{orderRows.length} records</span></div><div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Time</th><th>Salesperson</th><th>Customer</th><th>Product</th><th>Quantity</th><th>Total</th><th>Location</th></tr></thead><tbody>{orderRows.map((order) => <tr key={order.$id}><td>{time(order.captured_at)}</td><td>{String(employees.get(String(order.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(order.customer_name)}</strong><small>{String(order.phone || order.address || "")}</small></td><td>{String(order.product_name)}</td><td>{Number(order.quantity_kg).toLocaleString()} kg</td><td>PKR {Number(order.total_amount).toLocaleString()}</td><td><a className={tableLink} href={`https://www.openstreetmap.org/?mlat=${order.latitude}&mlon=${order.longitude}#map=18/${order.latitude}/${order.longitude}`} target="_blank">Open map</a></td></tr>)}{orderRows.length === 0 && <tr><td colSpan={7} className="py-9 text-center text-slate-500">No orders are recorded for this filter.</td></tr>}</tbody></table></div></section>
-    </section>
-  </main>;
+  </>;
+  const routes = <LiveOperations key={`${date}:${selectedEmployee}`} date={date} selectedEmployee={selectedEmployee} pollingEnabled={date === workDate()} generatedAt={new Date().toISOString()} initialProgressRevision={initialProgressRevision} staticPoints={staticMapPoints} initialEmployees={liveEmployees} initialAttendance={liveAttendance} initialLocations={liveLocations} routePolicy={operationsPolicy} />;
+  const visitsWithCompleteEvidence = visitRows.filter((visit) => {
+    const types = new Set((evidence.get(visit.$id) ?? []).map((item) => String(item.type)));
+    return types.has("photo") && types.has("audio");
+  }).length;
+  const visits = <section className="grid gap-5" id="visits">
+    <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(20,33,61,0.055)] sm:grid-cols-[1fr_auto] sm:items-stretch">
+      <div className="p-5 sm:p-6"><p className={ui.eyebrow}>Evidence ledger</p><h2 className={ui.h2}>Confirmed media on the server</h2><p className={ui.lede}>A photo or voice note appears here only after the phone receives a successful server confirmation.</p></div>
+      <div className="grid grid-cols-2 border-t border-slate-200 sm:border-l sm:border-t-0">
+        <div className="grid min-w-32 place-content-center border-r border-slate-200 p-5 text-center"><b className="text-3xl font-black text-emerald-700">{visitsWithCompleteEvidence}</b><small className="mt-1 text-xs font-bold text-slate-500">Complete</small></div>
+        <div className="grid min-w-32 place-content-center p-5 text-center"><b className={`text-3xl font-black ${visitRows.length - visitsWithCompleteEvidence ? "text-amber-700" : "text-slate-400"}`}>{visitRows.length - visitsWithCompleteEvidence}</b><small className="mt-1 text-xs font-bold text-slate-500">Missing media</small></div>
+      </div>
+    </div>
+    {visitRows.map((visit) => {
+      const assigned = Boolean(visit.route_assignment_id);
+      const approvalStatus = assigned ? "not_applicable" : String(visit.place_approval_status || "pending_review");
+      const outlet = outlets.get(String(visit.approved_outlet_id || visit.outlet_id));
+      const submittedName = String(visit.customer_name || "");
+      const officialName = String(outlet?.name || submittedName || "Unknown visit");
+      const visitEvidence = evidence.get(visit.$id) ?? [];
+      const photo = visitEvidence.find((item) => String(item.type) === "photo");
+      const audio = visitEvidence.find((item) => String(item.type) === "audio");
+      const approvalLabel = assigned ? "Assigned visit" : approvalStatus === "approved" ? "Permanent place" : approvalStatus === "rejected" ? "Place rejected" : "Awaiting place review";
+      return <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(20,33,61,0.055)]" key={visit.$id}>
+        <div className="grid xl:grid-cols-[minmax(0,1fr)_440px]">
+          <div className="p-5 sm:p-6">
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${assigned ? "bg-blue-50 text-blue-800" : "bg-emerald-50 text-emerald-800"}`}>{approvalLabel}</span><h3 className="mt-3 text-2xl font-black tracking-[-0.025em] text-[#14213D]">{officialName}</h3><p className="mt-1 text-sm leading-6 text-slate-500">{String(outlet?.address || visit.customer_address || "GPS location saved")}</p></div><div className="text-left sm:text-right"><strong className="block text-sm">{String(employees.get(String(visit.employee_id))?.display_name ?? "Unknown salesperson")}</strong><small className="mt-1 block text-slate-500">{time(visit.check_in_at)}{visit.check_out_at ? `–${time(visit.check_out_at)}` : " · in progress"}</small></div></div>
+            <dl className="mt-6 grid gap-4 border-y border-slate-200 py-5 sm:grid-cols-3"><div><dt className="text-[10px] font-black uppercase tracking-wider text-slate-500">Outcome</dt><dd className="mt-1 font-extrabold">{String(visit.outcome ?? visit.status)}</dd></div><div><dt className="text-[10px] font-black uppercase tracking-wider text-slate-500">Location check</dt><dd className="mt-1 font-extrabold">{assigned ? `${Math.round(Number(visit.geofence_distance_m))} m from outlet` : `${Math.round(Number(visit.completion_distance_m ?? 0))} m from start`}</dd></div><div><dt className="text-[10px] font-black uppercase tracking-wider text-slate-500">GPS point</dt><dd className="mt-1"><a className={tableLink} href={`https://www.openstreetmap.org/?mlat=${visit.latitude}&mlon=${visit.longitude}#map=18/${visit.latitude}/${visit.longitude}`} target="_blank" rel="noreferrer">Open on map</a></dd></div></dl>
+            {visit.notes && <div className="mt-5"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Field notes</p><p className="mt-2 text-sm leading-6 text-slate-700">{String(visit.notes)}</p></div>}
+          </div>
+          <div className="grid gap-4 border-t border-slate-200 bg-slate-50 p-5 sm:grid-cols-2 xl:grid-cols-1 xl:border-l xl:border-t-0">
+            {photo ? <a className="group block" href={`/api/evidence/${photo.file_id}`} target="_blank" rel="noreferrer"><img className="h-52 w-full rounded-xl border border-slate-200 bg-white object-cover shadow-sm transition group-hover:brightness-95" src={`/api/evidence/${photo.file_id}`} alt={`Storefront evidence for ${officialName}`} loading="lazy" /><span className={`${tableLink} mt-2 block text-xs`}>Open full photo</span></a> : <MissingEvidence kind="photo" />}
+            <div className="grid content-start gap-2">{audio ? <><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Voice sales report</p><audio className="h-11 w-full" controls preload="metadata" src={`/api/evidence/${audio.file_id}`}>Voice note playback is not supported by this browser.</audio><a className={`${tableLink} text-xs`} href={`/api/evidence/${audio.file_id}`} target="_blank" rel="noreferrer">Open voice-note file</a></> : <MissingEvidence kind="voice note" />}</div>
+          </div>
+        </div>
+      </article>;
+    })}
+    {visitRows.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center"><strong className="block text-xl text-[#14213D]">No confirmed visits for this filter</strong><p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500">Photos and voice notes remain on the phone until the visit upload is confirmed. Check Activity & Sync in the mobile app for anything still queued or rejected.</p></div>}
+  </section>;
+  const orders = <section className={`${ui.tableCard} !mt-0`} id="orders"><div className={ui.sectionHead}><div><p className={ui.eyebrow}>Order history</p><h2 className={ui.h2}>GPS-verified field orders</h2></div><span className="text-sm font-bold text-slate-500">{orderRows.length} records</span></div><div className={ui.tableWrap}><table className={ui.table}><thead><tr><th>Time</th><th>Salesperson</th><th>Customer</th><th>Product</th><th>Quantity</th><th>Total</th><th>Location</th></tr></thead><tbody>{orderRows.map((order) => <tr key={order.$id}><td>{time(order.captured_at)}</td><td>{String(employees.get(String(order.employee_id))?.display_name ?? "Unknown")}</td><td><strong>{String(order.customer_name)}</strong><small>{String(order.phone || order.address || "")}</small></td><td>{String(order.product_name)}</td><td>{Number(order.quantity_kg).toLocaleString()} kg</td><td>PKR {Number(order.total_amount).toLocaleString()}</td><td><a className={tableLink} href={`https://www.openstreetmap.org/?mlat=${order.latitude}&mlon=${order.longitude}#map=18/${order.latitude}/${order.longitude}`} target="_blank" rel="noreferrer">Open map</a></td></tr>)}{orderRows.length === 0 && <tr><td colSpan={7} className="py-9 text-center text-slate-500">No orders are recorded for this filter.</td></tr>}</tbody></table></div></section>;
+
+  const content = { overview, routes, visits, orders }[view];
+  return <OperationsDashboardShell actorName={actor.user.name} queryString={queryString}>{header}{content}</OperationsDashboardShell>;
 }
 
 function validPoint(value: unknown): value is [number, number] {
@@ -174,4 +212,17 @@ function validPoint(value: unknown): value is [number, number] {
 
 function storedSpeed(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function MissingEvidence({ kind }: { kind: "photo" | "voice note" }) {
+  return <div className="grid min-h-28 place-content-center rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-amber-900">
+    <strong className="text-sm capitalize">{kind} not uploaded</strong>
+    <small className="mt-1 max-w-56 leading-5 text-amber-800">The server has no confirmed {kind} file for this visit.</small>
+  </div>;
+}
+
+function chunk<T>(values: T[], size: number) {
+  const groups: T[][] = [];
+  for (let index = 0; index < values.length; index += size) groups.push(values.slice(index, index + size));
+  return groups;
 }

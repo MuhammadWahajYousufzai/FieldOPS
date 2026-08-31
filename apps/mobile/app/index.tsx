@@ -86,19 +86,15 @@ import {
   dealStages,
   isDealStage,
   normalizeDeals,
-  normalizeTeamContact,
-  normalizeTeamMessages,
-  teamContactUrl,
   type Deal,
   type DealStage,
-  type TeamContact,
-  type TeamMessage,
 } from "../lib/team-data";
 
-type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "team" | "sync" | "profile";
+type Screen = "today" | "route" | "new_visit" | "visit" | "order" | "deals" | "sync" | "profile";
 type VisitStatus = "planned" | "active" | "completed";
 type PlaceApprovalStatus = "not_applicable" | "pending_review" | "approved" | "rejected";
 type WorkState = "not_started" | "active" | "finished";
+type FieldAction = "start_work" | "finish_work" | "start_visit" | "start_place" | "finish_visit" | "save_order";
 type Session = { token: string; expiresAt: string; employee: { id: string; name: string } };
 type PersistedSessionMetadata = Omit<Session, "token">;
 type JsonOperation = { type: "json"; path: string; body: Record<string, unknown> };
@@ -192,8 +188,6 @@ type PersistedState = {
   operationsPolicy: MobileOperationsPolicy;
   contextDate: string;
   serverActivity: ServerActivity[];
-  teamContact: TeamContact | null;
-  teamMessages: TeamMessage[];
   deals: Deal[];
   lastSyncAt: string;
 };
@@ -355,6 +349,9 @@ function migratePersistedVisits(rawQueue: QueueItem[], rawActiveVisit: unknown) 
 
   const queue = rawQueue.flatMap((item): QueueItem[] => {
     const operation = item.operation;
+    // Chat was removed from FieldOPS. Retire legacy queued chat/read receipts so
+    // an upgraded phone cannot keep showing unsendable work in Activity.
+    if (operation?.type === "json" && operation.path === "/team/messages") return [];
     if (item.state !== "confirmed" && operation?.type === "json" && operation.path === "/visits/check-in") {
       return [];
     }
@@ -499,8 +496,6 @@ function parseState(saved: string, secureSession: SecureMobileSession | null): P
       operationsPolicy: normalizeMobileOperationsPolicy(value.operationsPolicy),
       contextDate: typeof value.contextDate === "string" ? value.contextDate : "",
       serverActivity: Array.isArray(value.serverActivity) ? value.serverActivity : [],
-      teamContact: normalizeTeamContact(value.teamContact),
-      teamMessages: normalizeTeamMessages(value.teamMessages),
       deals: normalizeDeals(value.deals),
       lastSyncAt: typeof value.lastSyncAt === "string" ? value.lastSyncAt : "",
     };
@@ -667,9 +662,8 @@ function FieldOpsApp() {
   const [lastLocationCheck, setLastLocationCheck] = useState<{ accuracy: number; checkedAt: string } | null>(null);
   const [networkOnline, setNetworkOnline] = useState<boolean | null>(null);
   const [serverActivity, setServerActivity] = useState<ServerActivity[]>([]);
-  const [teamContact, setTeamContact] = useState<TeamContact | null>(null);
-  const [teamMessages, setTeamMessages] = useState<TeamMessage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
+  const [fieldAction, setFieldAction] = useState<FieldAction | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState("");
   const [officeSyncError, setOfficeSyncError] = useState("");
   const queueRef = useRef<QueueItem[]>([]);
@@ -683,7 +677,7 @@ function FieldOpsApp() {
   const contextRequestRef = useRef<{ token: string; promise: Promise<void> } | null>(null);
   const lastContextRefreshRef = useRef<{ token: string; at: number } | null>(null);
   const manualSyncPromiseRef = useRef<Promise<void> | null>(null);
-  const visitSubmittingRef = useRef(false);
+  const fieldActionRef = useRef<FieldAction | null>(null);
   const permissionPrompted = useRef(false);
   const lastCapturedRoutePointRef = useRef<RouteTrackPoint | null>(null);
   const routeCapturePromiseRef = useRef<Promise<void>>(Promise.resolve());
@@ -739,6 +733,19 @@ function FieldOpsApp() {
 
   function setQueueDurably(update: (items: QueueItem[]) => QueueItem[]) {
     return durableQueueControllerRef.current!.update((items) => trimQueue(update(items)));
+  }
+
+  function beginFieldAction(action: FieldAction) {
+    if (fieldActionRef.current) return false;
+    fieldActionRef.current = action;
+    setFieldAction(action);
+    return true;
+  }
+
+  function endFieldAction(action: FieldAction) {
+    if (fieldActionRef.current !== action) return;
+    fieldActionRef.current = null;
+    setFieldAction(null);
   }
 
   function sessionIsCurrent(expected: Session, epoch: number) {
@@ -839,8 +846,6 @@ function FieldOpsApp() {
       setOperationsPolicy(cleanSignedOutState ? defaultOperationsPolicy : value.operationsPolicy);
       setContextDate(cleanSignedOutState ? "" : value.contextDate);
       setServerActivity(cleanSignedOutState ? [] : value.serverActivity);
-      setTeamContact(cleanSignedOutState ? null : value.teamContact);
-      setTeamMessages(cleanSignedOutState ? [] : value.teamMessages);
       setDeals(cleanSignedOutState ? [] : value.deals);
       setLastSyncAt(cleanSignedOutState ? "" : value.lastSyncAt);
       setTerritoryPosition(cleanSignedOutState || value.territoryPolicy.mode === "restricted" ? "checking" : "unrestricted");
@@ -873,12 +878,10 @@ function FieldOpsApp() {
       operationsPolicy,
       contextDate,
       serverActivity,
-      teamContact,
-      teamMessages,
       deals,
       lastSyncAt,
     })).catch(() => undefined);
-  }, [activeVisit, contextDate, deals, hydrated, lastSyncAt, operationsPolicy, outlets, queue, serverActivity, session, teamContact, teamMessages, territoryPolicy, workState]);
+  }, [activeVisit, contextDate, deals, hydrated, lastSyncAt, operationsPolicy, outlets, queue, serverActivity, session, territoryPolicy, workState]);
 
   useEffect(() => {
     if (!hydrated || !session) return;
@@ -933,7 +936,7 @@ function FieldOpsApp() {
   }, [hydrated, session?.token]);
 
   useEffect(() => {
-    if (!hydrated || !session || (screen !== "sync" && screen !== "team") || networkOnline === false) return;
+    if (!hydrated || !session || (screen !== "sync" && screen !== "deals") || networkOnline === false) return;
     refreshContext(false).catch(() => undefined);
     const timer = setInterval(() => refreshContext(false).catch(() => undefined), 45_000);
     return () => clearInterval(timer);
@@ -1259,7 +1262,7 @@ function FieldOpsApp() {
           try {
             const confirmation = await executeOperation(item.operation!, authenticatedSession);
             if (!sessionIsCurrent(authenticatedSession, sessionEpoch)) return "auth" as const;
-            applyTeamConfirmation(item, confirmation);
+            applyDealConfirmation(item, confirmation);
             await setQueueDurably((items) => items.map((entry) => entry.id === item.id
               ? { ...entry, state: "confirmed", error: undefined, errorKind: undefined, retryable: undefined, httpStatus: undefined, nextAttemptAt: undefined }
               : entry));
@@ -1411,8 +1414,6 @@ function FieldOpsApp() {
         const nextOperationsPolicy = normalizeMobileOperationsPolicy(context.operationsPolicy);
         setOutlets((current) => mergeRefreshedVisits(context.route as Outlet[], current, today));
         setServerActivity(Array.isArray(context.recentActivity) ? context.recentActivity as ServerActivity[] : []);
-        setTeamContact(normalizeTeamContact(context.teamContact));
-        setTeamMessages(normalizeTeamMessages(context.teamMessages));
         setDeals(normalizeDeals(context.deals));
         setOfficeSyncError("");
         lastContextRefreshRef.current = { token: authenticatedSession.token, at: Date.now() };
@@ -1480,8 +1481,6 @@ function FieldOpsApp() {
         operationsPolicy,
         contextDate,
         serverActivity,
-        teamContact,
-        teamMessages,
         deals,
         lastSyncAt,
       } satisfies PersistedState));
@@ -1500,8 +1499,6 @@ function FieldOpsApp() {
       setContextDate("");
       setTerritoryPolicy(unrestrictedTerritoryPolicy);
       setTerritoryPosition("checking");
-      setTeamContact(null);
-      setTeamMessages([]);
       setDeals([]);
     }
     sessionEpochRef.current += 1;
@@ -1560,15 +1557,16 @@ function FieldOpsApp() {
 
   async function startWork() {
     if (!session) return;
-    let permissions = await refreshPermissions();
-    if (!permissions.foreground || !permissions.services) {
-      Alert.alert("Location access required", "Turn on phone location and allow access while using FieldOPS before starting work.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open settings", onPress: () => Linking.openSettings() },
-      ]);
-      return;
-    }
+    if (!beginFieldAction("start_work")) return;
     try {
+      const permissions = await refreshPermissions();
+      if (!permissions.foreground || !permissions.services) {
+        Alert.alert("Location access required", "Turn on phone location and allow access while using FieldOPS before starting work.", [
+          { text: "Cancel", style: "cancel" },
+          { text: "Open settings", onPress: () => Linking.openSettings() },
+        ]);
+        return;
+      }
       const point = await gps(Location.Accuracy.High);
       const capturedAt = new Date(point.timestamp).toISOString();
       setWorkState("active");
@@ -1590,6 +1588,8 @@ function FieldOpsApp() {
     } catch (error) {
       setWorkState("not_started");
       Alert.alert("Work did not start", error instanceof Error ? error.message : "Turn on phone location and try again.");
+    } finally {
+      endFieldAction("start_work");
     }
   }
 
@@ -1599,6 +1599,7 @@ function FieldOpsApp() {
       Alert.alert("Finish the current visit", "Submit the current visit with its photo and audio note before finishing today’s work.");
       return;
     }
+    if (!beginFieldAction("finish_work")) return;
     try {
       const point = await gps(Location.Accuracy.High);
       const capturedAt = new Date(point.timestamp).toISOString();
@@ -1618,6 +1619,8 @@ function FieldOpsApp() {
       await refreshLocationCount();
     } catch (error) {
       Alert.alert("Location needed to finish", error instanceof Error ? error.message : "Turn on phone location and try again.");
+    } finally {
+      endFieldAction("finish_work");
     }
   }
 
@@ -1638,6 +1641,7 @@ function FieldOpsApp() {
       );
       return;
     }
+    if (!beginFieldAction("start_visit")) return;
     try {
       const point = await gps();
       requireTerritory(point.coords.latitude, point.coords.longitude);
@@ -1671,6 +1675,8 @@ function FieldOpsApp() {
       setScreen("visit");
     } catch (error) {
       Alert.alert("Visit did not start", error instanceof Error ? error.message : "Turn on phone location and try again.");
+    } finally {
+      endFieldAction("start_visit");
     }
   }
 
@@ -1687,6 +1693,7 @@ function FieldOpsApp() {
       );
       return;
     }
+    if (!beginFieldAction("start_place")) return;
     try {
       const point = await gps();
       const markAccuracy = point.coords.accuracy;
@@ -1732,6 +1739,8 @@ function FieldOpsApp() {
       setScreen("visit");
     } catch (error) {
       Alert.alert("Visit did not start", error instanceof Error ? error.message : "Turn on phone location and try again.");
+    } finally {
+      endFieldAction("start_place");
     }
   }
 
@@ -1811,7 +1820,6 @@ function FieldOpsApp() {
   }
 
   async function finishVisit() {
-    if (visitSubmittingRef.current) return;
     if (!session || !selected || !activeVisit || activeVisit.outletId !== selected.id) {
       Alert.alert("Start the visit first", "Check in with GPS before completing the visit.");
       return;
@@ -1824,7 +1832,7 @@ function FieldOpsApp() {
       Alert.alert("Photo and audio required", "Take one visit photo and record an audio note before finishing.");
       return;
     }
-    visitSubmittingRef.current = true;
+    if (!beginFieldAction("finish_visit")) return;
     try {
       validateStoredEvidence(activeVisit.photo);
       validateStoredEvidence(activeVisit.audio);
@@ -1838,7 +1846,7 @@ function FieldOpsApp() {
         Alert.alert("Return to the visit location", `You are ${distance} m away. Finish the visit within ${GEOFENCE_METERS} m.`);
         return;
       }
-      await enqueue(`${selected.name} · ${selected.kind === "self" ? "send place report" : "complete visit"}`, {
+      const queuedVisit = await enqueue(`${selected.name} · ${selected.kind === "self" ? "send place report" : "complete visit"}`, {
         type: "visit_submit",
         path: "/visits/submit",
         fields: {
@@ -1856,17 +1864,31 @@ function FieldOpsApp() {
         audio: activeVisit.audio,
       });
       setActiveVisit(null);
-      setScreen("route");
-      Alert.alert(
-        selected.kind === "self" ? "Place report saved" : "Visit saved",
-        selected.kind === "self"
-          ? "The marked point, photo, and voice report are safe. After upload, an admin will review the name and add it as a permanent place."
-          : "The photo, voice report, and GPS are safe. The visit completes after server confirmation.",
-      );
+      if (shouldAttemptImmediateUpload(networkOnlineRef.current)) {
+        await syncOperations({ force: true, onlyId: queuedVisit.id });
+      }
+      const upload = queueRef.current.find((item) => item.id === queuedVisit.id);
+      if (upload?.state === "confirmed") {
+        setScreen("route");
+        Alert.alert(
+          selected.kind === "self" ? "Place report uploaded" : "Visit uploaded",
+          selected.kind === "self"
+            ? "The office received the GPS point, storefront photo, and voice report. It is now waiting for admin review."
+            : "The office received the visit, storefront photo, voice report, and GPS evidence. It is now visible on the dashboard.",
+        );
+      } else {
+        setScreen("sync");
+        Alert.alert(
+          upload?.state === "failed" ? "Upload needs attention" : "Saved on this phone",
+          upload?.state === "failed"
+            ? `${upload.error || "The server did not accept this visit."} The photo and voice report are still safe on this phone. Activity & Sync shows the retry action.`
+            : "The visit is not on the dashboard yet. The photo and voice report are safe on this phone and Activity & Sync will send them when the server is reachable.",
+        );
+      }
     } catch (error) {
       Alert.alert("Visit not finished", error instanceof Error ? error.message : "Turn on phone location and try again.");
     } finally {
-      visitSubmittingRef.current = false;
+      endFieldAction("finish_visit");
     }
   }
 
@@ -1897,6 +1919,7 @@ function FieldOpsApp() {
 
   async function createOrder(order: OrderDraft) {
     if (!session) return;
+    if (!beginFieldAction("save_order")) return;
     try {
       const point = await gps(Location.Accuracy.Balanced);
       requireTerritory(point.coords.latitude, point.coords.longitude);
@@ -1913,32 +1936,15 @@ function FieldOpsApp() {
       setScreen("today");
     } catch (error) {
       Alert.alert("Order not saved", error instanceof Error ? error.message : "Turn on phone location and try again.");
+    } finally {
+      endFieldAction("save_order");
     }
   }
 
-  function applyTeamConfirmation(item: QueueItem, confirmation: unknown) {
+  function applyDealConfirmation(item: QueueItem, confirmation: unknown) {
     const operation = item.operation;
     if (operation?.type !== "json" || !confirmation || typeof confirmation !== "object") return;
     const result = confirmation as Record<string, unknown>;
-    if (operation.path === "/team/messages" && result.message) {
-      const message = normalizeTeamMessages([result.message])[0];
-      if (!message) return;
-      const localId = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
-      setTeamMessages((current) => normalizeTeamMessages([
-        ...current.filter((entry) => entry.id !== localId && entry.id !== message.id),
-        message,
-      ]));
-      return;
-    }
-    if (operation.path === "/team/messages" && operation.body.action === "mark_read") {
-      const readAt = typeof result.readAt === "string" && Number.isFinite(new Date(result.readAt).valueOf())
-        ? result.readAt
-        : new Date().toISOString();
-      setTeamMessages((current) => current.map((message) => (
-        message.senderRole === "manager" && !message.readAt ? { ...message, readAt } : message
-      )));
-      return;
-    }
     if (operation.path === "/deals" && result.deal) {
       const deal = normalizeDeals([result.deal])[0];
       if (!deal) return;
@@ -1948,40 +1954,6 @@ function FieldOpsApp() {
         deal,
       ]));
     }
-  }
-
-  async function sendTeamMessage(body: string) {
-    const cleanBody = body.trim();
-    if (!cleanBody) throw new Error("Write a message before sending it.");
-    if (cleanBody.length > 2_000) throw new Error("Keep the message under 2,000 characters.");
-    const idempotencyKey = operationId("team_message");
-    const sentAt = new Date().toISOString();
-    await enqueue("Message to manager", {
-      type: "json",
-      path: "/team/messages",
-      body: { body: cleanBody, idempotencyKey },
-    });
-    setTeamMessages((current) => normalizeTeamMessages([...current, {
-      id: idempotencyKey,
-      body: cleanBody,
-      senderRole: "salesperson",
-      sentAt,
-      readAt: "",
-    }]));
-  }
-
-  async function markManagerMessagesRead() {
-    if (!teamMessages.some((message) => message.senderRole === "manager" && !message.readAt)) return;
-    const idempotencyKey = operationId("team_read");
-    const readAt = new Date().toISOString();
-    await enqueue("Manager messages read", {
-      type: "json",
-      path: "/team/messages",
-      body: { action: "mark_read", idempotencyKey },
-    });
-    setTeamMessages((current) => current.map((message) => (
-      message.senderRole === "manager" && !message.readAt ? { ...message, readAt } : message
-    )));
   }
 
   async function createDeal(draft: DealDraft) {
@@ -2029,7 +2001,7 @@ function FieldOpsApp() {
 
   async function updateDealStage(dealId: string, stage: DealStage) {
     const deal = deals.find((item) => item.id === dealId);
-    if (!deal) throw new Error("This deal is no longer available. Update Team and try again.");
+    if (!deal) throw new Error("This deal is no longer available. Update Sales and try again.");
     const staleConflictIds = queueRef.current.flatMap((item) => {
       const operation = item.operation;
       return item.state === "failed"
@@ -2121,8 +2093,6 @@ function FieldOpsApp() {
             operationsPolicy,
             contextDate,
             serverActivity,
-            teamContact,
-            teamMessages,
             deals,
             lastSyncAt,
           } satisfies PersistedState)],
@@ -2139,8 +2109,10 @@ function FieldOpsApp() {
       sessionEpochRef.current += 1;
       sessionRef.current = null;
       syncPromiseRef.current = null;
+      fieldActionRef.current = null;
       lastCapturedRoutePointRef.current = null;
       setSession(null);
+      setFieldAction(null);
       setLocationPending(0);
       setLocationRejected(0);
       setLocationSyncError("");
@@ -2168,8 +2140,6 @@ function FieldOpsApp() {
         operationsPolicy: defaultOperationsPolicy,
         contextDate: "",
         serverActivity: [],
-        teamContact: null,
-        teamMessages: [],
         deals: [],
         lastSyncAt: "",
       } satisfies PersistedState));
@@ -2183,9 +2153,11 @@ function FieldOpsApp() {
     sessionEpochRef.current += 1;
     sessionRef.current = null;
     syncPromiseRef.current = null;
+    fieldActionRef.current = null;
     lastCapturedRoutePointRef.current = null;
     recoveryEmployeeIdRef.current = "";
     setSession(null);
+    setFieldAction(null);
     setRecoveryEmployeeId("");
     setOutlets([]);
     setSelectedId("");
@@ -2203,8 +2175,6 @@ function FieldOpsApp() {
     setContextDate("");
     setTerritoryPosition("checking");
     setServerActivity([]);
-    setTeamContact(null);
-    setTeamMessages([]);
     setDeals([]);
     setLastSyncAt("");
     setOfficeSyncError("");
@@ -2244,7 +2214,7 @@ function FieldOpsApp() {
             onSync={() => setScreen("sync")}
             onRefresh={() => refreshContext()}
           />
-          {screen !== "sync" && screen !== "team" && screen !== "profile" && <TerritoryBanner
+          {screen !== "sync" && screen !== "deals" && screen !== "profile" && <TerritoryBanner
             policy={territoryPolicy}
             policyReady={territoryPolicyReady}
             position={territoryPosition}
@@ -2266,6 +2236,8 @@ function FieldOpsApp() {
             nextOutlet={nextOutlet}
             fieldActionsAllowed={fieldActionsAllowed}
             territoryMessage={territoryMessage}
+            sessionAction={fieldAction === "start_work" ? "starting" : fieldAction === "finish_work" ? "finishing" : null}
+            visitStarting={fieldAction === "start_visit"}
             onStartWork={startWork}
             onFinishWork={finishWork}
             onFixGps={() => permissionReady ? checkMyLocation().catch(() => undefined) : Linking.openSettings()}
@@ -2290,6 +2262,7 @@ function FieldOpsApp() {
             running={workActuallyRunning}
             accessAllowed={fieldActionsAllowed}
             territoryMessage={territoryMessage}
+            starting={fieldAction === "start_place"}
             onSubmit={startUnplannedVisit}
             onBack={() => setScreen("route")}
           />}
@@ -2308,6 +2281,7 @@ function FieldOpsApp() {
             audio={activeVisit?.audio}
             recording={Boolean(recording)}
             recordingSeconds={Math.floor(audioRecorderState.durationMillis / 1000)}
+            action={fieldAction === "start_visit" ? "starting" : fieldAction === "finish_visit" ? "finishing" : null}
             onStart={() => startVisit(selected)}
             onPhoto={takePhoto}
             onAudio={toggleRecording}
@@ -2318,18 +2292,15 @@ function FieldOpsApp() {
             outlets={assignedOutlets}
             accessAllowed={fieldActionsAllowed}
             territoryMessage={territoryMessage}
+            saving={fieldAction === "save_order"}
             onSubmit={createOrder}
           />}
-          {screen === "team" && <Team
-            contact={teamContact}
-            messages={teamMessages}
+          {screen === "deals" && <SalesPipeline
             deals={deals}
             outlets={outlets}
             queue={employeeQueue}
             refreshing={refreshing}
             onRefresh={() => refreshContext()}
-            onSendMessage={sendTeamMessage}
-            onMarkMessagesRead={markManagerMessagesRead}
             onCreateDeal={createDeal}
             onUpdateDealStage={updateDealStage}
           />}
@@ -2506,7 +2477,7 @@ function Header({
   onSync: () => void;
   onRefresh: () => void;
 }) {
-  const section = screen === "sync" ? "Activity" : screen === "team" ? "Team" : screen === "profile" ? "Profile" : "Field work";
+  const section = screen === "sync" ? "Activity" : screen === "deals" ? "Sales" : screen === "profile" ? "Profile" : "Field work";
   const syncLabel = needsAttention > 0
     ? "Check"
     : online === false
@@ -2544,8 +2515,10 @@ function Header({
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel="Refresh today’s assignments and territory"
+        accessibilityState={{ disabled: refreshing }}
         className="min-h-11 min-w-11 items-center justify-center rounded-full bg-[#E6ECF8] px-2"
         onPress={onRefresh}
+        disabled={refreshing}
       >
         <Text className="text-[11px] font-black text-field">{refreshing ? "Updating" : "Update"}</Text>
       </TouchableOpacity>
@@ -2642,6 +2615,8 @@ function Today({
   nextOutlet,
   fieldActionsAllowed,
   territoryMessage,
+  sessionAction,
+  visitStarting,
   onStartWork,
   onFinishWork,
   onFixGps,
@@ -2658,6 +2633,8 @@ function Today({
   nextOutlet?: Outlet;
   fieldActionsAllowed: boolean;
   territoryMessage: string;
+  sessionAction: "starting" | "finishing" | null;
+  visitStarting: boolean;
   onStartWork: () => void;
   onFinishWork: () => void;
   onFixGps: () => void;
@@ -2692,8 +2669,8 @@ function Today({
         <Text className="mt-1 text-lg font-black text-white">{title}</Text>
         <Text className="mt-1 text-[11px] text-[#BAC4D8]">{detail}</Text>
       </View>
-      {workState !== "active" && <Button label={workState === "finished" ? "Start again" : "Start work"} onPress={onStartWork} />}
-      {workState === "active" && trackingReady && <Button label="Finish session" onPress={onFinishWork} />}
+      {workState !== "active" && <Button label={sessionAction === "starting" ? "Starting…" : workState === "finished" ? "Start again" : "Start work"} disabled={sessionAction !== null} onPress={onStartWork} />}
+      {workState === "active" && trackingReady && <Button label={sessionAction === "finishing" ? "Finishing…" : "Finish session"} disabled={sessionAction !== null} onPress={onFinishWork} />}
       {workState === "active" && !trackingReady && <Button label="Fix location" onPress={onFixGps} />}
     </View>
 
@@ -2709,7 +2686,7 @@ function Today({
       <Text className="mt-2.5 text-2xl font-black text-white">{nextOutlet.name}</Text>
       <Text className="mt-1.5 text-[#C2CBE0]">{nextOutlet.address}</Text>
       <View className="mt-5 flex-row flex-wrap gap-2.5">
-        <Button label="Check in at this shop" disabled={!actionEnabled} onPress={onStartVisit} />
+        <Button label={visitStarting ? "Finding visit GPS…" : "Check in at this shop"} disabled={!actionEnabled || visitStarting} onPress={onStartVisit} />
         <GhostButton label="All assigned visits" onPress={onRoute} />
       </View>
       {!fieldActionsAllowed && <Text className="mt-3 leading-5 text-[#FFF1D0]">{territoryMessage}</Text>}
@@ -2826,12 +2803,14 @@ function NewVisit({
   running,
   accessAllowed,
   territoryMessage,
+  starting,
   onSubmit,
   onBack,
 }: {
   running: boolean;
   accessAllowed: boolean;
   territoryMessage: string;
+  starting: boolean;
   onSubmit: (customerName: string, customerAddress: string) => Promise<void>;
   onBack: () => void;
 }) {
@@ -2871,8 +2850,8 @@ function NewVisit({
         placeholderTextColor="#697184"
       />
       <Button
-        label={busy ? "Marking this spot…" : "Mark this spot & start report"}
-        disabled={busy || !enabled}
+        label={busy || starting ? "Marking this spot…" : "Mark this spot & start report"}
+        disabled={busy || starting || !enabled}
         onPress={async () => {
           if (!customerName.trim()) {
             Alert.alert("Customer name required", "Enter the customer or shop name before starting the visit.");
@@ -2924,6 +2903,7 @@ function Visit({
   audio,
   recording,
   recordingSeconds,
+  action,
   onStart,
   onPhoto,
   onAudio,
@@ -2944,6 +2924,7 @@ function Visit({
   audio?: EvidenceAttachment;
   recording: boolean;
   recordingSeconds: number;
+  action: "starting" | "finishing" | null;
   onStart: () => void;
   onPhoto: () => void;
   onAudio: () => void;
@@ -2979,7 +2960,7 @@ function Visit({
       </Text>}
       {!accessAllowed && <WarningNotice title="Visit unavailable here" body={territoryMessage} />}
       {submissionPending && <BodyText>The marked point, photo, and voice report are safe on this phone. Activity shows upload progress.</BodyText>}
-      {!selfCreated && !activeVisit && !submissionPending && outlet.status !== "completed" && <Button label="Check in at this shop" disabled={!accessAllowed} onPress={onStart} />}
+      {!selfCreated && !activeVisit && !submissionPending && outlet.status !== "completed" && <Button label={action === "starting" ? "Finding visit GPS…" : "Check in at this shop"} disabled={!accessAllowed || action !== null} onPress={onStart} />}
     </View>
     {selfCreated && !activeVisit && !submissionPending && outlet.status === "completed" && <PlaceReviewNotice outlet={outlet} />}
     {activeVisit && <>
@@ -3017,8 +2998,8 @@ function Visit({
       {photo && <Image accessibilityLabel="Visit evidence preview" source={{ uri: photo.uri }} className="h-[220px] w-full rounded-xl" />}
       {audio && <View className="flex-row items-center justify-between gap-3 rounded-lg bg-[#E9F5EF] p-3">
         <View className="flex-1">
-          <Text className="font-extrabold text-[#205E49]">Voice sales report saved</Text>
-          <Text className="mt-1 text-xs text-[#4F655C]">Listen once before sending if needed.</Text>
+          <Text className="font-extrabold text-[#205E49]">Voice report saved on this phone</Text>
+          <Text className="mt-1 text-xs text-[#4F655C]">Listen once before uploading if needed.</Text>
         </View>
         <TouchableOpacity
           accessibilityRole="button"
@@ -3029,8 +3010,14 @@ function Visit({
           <Text className="font-black text-success">{voiceStatus.playing ? "Pause" : "Play"}</Text>
         </TouchableOpacity>
       </View>}
-      <Button label={selfCreated ? "Send for admin review" : "Complete visit"} disabled={!accessAllowed || !photo || !audio || recording} onPress={onFinish} />
-      <DangerOutlineButton label={selfCreated ? "Discard marked-place draft" : "Discard visit draft"} onPress={onDiscard} />
+      {(photo || audio) && <InfoNotice
+        title={photo && audio ? "Evidence ready to upload" : "Evidence is still incomplete"}
+        body={photo && audio
+          ? `The photo and voice report are currently on this phone. Tap ${selfCreated ? "Send for admin review" : "Complete visit"} and wait for “uploaded” before expecting them on the dashboard.`
+          : "Captured evidence stays on this phone until both items are ready and the completed visit is accepted by the server."}
+      />}
+      <Button label={action === "finishing" ? "Saving & uploading visit…" : selfCreated ? "Send for admin review" : "Complete visit"} disabled={!accessAllowed || !photo || !audio || recording || action !== null} onPress={onFinish} />
+      <DangerOutlineButton label={selfCreated ? "Discard marked-place draft" : "Discard visit draft"} disabled={action !== null} onPress={onDiscard} />
     </>}
   </>;
 }
@@ -3050,11 +3037,13 @@ function Order({
   outlets,
   accessAllowed,
   territoryMessage,
+  saving,
   onSubmit,
 }: {
   outlets: Outlet[];
   accessAllowed: boolean;
   territoryMessage: string;
+  saving: boolean;
   onSubmit: (order: OrderDraft) => Promise<void>;
 }) {
   const [outletId, setOutletId] = useState("");
@@ -3113,8 +3102,8 @@ function Order({
         <Text className="text-lg font-black text-ink">PKR {total.toLocaleString()}</Text>
       </View>
       <Button
-        label={busy ? "Saving order…" : "Save order"}
-        disabled={busy || !accessAllowed}
+        label={busy || saving ? "Saving order…" : "Save order"}
+        disabled={busy || saving || !accessAllowed}
         onPress={async () => {
           const quantityKg = Number(quantity);
           const price = Number(unitPrice);
@@ -3143,34 +3132,23 @@ function Order({
   </>;
 }
 
-function Team({
-  contact,
-  messages,
+function SalesPipeline({
   deals,
   outlets,
   queue,
   refreshing,
   onRefresh,
-  onSendMessage,
-  onMarkMessagesRead,
   onCreateDeal,
   onUpdateDealStage,
 }: {
-  contact: TeamContact | null;
-  messages: TeamMessage[];
   deals: Deal[];
   outlets: Outlet[];
   queue: QueueItem[];
   refreshing: boolean;
   onRefresh: () => void;
-  onSendMessage: (body: string) => Promise<void>;
-  onMarkMessagesRead: () => Promise<void>;
   onCreateDeal: (draft: DealDraft) => Promise<void>;
   onUpdateDealStage: (dealId: string, stage: DealStage) => Promise<void>;
 }) {
-  const [messageDraft, setMessageDraft] = useState("");
-  const [messageBusy, setMessageBusy] = useState(false);
-  const [readBusy, setReadBusy] = useState(false);
   const [creatingDeal, setCreatingDeal] = useState(false);
   const [dealBusy, setDealBusy] = useState(false);
   const [updatingDealId, setUpdatingDealId] = useState("");
@@ -3184,73 +3162,30 @@ function Team({
   const [dealFollowUpDate, setDealFollowUpDate] = useState("");
   const [dealNotes, setDealNotes] = useState("");
 
-  const pendingTeamItems = useMemo(() => queue.filter((item) => (
+  const pendingDealItems = useMemo(() => queue.filter((item) => (
     item.state !== "confirmed"
     && item.operation?.type === "json"
-    && (item.operation.path === "/team/messages" || item.operation.path === "/deals")
+    && item.operation.path === "/deals"
   )), [queue]);
-  const optimisticTeamItems = useMemo(() => pendingTeamItems.filter((item) => !(
+  const optimisticDealItems = useMemo(() => pendingDealItems.filter((item) => !(
     item.state === "failed" && item.retryable === false
-  )), [pendingTeamItems]);
+  )), [pendingDealItems]);
 
-  const pendingMessageIds = useMemo(() => new Set(optimisticTeamItems.flatMap((item) => {
-    const operation = item.operation;
-    if (operation?.type !== "json" || operation.path !== "/team/messages") return [];
-    const key = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
-    return key ? [key] : [];
-  })), [optimisticTeamItems]);
-
-  const pendingReadAt = useMemo(() => optimisticTeamItems.reduce((latest, item) => {
-    const operation = item.operation;
-    return operation?.type === "json"
-      && operation.path === "/team/messages"
-      && operation.body.action === "mark_read"
-      && item.createdAt > latest
-      ? item.createdAt
-      : latest;
-  }, ""), [optimisticTeamItems]);
-
-  const visibleMessages = useMemo(() => {
-    const combined = new Map(messages.map((message) => [message.id, message]));
-    for (const item of optimisticTeamItems) {
-      const operation = item.operation;
-      if (operation?.type !== "json" || operation.path !== "/team/messages") continue;
-      const id = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
-      const body = typeof operation.body.body === "string" ? operation.body.body : "";
-      if (id && body && !combined.has(id)) combined.set(id, {
-        id,
-        body,
-        senderRole: "salesperson",
-        sentAt: item.createdAt,
-        readAt: "",
-      });
-    }
-    return normalizeTeamMessages([...combined.values()].map((message) => (
-      pendingReadAt && message.senderRole === "manager" && !message.readAt
-        ? { ...message, readAt: pendingReadAt }
-        : message
-    ))).slice(-20);
-  }, [messages, optimisticTeamItems, pendingReadAt]);
-
-  const unreadManagerMessages = pendingReadAt
-    ? 0
-    : messages.filter((message) => message.senderRole === "manager" && !message.readAt).length;
-
-  const pendingDealCreateIds = useMemo(() => new Set(optimisticTeamItems.flatMap((item) => {
+  const pendingDealCreateIds = useMemo(() => new Set(optimisticDealItems.flatMap((item) => {
     const operation = item.operation;
     if (operation?.type !== "json" || operation.path !== "/deals" || operation.body.action !== "create") return [];
     const key = typeof operation.body.idempotencyKey === "string" ? operation.body.idempotencyKey : "";
     return key ? [key] : [];
-  })), [optimisticTeamItems]);
+  })), [optimisticDealItems]);
 
-  const pendingStageDealIds = useMemo(() => new Set(optimisticTeamItems.flatMap((item) => {
+  const pendingStageDealIds = useMemo(() => new Set(optimisticDealItems.flatMap((item) => {
     const operation = item.operation;
     if (operation?.type !== "json" || operation.path !== "/deals" || operation.body.action !== "stage_update") return [];
     const dealId = typeof operation.body.dealId === "string" ? operation.body.dealId : "";
     return dealId ? [dealId] : [];
-  })), [optimisticTeamItems]);
+  })), [optimisticDealItems]);
 
-  const stageConflicts = useMemo(() => new Map(pendingTeamItems.flatMap((item) => {
+  const stageConflicts = useMemo(() => new Map(pendingDealItems.flatMap((item) => {
     const operation = item.operation;
     if (item.state !== "failed"
       || item.errorKind !== "conflict"
@@ -3260,7 +3195,7 @@ function Team({
     const dealId = typeof operation.body.dealId === "string" ? operation.body.dealId : "";
     const expectedUpdatedAt = typeof operation.body.expectedUpdatedAt === "string" ? operation.body.expectedUpdatedAt : "";
     return dealId ? [[dealId, expectedUpdatedAt] as const] : [];
-  })), [pendingTeamItems]);
+  })), [pendingDealItems]);
 
   const localDealIds = useMemo(() => new Set(queue.flatMap((item) => {
     const operation = item.operation;
@@ -3272,7 +3207,7 @@ function Team({
   const visibleDeals = useMemo(() => {
     const combined = new Map(deals.map((deal) => [deal.id, deal]));
     const pendingStages = new Map<string, DealStage>();
-    for (const item of optimisticTeamItems) {
+    for (const item of optimisticDealItems) {
       const operation = item.operation;
       if (operation?.type !== "json" || operation.path !== "/deals") continue;
       if (operation.body.action === "create") {
@@ -3290,13 +3225,7 @@ function Team({
     return normalizeDeals([...combined.values()].map((deal) => (
       pendingStages.has(deal.id) ? { ...deal, stage: pendingStages.get(deal.id) } : deal
     )));
-  }, [deals, optimisticTeamItems]);
-
-  const phoneUrl = contact ? teamContactUrl("phone", contact.phone) : null;
-  const whatsappUrl = contact ? teamContactUrl("whatsapp", contact.whatsapp) : null;
-  const openContact = (url: string, label: string) => {
-    Linking.openURL(url).catch(() => Alert.alert(`${label} unavailable`, `${label} could not open on this phone.`));
-  };
+  }, [deals, optimisticDealItems]);
   const stageName = (stage: string) => stage ? `${stage[0]?.toUpperCase() ?? ""}${stage.slice(1)}` : "Lead";
   const formatDate = (value: string) => {
     const date = new Date(value);
@@ -3314,13 +3243,13 @@ function Team({
   return <>
     <View className="flex-row items-start justify-between gap-3">
       <View className="flex-1">
-        <Eyebrow>FIELD TEAM</Eyebrow>
-        <ScreenTitle>Team desk</ScreenTitle>
-        <BodyText>Reach your manager, keep decisions in one thread, and move customer opportunities forward.</BodyText>
+        <Eyebrow>SALES PIPELINE</Eyebrow>
+        <ScreenTitle>Customer deals</ScreenTitle>
+        <BodyText>Record customer intent, keep the next action clear, and move each opportunity forward.</BodyText>
       </View>
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel="Update team messages and deals"
+        accessibilityLabel="Update customer deals"
         accessibilityState={{ disabled: refreshing }}
         className="min-h-12 min-w-20 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
         onPress={onRefresh}
@@ -3328,86 +3257,6 @@ function Team({
       >
         <Text className="text-xs font-black text-field">{refreshing ? "Updating…" : "Update"}</Text>
       </TouchableOpacity>
-    </View>
-
-    {contact ? <View className="gap-3 overflow-hidden rounded-2xl bg-ink p-5">
-      <Eyebrow>YOUR FIELD CONTACT</Eyebrow>
-      <Text className="text-2xl font-black text-white">{contact.name || "Field manager"}</Text>
-      {contact.phone ? <Text className="text-sm font-bold text-[#C9D3E6]">{contact.phone}</Text> : null}
-      {phoneUrl || whatsappUrl ? <View className="flex-row gap-2.5">
-        {phoneUrl && <TouchableOpacity
-          accessibilityRole="link"
-          accessibilityLabel={`Call ${contact.name || "field manager"}`}
-          className="min-h-12 flex-1 items-center justify-center rounded-xl bg-white px-3"
-          onPress={() => openContact(phoneUrl, "Phone")}
-        ><Text className="font-black text-ink">Call</Text></TouchableOpacity>}
-        {whatsappUrl && <TouchableOpacity
-          accessibilityRole="link"
-          accessibilityLabel={`Open WhatsApp with ${contact.name || "field manager"}`}
-          className="min-h-12 flex-1 items-center justify-center rounded-xl bg-[#2A9D6F] px-3"
-          onPress={() => openContact(whatsappUrl, "WhatsApp")}
-        ><Text className="font-black text-white">WhatsApp</Text></TouchableOpacity>}
-      </View> : <Text className="text-xs leading-5 text-[#C9D3E6]">Your office has not configured a phone or WhatsApp number.</Text>}
-    </View> : <InfoNotice title="Field contact not configured" body="Messages and deals still work. Ask an admin to add the team phone or WhatsApp number." />}
-
-    <View className="mt-1 flex-row items-center justify-between gap-3">
-      <SectionTitle>Messages</SectionTitle>
-      {unreadManagerMessages > 0 && <TouchableOpacity
-        accessibilityRole="button"
-        accessibilityLabel={`Mark ${unreadManagerMessages} manager ${unreadManagerMessages === 1 ? "message" : "messages"} read`}
-        accessibilityState={{ disabled: readBusy }}
-        className="min-h-12 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
-        disabled={readBusy}
-        onPress={() => {
-          setReadBusy(true);
-          onMarkMessagesRead().catch((error) => {
-            Alert.alert("Read state not saved", error instanceof Error ? error.message : "Try again.");
-          }).finally(() => setReadBusy(false));
-        }}
-      ><Text className="text-xs font-black text-field">{readBusy ? "Saving…" : `Mark read · ${unreadManagerMessages}`}</Text></TouchableOpacity>}
-    </View>
-    {visibleMessages.length === 0
-      ? <EmptyState title="No team messages yet" body="Write the first update below. It will stay safely queued if you are offline." />
-      : <View className="gap-2 rounded-2xl border border-line bg-[#F4F6FA] p-3">
-        {visibleMessages.map((message) => {
-          const mine = message.senderRole.toLowerCase().includes("sales");
-          const pendingMessage = pendingMessageIds.has(message.id);
-          return <View key={message.id} className={classes("max-w-[88%] rounded-2xl px-4 py-3", mine ? "self-end bg-field" : "self-start border border-line bg-white")}>
-            <Text className={classes("text-[10px] font-black uppercase tracking-wider", mine ? "text-[#C4D2F2]" : "text-muted")}>{mine ? "You" : stageName(message.senderRole)}</Text>
-            <Text className={classes("mt-1 leading-5", mine ? "text-white" : "text-ink")}>{message.body}</Text>
-            <Text className={classes("mt-1.5 text-[10px] font-bold", mine ? "text-[#C4D2F2]" : "text-muted")}>
-              {new Date(message.sentAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })} · {pendingMessage ? "Waiting to send" : message.readAt ? "Read" : mine ? "Sent" : "New"}
-            </Text>
-          </View>;
-        })}
-      </View>}
-    <View className="gap-3 rounded-2xl border border-line bg-white p-4">
-      <TextInput
-        accessibilityLabel="Message to manager"
-        className="min-h-[88px] rounded-xl border border-line px-3 py-3 text-base text-ink"
-        value={messageDraft}
-        onChangeText={setMessageDraft}
-        placeholder="Ask a question or share a field update"
-        placeholderTextColor="#697184"
-        maxLength={2_000}
-        multiline
-        textAlignVertical="top"
-      />
-      <Button
-        label={messageBusy ? "Saving message…" : "Send message"}
-        disabled={messageBusy || !messageDraft.trim()}
-        onPress={() => {
-          const body = messageDraft.trim();
-          if (!body) return;
-          setMessageBusy(true);
-          onSendMessage(body).then(() => {
-            setMessageDraft("");
-          }).catch((error) => {
-            Alert.alert("Message not saved", error instanceof Error ? error.message : "Try again.");
-          }).finally(() => setMessageBusy(false));
-        }}
-      />
-      <Text className="text-xs leading-5 text-muted">Send returns after the message is safely stored on this phone; upload continues automatically.</Text>
     </View>
 
     <View className="mt-1 flex-row items-center justify-between gap-3">
@@ -3542,7 +3391,7 @@ function Team({
             <TouchableOpacity
               accessibilityRole="button"
               accessibilityLabel={conflictVersion && !conflictRefreshed
-                ? `Update Team before changing stage for ${deal.title}`
+                ? `Update Sales before changing stage for ${deal.title}`
                 : pendingStage
                   ? `Stage change for ${deal.title} is waiting to sync`
                   : `Change stage for ${deal.title}`}
@@ -3550,7 +3399,7 @@ function Team({
               className="min-h-12 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
               disabled={pendingStage}
               onPress={() => setStageEditorId((current) => current === deal.id ? "" : deal.id)}
-            ><Text className="font-black text-field">{conflictVersion && !conflictRefreshed ? "Update Team to continue" : pendingStage ? "Stage waiting to sync" : stageEditorId === deal.id ? "Close stages" : conflictVersion ? "Choose stage again" : "Change stage"}</Text></TouchableOpacity>
+            ><Text className="font-black text-field">{conflictVersion && !conflictRefreshed ? "Update Sales to continue" : pendingStage ? "Stage waiting to sync" : stageEditorId === deal.id ? "Close stages" : conflictVersion ? "Choose stage again" : "Change stage"}</Text></TouchableOpacity>
             {!pendingStage && stageEditorId === deal.id && <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
               {dealStages.map((stage) => <Choice
                 key={stage}
@@ -3823,7 +3672,7 @@ function Nav({ screen, pending, setScreen }: { screen: Screen; pending: number; 
   const items: { key: Screen; label: string; icon: string }[] = [
     { key: "today", label: "Today", icon: "●" },
     { key: "route", label: "Visits", icon: "⌖" },
-    { key: "team", label: "Team", icon: "◆" },
+    { key: "deals", label: "Sales", icon: "◆" },
     { key: "sync", label: "Activity", icon: "↻" },
     { key: "profile", label: "Profile", icon: "○" },
   ];
@@ -3883,12 +3732,14 @@ function GhostButton({ label, onPress, dark = false, disabled = false }: { label
   </TouchableOpacity>;
 }
 
-function DangerOutlineButton({ label, onPress }: { label: string; onPress: () => void }) {
+function DangerOutlineButton({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
   return <TouchableOpacity
     accessibilityRole="button"
     accessibilityLabel={label}
-    className="min-h-12 items-center justify-center rounded-[9px] border border-danger bg-white px-4 py-3"
+    accessibilityState={{ disabled }}
+    className={classes("min-h-12 items-center justify-center rounded-[9px] border border-danger bg-white px-4 py-3", disabled && "opacity-45")}
     onPress={onPress}
+    disabled={disabled}
   >
     <Text className="font-black text-danger">{label}</Text>
   </TouchableOpacity>;

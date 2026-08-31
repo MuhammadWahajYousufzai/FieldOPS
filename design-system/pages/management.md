@@ -21,10 +21,10 @@ Typography uses the existing compact, heavy operational hierarchy. Labels and da
 ┌──────── rail ────────┬──────────────── workspace ────────────────┐
 │ Overview             │ Direct page job + live-route action       │
 │ Management           ├────────────────────────────────────────────┤
-│ Team desk            │ OPERATIONS INTEGRITY                       │
+│ Sales pipeline       │ OPERATIONS INTEGRITY                       │
 │ Review marks         │ reviews · boundary issues · coverage       │
 │ All controls         ├────────────────────────────────────────────┤
-│ Reports              │ Team Desk: messages | deals | phone setup  │
+│                      │ Sales pipeline: deals and next actions      │
 │                      ├────────────────────────────────────────────┤
 │                      │ Mark review queue                           │
 │                      ├────────────────────────────────────────────┤
@@ -37,9 +37,8 @@ The signature element is the operations-integrity strip. It encodes real blocker
 
 ## Interaction rules
 
-- Do not render every create/edit form at once. Keep one task view selected.
-- The Team Desk is one manager serving one organization's salespeople; never expose an organization switcher or multi-manager assignment flow.
-- Call and WhatsApp controls open the device application and never imply that FieldOPS records calls.
+- Keep Overview, Sales pipeline, Review marks, and All controls as separate sidebar views instead of one long page.
+- The sales pipeline is intentionally bounded to customer opportunities; FieldOPS has no chat, manager contact, calling, or WhatsApp surface.
 - Deal value is labelled as a seller-entered working estimate; no target, forecast, or attainment figure is invented.
 - A busy action disables only itself.
 - A boundary cannot be saved when it strands an active outlet.

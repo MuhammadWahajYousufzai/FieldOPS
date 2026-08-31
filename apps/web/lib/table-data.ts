@@ -1,12 +1,46 @@
-import { Models, Query, TablesDB } from "node-appwrite";
+import { Query, type Models, type TablesDB } from "node-appwrite";
 
 export async function listAllRows(db: TablesDB, databaseId: string, tableId: string, queries: string[] = [], maximum = 10_000) {
+  return listRowsUpTo(db, databaseId, tableId, queries, maximum);
+}
+
+/**
+ * Lists a complete bounded result and fails closed when the bound is exceeded.
+ * Use this for authorization and destructive workflows where silently dropping
+ * a later page could grant access or hide a dependency.
+ */
+export async function listAllRowsChecked(
+  db: TablesDB,
+  databaseId: string,
+  tableId: string,
+  queries: string[] = [],
+  maximum = 1_000,
+  transactionId?: string,
+) {
+  const safeMaximum = Math.max(1, Math.floor(maximum));
+  const rows = await listRowsUpTo(db, databaseId, tableId, queries, safeMaximum + 1, transactionId);
+  if (rows.length > safeMaximum) {
+    throw new Error(`${tableId} exceeds the safe ${safeMaximum}-row operation limit`);
+  }
+  return rows;
+}
+
+async function listRowsUpTo(
+  db: TablesDB,
+  databaseId: string,
+  tableId: string,
+  queries: string[],
+  maximum: number,
+  transactionId?: string,
+) {
   const rows: Models.DefaultRow[] = [];
   while (rows.length < maximum) {
     const page = await db.listRows({
       databaseId,
       tableId,
       queries: [...queries, Query.limit(Math.min(100, maximum - rows.length)), ...(rows.length ? [Query.cursorAfter(rows.at(-1)!.$id)] : [])],
+      ...(transactionId ? { transactionId } : {}),
+      total: false,
     });
     rows.push(...page.rows);
     if (page.rows.length < 100) break;

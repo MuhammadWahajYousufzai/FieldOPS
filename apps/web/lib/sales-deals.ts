@@ -4,18 +4,9 @@ import type { Models } from "node-appwrite";
 export const DEAL_STAGES = ["lead", "qualified", "proposal", "negotiation", "won", "lost"] as const;
 export const ACTIVE_DEAL_STAGES = ["lead", "qualified", "proposal", "negotiation"] as const;
 export type DealStage = typeof DEAL_STAGES[number];
-export type TeamDeskRow = Models.Row & Record<string, unknown>;
+export type SalesDealRow = Models.Row & Record<string, unknown>;
 
 const COMMAND_KEY_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
-
-export type TeamMessageCommand = {
-  idempotencyKey: string;
-  body: string;
-};
-
-export type MarkReadCommand = {
-  idempotencyKey: string;
-};
 
 type DealFields = {
   outletId: string | null;
@@ -44,39 +35,9 @@ export type UpdateDealCommand = {
 
 export type DealCommand = CreateDealCommand | UpdateDealCommand;
 
-export type ManagerContactCommand = {
-  operationId: string;
-  name: string;
-  phone: string;
-  whatsapp: string;
-  expectedUpdatedAt: string;
-};
-
-export type EmployeePhoneCommand = {
-  operationId: string;
-  employeeId: string;
-  phone: string;
-  expectedUpdatedAt: string;
-};
-
 export type ValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
-
-export function validateTeamMessageCommand(input: Record<string, unknown>): ValidationResult<TeamMessageCommand> {
-  const key = commandKey(input.idempotencyKey ?? input.operationId);
-  if (!key) return invalid("A valid request ID is required.");
-  const body = boundedText(input.body, 2_000);
-  if (body === null || !body) return invalid("Write a message of 2,000 characters or fewer.");
-  return { ok: true, value: { idempotencyKey: key, body } };
-}
-
-export function validateMarkReadCommand(input: Record<string, unknown>): ValidationResult<MarkReadCommand> {
-  const idempotencyKey = commandKey(input.idempotencyKey ?? input.operationId);
-  return idempotencyKey
-    ? { ok: true, value: { idempotencyKey } }
-    : invalid("A valid request ID is required.");
-}
 
 export function validateDealCommand(input: Record<string, unknown>): ValidationResult<DealCommand> {
   const idempotencyKey = commandKey(input.idempotencyKey ?? input.operationId);
@@ -117,7 +78,7 @@ export function validateDealCommand(input: Record<string, unknown>): ValidationR
   const dealId = requiredText(input.dealId, 36);
   if (!dealId) return invalid("Choose a deal to update.");
   const expectedUpdatedAt = requiredVersion(input.expectedUpdatedAt);
-  if (!expectedUpdatedAt) return invalid("Update Team Desk before changing this deal.");
+  if (!expectedUpdatedAt) return invalid("Update Sales before changing this deal.");
   const updates: Partial<DealFields> = {};
   if (has(input, "outletId")) {
     const value = optionalIdentifier(input.outletId);
@@ -173,45 +134,8 @@ export function validateDealCommand(input: Record<string, unknown>): ValidationR
   };
 }
 
-export function validateManagerContactCommand(input: Record<string, unknown>): ValidationResult<ManagerContactCommand> {
-  const operationId = commandKey(input.operationId ?? input.idempotencyKey);
-  if (!operationId) return invalid("A valid request ID is required.");
-  const name = requiredText(input.name ?? input.managerContactName, 128);
-  const phone = phoneText(input.phone ?? input.managerContactPhone);
-  const whatsapp = phoneText(input.whatsapp ?? input.managerContactWhatsapp);
-  const expectedUpdatedAt = requiredVersion(input.expectedUpdatedAt);
-  if (!expectedUpdatedAt) return invalid("Update Team Desk before changing the manager contact.");
-  if (!name || phone === null || whatsapp === null || (!phone && !whatsapp)) {
-    return invalid("Manager name and at least one valid phone or WhatsApp number are required.");
-  }
-  return { ok: true, value: { operationId, name, phone, whatsapp, expectedUpdatedAt } };
-}
-
-export function validateEmployeePhoneCommand(input: Record<string, unknown>): ValidationResult<EmployeePhoneCommand> {
-  const operationId = commandKey(input.operationId ?? input.idempotencyKey);
-  const employeeId = requiredText(input.employeeId, 36);
-  const phone = phoneText(input.phone);
-  const expectedUpdatedAt = requiredVersion(input.expectedUpdatedAt);
-  if (!expectedUpdatedAt) return invalid("Update Team Desk before changing this salesperson's phone.");
-  if (!operationId || !employeeId || !phone) {
-    return invalid("Choose an active salesperson and enter a valid phone number.");
-  }
-  return { ok: true, value: { operationId, employeeId, phone, expectedUpdatedAt } };
-}
-
-export function messageReplayMatches(
-  row: TeamDeskRow,
-  expected: TeamMessageCommand & { employeeId: string; senderRole: "manager" | "salesperson"; senderEmployeeId: string | null },
-) {
-  return String(row.idempotency_key ?? "") === expected.idempotencyKey
-    && String(row.employee_id ?? "") === expected.employeeId
-    && String(row.sender_role ?? "") === expected.senderRole
-    && (row.sender_employee_id ? String(row.sender_employee_id) : null) === expected.senderEmployeeId
-    && String(row.body ?? "") === expected.body;
-}
-
 export function dealCreateReplayMatches(
-  row: TeamDeskRow,
+  row: SalesDealRow,
   expected: CreateDealCommand & { employeeId: string },
 ) {
   return String(row.idempotency_key ?? "") === expected.idempotencyKey
@@ -227,7 +151,7 @@ export function dealCreateReplayMatches(
 }
 
 export function commandReceiptMatches(
-  row: TeamDeskRow,
+  row: SalesDealRow,
   expected: { actorUserId: string; action: string; entityType: string; entityId: string; command: unknown },
 ) {
   if (String(row.actor_user_id ?? "") !== expected.actorUserId
@@ -322,22 +246,6 @@ function requiredVersion(value: unknown) {
 function dealStage(value: unknown): DealStage | null {
   return typeof value === "string" && (DEAL_STAGES as readonly string[]).includes(value)
     ? value as DealStage
-    : null;
-}
-
-function phoneText(value: unknown) {
-  if (value === null || value === undefined || value === "") return "";
-  if (typeof value !== "string") return null;
-  const normalized = value.trim();
-  const digits = normalized.replace(/\D/g, "");
-  const plusCount = [...normalized].filter((character) => character === "+").length;
-  return normalized.length <= 32
-    && /^[+0-9() .-]+$/.test(normalized)
-    && plusCount <= 1
-    && (plusCount === 0 || normalized.startsWith("+"))
-    && digits.length >= 7
-    && digits.length <= 15
-    ? normalized
     : null;
 }
 

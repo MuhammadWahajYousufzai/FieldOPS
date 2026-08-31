@@ -6,31 +6,35 @@ import { requireDashboardAdmin } from "../../lib/auth";
 import { workDate } from "../../lib/mobile-auth";
 import { operationalPolicyFromRow } from "../../lib/operational-policy";
 import { listAllRows } from "../../lib/table-data";
-import { LogoutButton } from "../logout-button";
+import { ManagementDashboardShell } from "../dashboard-shells";
 import { ui } from "../ui";
 import { ManagementForms } from "./management-forms";
 import { PlaceApprovals, type ApprovedPlace, type PlaceReviewItem } from "./place-approvals";
-import { TeamDesk, type ManagerTeamContact, type TeamDeskDeal, type TeamDeskEmployee, type TeamDeskMessage } from "./team-desk";
+import { SalesPipeline, type SalesPipelineDeal, type SalesPipelineEmployee } from "./sales-pipeline";
 
 export const dynamic = "force-dynamic";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
+export type ManagementView = "overview" | "sales" | "reviews" | "plan" | "places" | "territories" | "team" | "operations";
 
-export default async function ManagementPage() {
+export default function ManagementPage() {
+  return ManagementPageView({ view: "overview" });
+}
+
+export async function ManagementPageView({ view }: { view: ManagementView }) {
   const actor = await requireDashboardAdmin();
   if (!actor) redirect("/login");
   const db = createAdminTablesDb();
   const today = workDate();
-  const [employeeRows, outletRows, territoryRows, assignmentRows, salesRoleRows, completedVisitRows, evidenceRows, organizationRows, dailyRouteRows, teamMessageRows, dealRows] = await Promise.all([
-    listAllRows(db, databaseId, "employees", [Query.equal("status", "active")]),
+  const [employeeRows, outletRows, territoryRows, assignmentRows, salesRoleRows, completedVisitRows, evidenceRows, organizationRows, dailyRouteRows, dealRows] = await Promise.all([
+    listAllRows(db, databaseId, "employees"),
     listAllRows(db, databaseId, "outlets", [Query.equal("status", "active")]),
     listAllRows(db, databaseId, "territories", [Query.equal("active", true)]),
     listAllRows(db, databaseId, "employee_assignments", []),
-    listAllRows(db, databaseId, "roles", [Query.equal("code", "sales_person"), Query.equal("active", true)], 1),
+    listAllRows(db, databaseId, "roles", [Query.equal("code", "sales_person")], 1),
     listAllRows(db, databaseId, "visits", [Query.equal("status", "completed")]),
     listAllRows(db, databaseId, "visit_evidence", [], 5_000),
     listAllRows(db, databaseId, "organizations", [Query.equal("active", true)], 1),
     listAllRows(db, databaseId, "route_assignments", [Query.equal("work_date", today)]),
-    listAllRows(db, databaseId, "team_messages", [Query.orderDesc("sent_at")], 500),
     listAllRows(db, databaseId, "sales_deals", [Query.orderDesc("$updatedAt")], 1_000),
   ]);
   const organization = organizationRows[0];
@@ -40,19 +44,24 @@ export default async function ManagementPage() {
   territoryRows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const now = Date.now();
   const salesRoleId = salesRoleRows[0]?.$id ?? "";
-  const salespersonIds = new Set(assignmentRows.flatMap((assignment) => (
-    String(assignment.role_id) === salesRoleId && assignmentIsEffective(assignment, now)
+  const historicalSalespersonIds = new Set(assignmentRows.flatMap((assignment) => (
+    String(assignment.role_id) === salesRoleId ? [String(assignment.employee_id)] : []
+  )));
+  const activeSalespersonIds = new Set(assignmentRows.flatMap((assignment) => (
+    salesRoleRows[0]?.active === true
+      && String(assignment.role_id) === salesRoleId
+      && assignmentIsEffective(assignment, now)
       ? [String(assignment.employee_id)]
       : []
   )));
-  const salespersonRows = employeeRows.filter((row) => salespersonIds.has(row.$id));
+  const salespersonRows = employeeRows.filter((row) => historicalSalespersonIds.has(row.$id));
+  const activeSalespersonRows = salespersonRows.filter((row) => row.status === "active" && activeSalespersonIds.has(row.$id));
   const allEmployeeLabels = new Map(employeeRows.map((row) => [row.$id, String(row.display_name)]));
-  const employees = salespersonRows.map((row) => ({ id: row.$id, label: String(row.display_name) }));
-  const teamEmployees: TeamDeskEmployee[] = salespersonRows.map((row) => ({
+  const employees = activeSalespersonRows.map((row) => ({ id: row.$id, label: String(row.display_name) }));
+  const pipelineEmployees: SalesPipelineEmployee[] = salespersonRows.map((row) => ({
     id: row.$id,
     label: String(row.display_name),
-    phone: String(row.phone || ""),
-    updatedAt: row.$updatedAt,
+    status: row.status === "active" && activeSalespersonIds.has(row.$id) ? "active" : "inactive",
   }));
   const outlets = outletRows.map((row) => ({ id: row.$id, label: `${String(row.name)} · ${String(row.code)}` }));
   const territories = territoryRows.map((row) => ({ id: row.$id, name: String(row.name), code: String(row.code), boundary: parseTerritoryBoundary(row.boundary) }));
@@ -155,22 +164,10 @@ export default async function ManagementPage() {
     return effective && employeeLabel && territoryLabel ? [{ employeeId, employeeLabel, territoryId, territoryLabel }] : [];
   });
   const outletLabels = new Map(outletRows.map((outlet) => [outlet.$id, String(outlet.name)]));
-  const teamMessages: TeamDeskMessage[] = teamMessageRows.flatMap((row) => {
-    const employeeId = String(row.employee_id || "");
-    const senderRole = row.sender_role === "manager" ? "manager" as const : row.sender_role === "salesperson" ? "salesperson" as const : null;
-    return employeeId && senderRole && salespersonIds.has(employeeId) ? [{
-      id: row.$id,
-      employeeId,
-      senderRole,
-      body: String(row.body || ""),
-      sentAt: String(row.sent_at || row.$createdAt),
-      readAt: String(row.read_at || ""),
-    }] : [];
-  }).sort((left, right) => left.sentAt.localeCompare(right.sentAt));
-  const teamDeals: TeamDeskDeal[] = dealRows.flatMap((row) => {
+  const pipelineDeals: SalesPipelineDeal[] = dealRows.flatMap((row) => {
     const employeeId = String(row.employee_id || "");
     const employeeLabel = allEmployeeLabels.get(employeeId);
-    if (!employeeLabel || !salespersonIds.has(employeeId)) return [];
+    if (!employeeLabel || !historicalSalespersonIds.has(employeeId)) return [];
     const amount = Number(row.amount);
     return [{
       id: row.$id,
@@ -187,12 +184,6 @@ export default async function ManagementPage() {
       updatedAt: row.$updatedAt,
     }];
   }).sort((left, right) => left.followUpAt.localeCompare(right.followUpAt) || right.updatedAt.localeCompare(left.updatedAt));
-  const managerContact: ManagerTeamContact = {
-    name: String(organization?.manager_contact_name || actor.user.name || "Field manager"),
-    phone: String(organization?.manager_contact_phone || ""),
-    whatsapp: String(organization?.manager_contact_whatsapp || ""),
-    updatedAt: organization?.$updatedAt || "",
-  };
   const dailyAssignments = dailyRouteRows.map((route) => ({
     id: route.$id,
     employeeLabel: allEmployeeLabels.get(String(route.employee_id)) ?? "Unknown salesperson",
@@ -200,15 +191,18 @@ export default async function ManagementPage() {
     sequence: Number(route.sequence || 0),
     status: String(route.status || "planned"),
   })).sort((a, b) => a.employeeLabel.localeCompare(b.employeeLabel) || a.sequence - b.sequence);
-  return <main className={ui.shell}>
-    <aside className={ui.rail}>
-      <div className={ui.brand}><span className={ui.logo}>YR</span><div><strong className="block text-sm">Yousuf Rice FieldOps</strong><small className="mt-1 block text-slate-400">Karachi operations</small></div></div>
-      <nav className={ui.nav} aria-label="Primary"><a className={ui.navLink} href="/">Overview</a><a className={`${ui.navLink} ${ui.navSelected}`} href="/management">Management</a><a className={ui.navLink} href="#team-desk">Team desk</a><a className={ui.navLink} href="#place-approvals">Review marks</a><a className={ui.navLink} href="#management-controls">All controls</a><a className={ui.navLink} href="/#reports">Reports</a></nav>
-      <div className="mt-6 border-t border-white/15 px-2 pt-4 lg:mt-auto"><small className="mb-1 block text-slate-400">Signed in as</small><strong className="block">{actor.user.name}</strong><LogoutButton /></div>
-    </aside>
-    <section className={ui.workspace}>
-      <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>One-manager control room</p><h1 className={ui.h1}>Run today’s field operation.</h1><p className={ui.lede}>Call and guide the sales team, move deals to a clear next action, review marked places, and publish outlet work from one control room.</p></div><a className={ui.button} href="/">View live routes</a></header>
-      <section className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(20,33,61,0.07)]" aria-labelledby="operations-integrity-title">
+  const pageMeta = {
+    overview: { eyebrow: "Operations control room", title: "What needs management attention.", lede: "See integrity issues first, then open the one management task that needs action." },
+    sales: { eyebrow: "Customer opportunities", title: "Move every deal to a clear next action.", lede: "Review salesperson-entered opportunities, follow-up dates, and working estimates without inventing a forecast." },
+    reviews: { eyebrow: "Place review queue", title: "Verify salesperson-marked places.", lede: "Review GPS accuracy, photo and voice evidence, then approve the official place or reject it with a clear reason." },
+    plan: { eyebrow: "Daily visit plan", title: "Publish today’s outlet commitments.", lede: "Assign existing outlets to active salespeople and keep started field records locked." },
+    places: { eyebrow: "Permanent field directory", title: "Manage outlets and verified points.", lede: "Create management outlets or correct official details without moving a salesperson-verified GPS point." },
+    territories: { eyebrow: "Territory control", title: "Draw and protect work areas.", lede: "Create boundaries that contain active outlets before enforcing field access." },
+    team: { eyebrow: "People & access", title: "Manage salesperson access safely.", lede: "Create, update, disable, and scope field accounts without confusing them with dashboard administrators." },
+    operations: { eyebrow: "Tracking & sync", title: "Set the phone’s operating policy.", lede: "Control capture quality, route gaps, and automatic sync while preserving raw GPS evidence." },
+  }[view];
+  const header = <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>{pageMeta.eyebrow}</p><h1 className={ui.h1}>{pageMeta.title}</h1><p className={ui.lede}>{pageMeta.lede}</p></div><a className={ui.button} href="/routes">View live routes</a></header>;
+  const overview = <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(20,33,61,0.07)]" aria-labelledby="operations-integrity-title">
         <div className="grid bg-[#14213D] px-5 py-4 text-white sm:grid-cols-[1fr_auto] sm:items-center sm:px-6"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-200">Operations integrity</p><h2 className="mt-1 text-xl font-black" id="operations-integrity-title">What needs management attention now</h2></div><span className={`mt-3 inline-flex w-max rounded-full px-3 py-1.5 text-xs font-black sm:mt-0 ${outletMapIssues.length || pendingReviews.length ? "bg-amber-300 text-[#14213D]" : "bg-emerald-300 text-emerald-950"}`}>{outletMapIssues.length + pendingReviews.length || "All checks clear"}</span></div>
         <div className="grid sm:grid-cols-2 xl:grid-cols-4">
           <IntegrityCell value={pendingReviews.length} label="Marks awaiting review" tone={pendingReviews.length ? "pending" : "good"} />
@@ -217,12 +211,20 @@ export default async function ManagementPage() {
           <IntegrityCell value={employees.length} label="Active salespersons" tone="neutral" />
         </div>
         {outletMapIssues.length > 0 && <details className="border-t border-red-200 bg-red-50 px-5 py-4 sm:px-6"><summary className="cursor-pointer text-sm font-black text-red-900">Review {outletMapIssues.length} outlet {outletMapIssues.length === 1 ? "location" : "locations"} before enforcing visits</summary><ul className="mt-3 grid gap-2 text-sm text-red-800 sm:grid-cols-2">{outletMapIssues.map((issue) => <li key={issue.id}><strong>{issue.name}</strong> · {issue.reason}</li>)}</ul></details>}
-      </section>
-      <TeamDesk employees={teamEmployees} messages={teamMessages} deals={teamDeals} contact={managerContact} />
-      <PlaceApprovals reviews={pendingReviews} territories={territories.map(({ id, name }) => ({ id, name }))} approvedPlaces={approvedPlaces} />
-      <ManagementForms employees={employees} outlets={outlets} outletRecords={outletRecords} territories={territories} territoryAssignments={territoryAssignments} dailyAssignments={dailyAssignments} today={today} operationsPolicy={operationsPolicy} />
-    </section>
-  </main>;
+      </section>;
+
+  const managementFormsProps = { employees, outlets, outletRecords, territories, territoryAssignments, dailyAssignments, today, operationsPolicy };
+  const content = {
+    overview,
+    sales: <SalesPipeline employees={pipelineEmployees} deals={pipelineDeals} />,
+    reviews: <PlaceApprovals reviews={pendingReviews} territories={territories.map(({ id, name }) => ({ id, name }))} approvedPlaces={approvedPlaces} />,
+    plan: <ManagementForms {...managementFormsProps} view="plan" />,
+    places: <ManagementForms {...managementFormsProps} view="places" />,
+    territories: <ManagementForms {...managementFormsProps} view="territories" />,
+    team: <ManagementForms {...managementFormsProps} view="team" />,
+    operations: <ManagementForms {...managementFormsProps} view="operations" />,
+  }[view];
+  return <ManagementDashboardShell actorName={actor.user.name}>{header}{content}</ManagementDashboardShell>;
 }
 
 function IntegrityCell({ value, label, tone }: { value: string | number; label: string; tone: "good" | "pending" | "blocking" | "neutral" }) {

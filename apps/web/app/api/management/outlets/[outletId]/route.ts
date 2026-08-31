@@ -116,21 +116,13 @@ async function updateOutletMetadata(outletId: string, body: Record<string, unkno
     const now = new Date().toISOString();
     const operationKey = managementOperationKey(body.operationId, "outlet.metadata", outletId, expectedUpdatedAt, after);
     const { auditId, correlationId } = managementAuditIdentity("outlet.metadata_updated", outletId, operationKey);
-    const update = await db.updateRows({
+    await db.updateRow({
       databaseId,
       tableId: "outlets",
+      rowId: outletId,
       transactionId: transaction.$id,
       data: { name, address, notes, territory_id: territoryId },
-      queries: [Query.equal("$id", outletId), Query.equal("$updatedAt", outlet.$updatedAt)],
     });
-    if (update.rows.length === 0) {
-      await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
-      const current = await getRowOrNull(db, "outlets", outletId).catch(() => null);
-      if (current && sameOutletMetadata(outletMetadata(current), after)) {
-        return NextResponse.json({ ok: true, outletId, updatedAt: current.$updatedAt, changed: false, replayed: true });
-      }
-      return outletMetadataConflictResponse();
-    }
     await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId: transaction.$id, data: {
       actor_user_id: actorUserId,
       action: "outlet.metadata_updated",

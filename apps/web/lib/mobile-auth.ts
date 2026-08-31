@@ -1,6 +1,7 @@
 import { Query } from "node-appwrite";
 import { createAdminTablesDb, createSessionAccount } from "@fieldops/appwrite/server";
 import { FIELD_SALESPERSON_ROLE, hasEffectiveRoleAssignment } from "./mobile-authorization";
+import { listAllRowsChecked } from "./table-data";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 type AdminTablesDb = ReturnType<typeof createAdminTablesDb>;
@@ -46,12 +47,14 @@ export async function employeeHasEffectiveRole(
     queries: [Query.equal("code", roleCode), Query.equal("active", true), Query.limit(1)],
   })).rows[0];
   if (!role) return false;
-  const assignments = await db.listRows({
+  const assignments = await listAllRowsChecked(
+    db,
     databaseId,
-    tableId: "employee_assignments",
-    queries: [Query.equal("employee_id", employeeId), Query.limit(100)],
-  });
-  return hasEffectiveRoleAssignment(assignments.rows, role.$id, Date.now());
+    "employee_assignments",
+    [Query.equal("employee_id", employeeId)],
+    1_000,
+  );
+  return hasEffectiveRoleAssignment(assignments, role.$id, Date.now());
 }
 
 export function workDate(date = new Date()) {

@@ -1,5 +1,6 @@
 import { parseTerritoryBoundary, pointInAnyTerritory, type Coordinate, type TerritoryBoundary } from "@fieldops/domain";
 import { Query, type Models, type TablesDB } from "node-appwrite";
+import { listAllRowsChecked } from "./table-data";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -17,12 +18,14 @@ export type TerritoryAccess = {
 };
 
 export async function territoryAccessForEmployee(db: TablesDB, employeeId: string, at = new Date()): Promise<TerritoryAccess> {
-  const assignments = await db.listRows({
+  const assignments = await listAllRowsChecked(
+    db,
     databaseId,
-    tableId: "employee_assignments",
-    queries: [Query.equal("employee_id", employeeId), Query.limit(100)],
-  });
-  const assignedIds = [...new Set(assignments.rows
+    "employee_assignments",
+    [Query.equal("employee_id", employeeId)],
+    1_000,
+  );
+  const assignedIds = [...new Set(assignments
     .filter((row) => isEffective(row, at) && row.territory_id)
     .map((row) => String(row.territory_id)))];
   const territoryRows = await Promise.all(assignedIds.map((territoryId) => db.getRow({

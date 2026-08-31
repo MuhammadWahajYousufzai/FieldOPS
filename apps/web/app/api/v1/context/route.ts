@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { mobileActor, workDate } from "../../../../lib/mobile-auth";
 import { operationalPolicyFromRow } from "../../../../lib/operational-policy";
-import { ACTIVE_DEAL_STAGES } from "../../../../lib/team-desk";
+import { ACTIVE_DEAL_STAGES } from "../../../../lib/sales-deals";
 import { territoryAccessForEmployee } from "../../../../lib/territory-access";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
@@ -194,7 +194,6 @@ export async function GET(request: Request) {
     reviewedPlaceResult,
     pendingPlaceResult,
     organizationResult,
-    teamMessageResult,
     activeDealResult,
     closedDealResult,
   ] = await Promise.all([
@@ -236,11 +235,6 @@ export async function GET(request: Request) {
     }),
     db.listRows({
       databaseId,
-      tableId: "team_messages",
-      queries: [Query.equal("employee_id", employeeId), Query.orderDesc("sent_at"), Query.limit(MAX_ROWS_PER_TYPE)],
-    }),
-    db.listRows({
-      databaseId,
       tableId: "sales_deals",
       queries: [
         Query.equal("employee_id", employeeId),
@@ -271,7 +265,6 @@ export async function GET(request: Request) {
   const orderRows = orderResult.rows as DataRow[];
   const organization = organizationResult.rows[0] as DataRow | undefined;
   const operationsPolicy = operationalPolicyFromRow(organization);
-  const teamMessageRows = teamMessageResult.rows as DataRow[];
   const closedDealCutoff = new Date();
   closedDealCutoff.setDate(closedDealCutoff.getDate() - RECENT_CLOSED_DEAL_DAYS);
   const dealRows = dedupeRows([
@@ -351,21 +344,6 @@ export async function GET(request: Request) {
     workState,
     route: [...assignedVisits, ...selfVisits],
     recentActivity: buildRecentActivity(attendanceRows, recentPlaceVisits, orderRows, outlets, evidenceTypes),
-    teamContact: {
-      name: stringValue(organization?.manager_contact_name),
-      phone: stringValue(organization?.manager_contact_phone),
-      whatsapp: stringValue(organization?.manager_contact_whatsapp),
-      updatedAt: organization?.$updatedAt ?? "",
-    },
-    teamMessages: teamMessageRows.map((message) => ({
-      id: message.$id,
-      employeeId: stringValue(message.employee_id),
-      senderRole: stringValue(message.sender_role),
-      senderEmployeeId: stringValue(message.sender_employee_id) || null,
-      body: stringValue(message.body),
-      sentAt: stringValue(message.sent_at),
-      readAt: stringValue(message.read_at) || null,
-    })),
     deals: dealRows.map((deal) => ({
       id: deal.$id,
       employeeId: stringValue(deal.employee_id),

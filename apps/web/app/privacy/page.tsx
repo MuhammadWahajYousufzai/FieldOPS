@@ -20,7 +20,7 @@ export default function PrivacyPolicy() {
         <li><strong>Precise location:</strong> current visit/order coordinates and quality-checked route points from Start work until Finish session. The organization can configure the movement and timing thresholds used to capture the route.</li>
         <li><strong>Visit evidence:</strong> photos, audio notes, visit outcomes, notes, timestamps, and outlet distance checks.</li>
         <li><strong>Orders and customers:</strong> customer/shop name and optional phone/address, products, quantities, prices, notes, and capture location.</li>
-        <li><strong>Team and deal data:</strong> work messages between a salesperson and manager, configured work phone/WhatsApp numbers, customer opportunity names, stages, working values, next actions, follow-up dates, and notes.</li>
+        <li><strong>Deal data:</strong> customer opportunity names, stages, working values, next actions, follow-up dates, and notes.</li>
         <li><strong>Operational records:</strong> attendance, assigned completion, sync status, and security/audit events.</li>
       </ul></section>
 

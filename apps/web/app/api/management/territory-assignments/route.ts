@@ -11,6 +11,7 @@ import {
   stableManagementId,
 } from "../../../../lib/management-write";
 import { text } from "../../../../lib/mobile-auth";
+import { listAllRowsChecked } from "../../../../lib/table-data";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -83,7 +84,7 @@ export async function DELETE(request: Request) {
   const db = createAdminTablesDb();
   const [targetHistory, employeeHistory, role] = await Promise.all([
     assignmentRows(db, employeeId, territoryId),
-    db.listRows({ databaseId, tableId: "employee_assignments", queries: [Query.equal("employee_id", employeeId), Query.limit(100)] }).then((result) => result.rows),
+    listAllRowsChecked(db, databaseId, "employee_assignments", [Query.equal("employee_id", employeeId)], 1_000),
     salesRole(db),
   ]);
   if (!role) return NextResponse.json({ error: "The salesperson role is not configured." }, { status: 409 });
@@ -172,12 +173,10 @@ async function salesRole(db: ReturnType<typeof createAdminTablesDb>) {
 }
 
 async function assignmentRows(db: ReturnType<typeof createAdminTablesDb>, employeeId: string, territoryId: string) {
-  const result = await db.listRows({ databaseId, tableId: "employee_assignments", queries: [
+  return listAllRowsChecked(db, databaseId, "employee_assignments", [
     Query.equal("employee_id", employeeId),
     Query.equal("territory_id", territoryId),
-    Query.limit(100),
-  ] });
-  return result.rows;
+  ], 1_000);
 }
 
 function activeRows<T extends Models.Row & Record<string, unknown>>(rows: T[], at = Date.now()) {

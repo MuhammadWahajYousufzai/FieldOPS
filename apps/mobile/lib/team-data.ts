@@ -1,20 +1,6 @@
 export const dealStages = ["lead", "qualified", "proposal", "negotiation", "won", "lost"] as const;
 export type DealStage = (typeof dealStages)[number];
 
-export type TeamContact = {
-  name: string;
-  phone: string;
-  whatsapp: string;
-};
-
-export type TeamMessage = {
-  id: string;
-  body: string;
-  senderRole: string;
-  sentAt: string;
-  readAt: string;
-};
-
 export type Deal = {
   id: string;
   outletId: string;
@@ -41,33 +27,6 @@ function text(value: unknown, maximum = 2_000) {
 function dateText(value: unknown) {
   const result = text(value, 64);
   return result && Number.isFinite(new Date(result).valueOf()) ? result : "";
-}
-
-export function normalizeTeamContact(value: unknown): TeamContact | null {
-  const item = record(value);
-  if (!item) return null;
-  const contact = {
-    name: text(item.name, 160),
-    phone: text(item.phone, 64),
-    whatsapp: text(item.whatsapp, 128),
-  };
-  return contact.name || contact.phone || contact.whatsapp ? contact : null;
-}
-
-export function normalizeTeamMessages(value: unknown): TeamMessage[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((raw): TeamMessage[] => {
-    const item = record(raw);
-    if (!item) return [];
-    const message = {
-      id: text(item.id, 64),
-      body: text(item.body, 2_000),
-      senderRole: text(item.senderRole, 64),
-      sentAt: dateText(item.sentAt),
-      readAt: dateText(item.readAt),
-    };
-    return message.id && message.body && message.sentAt ? [message] : [];
-  }).sort((a, b) => new Date(a.sentAt).valueOf() - new Date(b.sentAt).valueOf() || a.id.localeCompare(b.id));
 }
 
 export function normalizeDeals(value: unknown): Deal[] {
@@ -99,16 +58,6 @@ export function normalizeDeals(value: unknown): Deal[] {
       || new Date(b.updatedAt || 0).valueOf() - new Date(a.updatedAt || 0).valueOf()
       || a.id.localeCompare(b.id);
   });
-}
-
-export function teamContactUrl(kind: "phone" | "whatsapp", configuredValue: string) {
-  const value = configuredValue.trim();
-  if (!value) return null;
-  const digits = value.replace(/\D/g, "");
-  if (digits.length < 7 || digits.length > 15) return null;
-  if (kind === "whatsapp") return `https://wa.me/${digits}`;
-  const prefix = value.startsWith("+") ? "+" : "";
-  return `tel:${prefix}${digits}`;
 }
 
 export function dealFollowUpStatus(

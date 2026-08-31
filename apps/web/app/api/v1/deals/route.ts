@@ -10,10 +10,10 @@ import {
   dealCreateReplayMatches,
   dealUpdateData,
   type CreateDealCommand,
-  type TeamDeskRow,
+  type SalesDealRow,
   type UpdateDealCommand,
   validateDealCommand,
-} from "../../../../lib/team-desk";
+} from "../../../../lib/sales-deals";
 import {
   isAppwriteConflict,
   isAppwriteNotFound,
@@ -109,7 +109,7 @@ async function createDeal(
           updated_by: actor.user.$id,
         },
         permissions: [],
-      }) as TeamDeskRow;
+      }) as SalesDealRow;
       await db.createRow({
         databaseId,
         tableId: "audit_logs",
@@ -168,19 +168,13 @@ async function updateDeal(
     if (!current || String(current.employee_id) !== actor.employee.$id) throw new DealNotFound();
     if (command.expectedUpdatedAt && current.$updatedAt !== command.expectedUpdatedAt) throw new DealVersionConflict();
     if (command.updates.outletId) await requireActiveOutlet(db, command.updates.outletId, transactionId);
-    const updated = await db.updateRows({
+    const row = await db.updateRow({
       databaseId,
       tableId: "sales_deals",
+      rowId: command.dealId,
       transactionId,
       data: { ...dealUpdateData(command.updates), updated_by: actor.user.$id },
-      queries: [
-        Query.equal("$id", command.dealId),
-        Query.equal("employee_id", actor.employee.$id),
-        Query.equal("$updatedAt", current.$updatedAt),
-      ],
     });
-    const row = updated.rows[0] as TeamDeskRow | undefined;
-    if (!row) throw new DealVersionConflict();
     await db.createRow({
       databaseId,
       tableId: "audit_logs",
@@ -201,9 +195,10 @@ async function updateDeal(
     });
     return { row, replayed: false };
   });
+  const committed = await db.getRow({ databaseId, tableId: "sales_deals", rowId: outcome.row.$id });
   return NextResponse.json({
     ok: true,
-    deal: serializeDeal(outcome.row),
+    deal: serializeDeal(committed),
     changed: !outcome.replayed,
     replayed: outcome.replayed,
   });
@@ -223,7 +218,7 @@ async function dealByOperation(db: ReturnType<typeof createAdminTablesDb>, idemp
     databaseId,
     tableId: "sales_deals",
     queries: [Query.equal("idempotency_key", idempotencyKey), Query.limit(1)],
-  })).rows[0] as TeamDeskRow | undefined) ?? null;
+  })).rows[0] as SalesDealRow | undefined) ?? null;
 }
 
 async function getRowOrNull(
@@ -233,19 +228,19 @@ async function getRowOrNull(
   transactionId?: string,
 ) {
   try {
-    return await db.getRow({ databaseId, tableId, rowId, ...(transactionId ? { transactionId } : {}) }) as TeamDeskRow;
+    return await db.getRow({ databaseId, tableId, rowId, ...(transactionId ? { transactionId } : {}) }) as SalesDealRow;
   } catch (error) {
     if (isAppwriteNotFound(error)) return null;
     throw error;
   }
 }
 
-function dealCreateReplayResponse(row: TeamDeskRow, expected: Parameters<typeof dealCreateReplayMatches>[1]) {
+function dealCreateReplayResponse(row: SalesDealRow, expected: Parameters<typeof dealCreateReplayMatches>[1]) {
   if (!dealCreateReplayMatches(row, expected)) throw new DealCommandConflict();
   return NextResponse.json({ ok: true, deal: serializeDeal(row), created: false, replayed: true });
 }
 
-function serializeDeal(row: TeamDeskRow) {
+function serializeDeal(row: SalesDealRow) {
   return {
     id: row.$id,
     employeeId: String(row.employee_id),

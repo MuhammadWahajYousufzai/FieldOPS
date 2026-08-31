@@ -8,7 +8,7 @@ This deployment is intentionally single-organization and operated through one ma
 
 | Table | Purpose and essential columns |
 |---|---|
-| `organizations` | company identity, timezone, currency, active state, and the single manager's call/WhatsApp contact |
+| `organizations` | company identity, timezone, currency, active state, and operational policy |
 | `regions` | organization hierarchy |
 | `areas` | region hierarchy |
 | `territories` | area, code, name, native `boundary` polygon, active state |
@@ -24,7 +24,7 @@ This deployment is intentionally single-organization and operated through one ma
 | `visit_evidence` | photo/audio metadata linked to Storage files |
 | `location_points` | policy-filtered route points, native coordinates, accuracy, and foreground/background source |
 | `orders` | salesperson/customer/order totals and native coordinates |
-| `team_messages` | salesperson↔manager work thread, explicit read state, and retry-safe request key |
+| `team_messages` | legacy retained records; no current app or dashboard chat surface reads or writes this table |
 | `sales_deals` | salesperson-owned opportunity, working value, stage, next action, follow-up, and notes |
 | `auth_attempt_windows` | private HMAC-derived login-attempt windows; no raw email, IP address, or password |
 
@@ -44,7 +44,7 @@ The mobile Activity screen combines confirmed visits, place-review decisions, an
 
 Route display never treats every raw fix as travelled road. The phone captures high-fidelity updates during active work, rejects weak or physically impossible fixes before queueing, and keeps stationary heartbeats without recording normal GPS scribble. Foreground recording is the default. A salesperson may separately enable background permission for screen-lock continuity; that task has its own persisted active-session scope and stops at Finish session or sign out. The dashboard preserves all server-received points in the audit log but draws quality-checked segments, breaking the solid line across long gaps or implausible jumps and showing only a clearly dashed direction estimate across moderate gaps. Migration 008 adds employee-scoped indexes for recent cross-day place-review activity; migration 009 adds the organization-level operational controls; migration 010 adds atomic daily route-sequence counters so double taps, retries, and overlapping tabs cannot create duplicate positions.
 
-The Team Desk is deliberately not a separate CRM or tenant layer. A salesperson can call the one configured manager, send a durable offline message, and keep a customer opportunity at `lead`, `qualified`, `proposal`, `negotiation`, `won`, or `lost`. The manager can reply, call a salesperson, maintain phone numbers, and update stage, next action, or follow-up from the same dashboard. Reads are employee-scoped, manager writes are authenticated, every mutation is idempotent, and record changes use optimistic version checks. Deal values are salesperson-entered working estimates—not booked revenue or a forecast. Migration 011 adds the contact fields plus `team_messages` and `sales_deals` with their required query and request-key indexes.
+The Sales pipeline is deliberately not a separate CRM or tenant layer. A salesperson can keep a customer opportunity at `lead`, `qualified`, `proposal`, `negotiation`, `won`, or `lost`, while management can update its stage, next action, and follow-up. FieldOPS exposes no chat, manager contact, calling, or WhatsApp feature. Deal mutations are idempotent and record changes use optimistic version checks. Deal values are salesperson-entered working estimates—not booked revenue or a forecast. Migration 011 originally added contact/message storage alongside `sales_deals`; those legacy fields and rows may remain for non-destructive deployment compatibility but are not part of the current product.
 
 Dashboard access uses a named Appwrite user account, never a shared password-only bypass. Appwrite verifies the email and password, and the dashboard then authorizes solely from the exact server-managed `admin` user label returned for that session. No employee record, role row, manager role, or effective assignment is required for dashboard entry. Mobile field access remains separate and requires a currently effective `sales_person` assignment. Migration 012 uses the installation's existing single-manager records only to identify the initial account that should receive `admin`; those records are not consulted during runtime dashboard authorization. Labels remain server-managed; the migration does not revoke or recreate sessions.
 
