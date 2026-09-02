@@ -43,6 +43,13 @@
             "timeout": 60,
             "entrypoint": "src/main.js",
             "commands": "npm install",
+            "installationId": "6a78cdcd2ac6ad663c6b",
+            "providerRepositoryId": "1323882895",
+            "providerBranch": "main",
+            "providerSilentMode": false,
+            "providerRootDirectory": "functions/evidence-retention",
+            "providerBranches": ["main"],
+            "providerPaths": ["functions/evidence-retention/**"],
             "ignore": "node_modules\n.tmp",
             "path": "functions/evidence-retention"
         }
