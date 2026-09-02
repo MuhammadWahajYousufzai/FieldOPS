@@ -38,15 +38,23 @@ export function LoginForm() {
       setBusy(false);
     }
   }
-  return <main className="grid min-h-screen bg-[#F5F7FF] text-[#102A58] lg:grid-cols-[minmax(360px,.95fr)_minmax(430px,1.05fr)]">
-    <section className="relative flex min-h-[390px] overflow-hidden bg-[radial-gradient(circle_at_78%_16%,rgba(31,199,255,0.35),transparent_24%),linear-gradient(145deg,#102A58_0%,#1B3167_62%,#213B7D_100%)] p-8 text-white sm:p-12 lg:min-h-screen lg:p-[clamp(48px,5vw,78px)]">
-      <div className="relative z-10 flex w-full flex-col justify-between gap-14">
-        <div className="flex items-center gap-3"><span className={ui.logo}><BrandMark className="h-full w-full" priority /></span><div><strong className="font-display block text-base tracking-[-0.02em]">Yousuf Rice FieldOPS</strong><small className="mt-1 flex items-center gap-1.5 text-[#C5D2EA]"><span className="h-1.5 w-1.5 rounded-full bg-[#55E6C1]" />Karachi operations</small></div></div>
-        <div><p className="font-utility text-[10px] font-black uppercase tracking-[0.18em] text-[#88EEFF]">The route from promise to proof</p><h1 className="font-display my-4 max-w-2xl text-4xl font-black leading-[0.96] tracking-[-0.055em] sm:text-6xl">See the field clearly.<br /><span className="text-[#FFE36B]">Act while it matters.</span></h1><p className="max-w-xl leading-7 text-[#C9D5EA]">Coordinate visits, verified evidence, outlets, and sales results—even when the signal is unreliable.</p></div>
-        <small className="font-utility text-[10px] uppercase tracking-[0.12em] text-[#92A4C4]">Private administrator access</small>
+  return <main className="grid min-h-screen bg-[var(--canvas)] text-[var(--ink)] lg:grid-cols-2">
+    <section className="flex bg-[linear-gradient(145deg,#B40E30,#C51B40_60%,#C92146)] p-7 text-white sm:p-12 lg:min-h-screen lg:p-16">
+      <div className="flex w-full flex-col justify-between gap-12">
+        <div className="flex items-center gap-3"><span className={ui.logo}><BrandMark className="h-full w-full" priority /></span><div><strong className="font-display block text-xl font-bold">FieldOPS</strong><small className="text-[#FFE2E9]">Yousuf Rice</small></div></div>
+        <div className="max-w-lg"><p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#FFE2E9]">Closer to your field team</p><h1 className="font-display my-5 text-[42px] font-bold leading-[1.05] tracking-[-0.035em] sm:text-6xl">A clearer view.<br />A better day in the field.</h1><p className="max-w-sm text-base leading-7 text-[#FFE8ED]">Visits, routes, and customer orders. One shared picture for your team and the office.</p></div>
+        <div className="hidden gap-6 border-t border-white/25 pt-6 text-sm text-[#FFE8ED] sm:flex"><span>Visit reports</span><span>Team routes</span><span>Sales activity</span></div>
       </div>
-      <div className="absolute -bottom-28 -right-24 h-72 w-72 rounded-full border-[42px] border-[#55E6C1]/15" aria-hidden="true" />
     </section>
-    <section className="grid place-items-center p-6 sm:p-10"><form aria-busy={busy} className="w-full max-w-md rounded-[28px] border border-[#DCE4F2] bg-white p-6 shadow-[0_22px_70px_rgba(16,42,88,0.10)] sm:p-9" onSubmit={submit}><p className={ui.eyebrow}>Management control room</p><h2 className="font-display my-3 text-3xl font-black tracking-[-0.035em]">Welcome back</h2><p className="text-sm leading-6 text-[#60708C]">Use your administrator account to open today’s operating picture.</p><div className="my-6 grid gap-4"><label className={ui.label}>Work email<input className={ui.input} name="email" type="email" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" placeholder="you@company.com" autoFocus required /></label><label className={ui.label}>Password<input className={ui.input} name="password" type="password" autoComplete="current-password" required /></label></div>{error && <p className={ui.messageError} role="alert">{error}</p>}<button className={`${ui.button} my-4 w-full`} disabled={busy}>{busy ? "Opening control room…" : "Open control room"}</button><small className="block text-center leading-5 text-[#71809A]">Access is limited to accounts carrying the protected server-side admin label.</small></form></section>
+    <section className="grid place-items-center px-5 py-10 sm:p-12">
+      <form aria-busy={busy} className="w-full max-w-[430px] rounded-[28px] border border-[var(--line)] bg-white p-6 shadow-[0_14px_60px_#64233208] sm:p-9" onSubmit={submit}>
+        <BrandMark className="mb-6 h-16 w-16 rounded-2xl" />
+        <p className={ui.eyebrow}>Management dashboard</p><h2 className="font-display mb-2 mt-3 text-[32px] font-bold tracking-tight">Welcome back</h2><p className={ui.lede}>Sign in to see how your team’s day is going.</p>
+        <div className="my-7 grid gap-5"><label className={ui.label}>Work email<input className={ui.input} name="email" type="email" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" placeholder="you@company.com" required /></label><label className={ui.label}>Password<input className={ui.input} name="password" type="password" autoComplete="current-password" placeholder="Enter your password" required /></label></div>
+        {error && <p className={ui.messageError} role="alert">{error}</p>}
+        <button className={`${ui.button} my-3 w-full`} disabled={busy}>{busy ? "Signing in…" : "Sign in"}<span aria-hidden="true">→</span></button>
+        <p className="mt-4 text-center text-xs leading-5 text-[var(--muted)]">For authorized administrators.<br />Salespeople can sign in through the FieldOPS app.</p>
+      </form>
+    </section>
   </main>;
 }

@@ -46,11 +46,11 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
     if (source) source.setData(data);
     else {
       map.addSource("fieldops-territories", { type: "geojson", data });
-      map.addLayer({ id: "fieldops-territories-fill", type: "fill", source: "fieldops-territories", paint: { "fill-color": "#5269FF", "fill-opacity": 0.12 } });
-      map.addLayer({ id: "fieldops-territories-line", type: "line", source: "fieldops-territories", paint: { "line-color": "#5269FF", "line-width": 2 } });
+      map.addLayer({ id: "fieldops-territories-fill", type: "fill", source: "fieldops-territories", paint: { "fill-color": "#CB183D", "fill-opacity": 0.12 } });
+      map.addLayer({ id: "fieldops-territories-line", type: "line", source: "fieldops-territories", paint: { "line-color": "#CB183D", "line-width": 2 } });
     }
     map.setPaintProperty("fieldops-territories-fill", "fill-opacity", ["case", ["==", ["get", "id"], selectedTerritoryId], 0.18, 0.04]);
-    map.setPaintProperty("fieldops-territories-line", "line-color", ["case", ["==", ["get", "id"], selectedTerritoryId], "#4056D8", "#A8B4C9"]);
+    map.setPaintProperty("fieldops-territories-line", "line-color", ["case", ["==", ["get", "id"], selectedTerritoryId], "#B41438", "#A8B4C9"]);
     const selected = territories.find((territory) => territory.id === selectedTerritoryId);
     const fitKey = JSON.stringify([selectedTerritoryId, selected?.boundary]);
     if (fitKey !== lastFit.current) {
@@ -121,7 +121,7 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
       map.addSource("fieldops-boundary", { type: "geojson", data });
       map.addLayer({ id: "fieldops-boundary-fill", type: "fill", source: "fieldops-boundary", filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": "#21B985", "fill-opacity": 0.18 } });
       map.addLayer({ id: "fieldops-boundary-line", type: "line", source: "fieldops-boundary", filter: ["!=", ["geometry-type"], "Point"], paint: { "line-color": "#267057", "line-width": 3 } });
-      map.addLayer({ id: "fieldops-boundary-points", type: "circle", source: "fieldops-boundary", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 6, "circle-color": "#FFC938", "circle-stroke-color": "#102A58", "circle-stroke-width": 2 } });
+      map.addLayer({ id: "fieldops-boundary-points", type: "circle", source: "fieldops-boundary", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 6, "circle-color": "#FFC938", "circle-stroke-color": "#2D2729", "circle-stroke-width": 2 } });
     }
   }, [context, points]);
 

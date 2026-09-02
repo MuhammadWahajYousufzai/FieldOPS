@@ -1,76 +1,63 @@
-# FieldOPS design system — Sunlit Route
+# FieldOPS design system — Ribbon
 
-## Product ground
+## Product and reference
 
-**Subject:** Karachi rice-distribution field operations.
+FieldOPS is for Karachi rice-distribution salespeople and the managers coordinating their visits, routes, orders, and evidence. The interface should make the next task clear while distinguishing work saved on the phone from work confirmed by the office.
 
-**Audience:** sales representatives working outdoors on intermittent connections, plus managers coordinating verified visits, routes, outlets, and evidence.
+The September 2026 user-supplied reference establishes the visual direction: a crimson-to-blush header, warm ivory canvas, rounded white cards, one prominent red summary, a wine-colored next-action card, and charcoal navigation. Its example accounts and figures are not product data.
 
-**Single system job:** make it immediately clear what is live, what needs action, and what has been safely recorded.
+## Brand identity
 
-## Visual idea
+The approved identity is the pink/coral ribbon-heart in `apps/mobile/assets/brand/ribbon-heart-master.png`. Both the in-app header and web branding use this exact named master. Do not use the previous blue/yellow grain mark, substitute initials, or regenerate the approved launcher icon.
 
-FieldOPS should feel like a crisp dispatch instrument under bright daylight—not a generic SaaS admin template. The grain-and-map-pin mark carries a coral route through its center, connecting the product's three truths: rice, place, and movement.
+The mobile launcher icons are already correct and stay separate from in-product logo rendering. The web imports the master as a content-hashed Next asset so it does not depend on copying a monorepo public directory. The old SVG URL redirects to that asset.
 
-The deliberate aesthetic risk is a high-energy cyan, yellow, mint, and coral mark against route navy. It improves recognition in outdoor glare and gives the product a specific identity. The rest of the interface remains quiet, structured, and information-first.
+## Tokens
 
-## Core tokens
+| Role | Value | Use |
+| --- | --- | --- |
+| Ribbon red | `#CB183D` | Primary actions, selected destinations, main summary |
+| Blush | `#F8DCE2` | Supporting accents and gentle header fade |
+| Warm ivory | `#F6F1ED` | Page canvas |
+| Charcoal | `#2D2729` | Body text and navigation |
+| Wine | `#541C2A` | Next assigned visit |
+| White | `#FFFFFF` | Cards and controls |
 
-| Token | Hex | Job |
-|---|---|---|
-| Route navy | `#102A58` | Navigation, deep surfaces, primary text |
-| Signal blue | `#5269FF` | Primary actions and active routes |
-| Signal sky | `#1FC7FF` | Live state and focus accents |
-| Rice sun | `#FFC938` | Pending work and the crop identity |
-| Field mint | `#21B985` | Confirmed, safe, synchronized states |
-| Paper sky | `#F5F7FF` | Quiet canvas |
+Supporting tokens: line `#E9DFDA`, muted text `#75686B`, confirmed green `#248564`, pending amber `#EDB35E`, error `#AA342C`. Status always has text, never color alone.
 
-Clay red remains a semantic exception for destructive or blocking states; it is not part of the decorative palette.
+## Typography
 
-## Type roles
+- Web display: Avenir Next Condensed / Avenir Next / Segoe UI Variable Display. Bold, compact headings with restrained negative tracking.
+- Web body and utility: Avenir Next / Segoe UI / system sans. Sentence-case labels and tabular figures. Reserve uppercase for short section labels.
+- Native: system fonts, 28–34 pt page headings, 19–20 pt sections, readable 12–14 pt supporting copy. Preserve font scaling and let content wrap.
 
-- **Display:** platform rounded display stack, used for page and card titles with tight spacing.
-- **Body:** Avenir Next / Segoe UI variable / platform sans, optimized for long operational copy.
-- **Utility:** SF Mono / Cascadia Code / Roboto Mono, used sparingly for dates, status eyebrows, and data labels.
-
-Mobile follows the same hierarchy with native system fonts, heavier display weights, and utility letter spacing so Dynamic Type and Android scaling remain reliable.
-
-## Layout language
+## Layout
 
 ```text
 WEB
-┌── dispatch rail ──┬── page job / immediate action ──────────┐
-│ bright mark       │  quiet title card with route spine       │
-│ monitor           ├───────────────────────────────────────────┤
-│ manage            │  the one operational workspace           │
-│ system            │  tables, maps, review cards, controls     │
-│ signed-in state   │                                           │
-└───────────────────┴───────────────────────────────────────────┘
+Charcoal rail | Crimson page heading + primary shortcut
+              | Date and salesperson filters
+              | Red featured total + white summary cards
+              | Direct links to routes, reports and orders
+              | Assignments / selected management workspace
 
-MOBILE
-┌── brand + sync signal ────────────────────────────────────────┐
-│ current work access                                           │
-│ one dominant next action                                      │
-│ supporting tasks and evidence steps                           │
-├── Today | Visits | Sales | Activity | Profile ────────────────┤
-└────────────────────────────────────────────────────────────────┘
+APP
+Ribbon-heart header + refresh + upload status
+Page title and date / compact location-ready state
+Red assigned-visits card + white completed/new-place cards
+Session action / wine next-visit card
+Customer visit and order actions
+Charcoal icon-and-label navigation above the safe area
 ```
 
-## Component rules
+## Interaction and access
 
-- Page titles live in a bordered white job card with one slim route-color spine.
-- The web rail is the dispatch board; the selected destination becomes a bright white route card.
-- Cards use 20–24 px radii, cool blue-gray borders, and low navy shadows.
-- Primary actions use Signal blue. Pending is Rice sun; confirmed is Field mint; delete is clay red.
-- Buttons preserve their width while busy and disable only the action in flight.
-- Status labels state what happened or what the person can do next.
-- No decorative metric bento grids, invented forecasts, emoji icons, or ornamental numbering.
-- Media screens always show the seven-day expiry and explain that visit history remains after media deletion.
-
-## Motion and access
-
-- Use one subtle page-entry transition and restrained hover/focus feedback; do not animate dense data rows.
-- Respect `prefers-reduced-motion` and keep all essential state independent of animation.
-- Minimum touch target is 44 px; mobile primary actions use 48 px or greater.
-- Keyboard focus uses Signal sky or Signal blue with visible offset.
-- Verify 375, 768, 1024, and 1440 px widths; never hide content behind the navigation deck.
+- Preserve all live data, permissions, location gates, visit evidence, and offline queue behavior.
+- Keep location problems visible; compress successful location checks into one tappable row.
+- Reset the content scroll position when switching app screens.
+- Use keyboard avoidance for sign-in and field forms.
+- Use at least 44 px touch targets and clear labels for icon-only actions.
+- Mobile web navigation collapses behind a labeled menu; include sign-out there.
+- Keep keyboard focus visible, tables horizontally scrollable, and motion reduced when requested.
+- A recorded order is not a forecast; a queued upload is not server confirmation. Never invent performance trends or decorative metrics.
+- Media expires after seven days; visit history remains. Keep expiry and delete consequences explicit.

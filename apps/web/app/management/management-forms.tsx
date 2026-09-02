@@ -222,8 +222,8 @@ export function ManagementForms({ employees, outlets, outletRecords, territories
             const canRemove = assignment.status === "planned";
             const busyKey = `Unpublish:${assignment.id}`;
             return <article className="grid gap-3 py-4 sm:grid-cols-[auto_1fr_auto] sm:items-center" key={assignment.id}>
-              <span className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-xs font-black text-[#14213D]">{assignment.sequence}</span>
-              <div><strong className="block text-[#14213D]">{assignment.outletLabel}</strong><small className="mt-1 block text-slate-500">{assignment.employeeLabel} · {assignment.status.replaceAll("_", " ")}</small></div>
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-xs font-black text-[#2D2729]">{assignment.sequence}</span>
+              <div><strong className="block text-[#2D2729]">{assignment.outletLabel}</strong><small className="mt-1 block text-slate-500">{assignment.employeeLabel} · {assignment.status.replaceAll("_", " ")}</small></div>
               {canRemove
                 ? <button type="button" className={ui.dangerButton} disabled={Boolean(busy[busyKey])} onClick={() => removeDailyAssignment(assignment)}>{busy[busyKey] ? "Removing…" : "Remove from plan"}</button>
                 : <span className="inline-flex rounded-full bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">Field record locked</span>}
@@ -249,7 +249,7 @@ export function ManagementForms({ employees, outlets, outletRecords, territories
           <PolicyNumber label="Route gap" detail="Start a new line after · 2–15" value={policyDraft.segmentGapMinutes} min={2} max={15} suffix="min" onChange={(value) => updatePolicy("segmentGapMinutes", value)} />
           <PolicyNumber label="Automatic sync" detail="Send queued work every · 10–120" value={policyDraft.syncIntervalSeconds} min={10} max={120} suffix="sec" onChange={(value) => updatePolicy("syncIntervalSeconds", value)} />
         </div>
-        <details className="rounded-xl border border-slate-200 bg-slate-50 p-4"><summary className="cursor-pointer text-sm font-black text-[#14213D]">Advanced route safety</summary><div className="mt-4 max-w-sm"><PolicyNumber label="Impossible-speed cutoff" detail="Break physically implausible jumps · 10–60 m/s" value={policyDraft.maxPlausibleSpeedMps} min={10} max={60} suffix="m/s" step={0.5} onChange={(value) => updatePolicy("maxPlausibleSpeedMps", value)} /></div></details>
+        <details className="rounded-xl border border-slate-200 bg-slate-50 p-4"><summary className="cursor-pointer text-sm font-black text-[#2D2729]">Advanced route safety</summary><div className="mt-4 max-w-sm"><PolicyNumber label="Impossible-speed cutoff" detail="Break physically implausible jumps · 10–60 m/s" value={policyDraft.maxPlausibleSpeedMps} min={10} max={60} suffix="m/s" step={0.5} onChange={(value) => updatePolicy("maxPlausibleSpeedMps", value)} /></div></details>
         <div className="flex flex-col items-start justify-between gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center"><p className="max-w-2xl text-xs leading-5 text-slate-500">Recommended for Karachi field work: 10–15 second checks, 5–10 m movement, and a weak-fix cutoff between ±25 m and ±35 m. Smaller accuracy values are more precise.</p><button className={ui.button} disabled={Boolean(busy["Operations policy"])}>{busy["Operations policy"] ? "Saving controls…" : "Save tracking controls"}</button></div>
       </form>}
     </section>
@@ -320,7 +320,7 @@ function OutletDirectory({ records, territories, onSaved, setStatus }: {
           <label className={ui.label}>Notes<textarea className={`${ui.input} min-h-20 resize-y`} value={draft.notes} maxLength={4000} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
           <div className="flex flex-wrap gap-2"><button type="button" className={ui.button} disabled={busy === record.id || !draft.name.trim() || !draft.address.trim() || !draft.territoryId} onClick={() => save(record)}>{busy === record.id ? "Saving…" : "Save outlet details"}</button><button type="button" className={ui.quietButton} disabled={busy === record.id} onClick={() => setEditing("")}>Cancel</button></div>
         </article>
-        : <article className="grid gap-3 py-4 sm:grid-cols-[1fr_auto] sm:items-center" key={record.id}><div><span className="inline-flex rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">{record.code} · {record.source}</span><strong className="mt-2 block text-[#14213D]">{record.name}</strong><small className="mt-1 block leading-5 text-slate-500">{record.address}<br />{record.territoryName}</small></div><button type="button" className={ui.quietButton} onClick={() => begin(record)}>Edit details</button></article>)}
+        : <article className="grid gap-3 py-4 sm:grid-cols-[1fr_auto] sm:items-center" key={record.id}><div><span className="inline-flex rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">{record.code} · {record.source}</span><strong className="mt-2 block text-[#2D2729]">{record.name}</strong><small className="mt-1 block leading-5 text-slate-500">{record.address}<br />{record.territoryName}</small></div><button type="button" className={ui.quietButton} onClick={() => begin(record)}>Edit details</button></article>)}
       {visible.length === 0 && <p className="py-7 text-center text-sm text-slate-500">No outlets match this search.</p>}
     </div>
   </section>;

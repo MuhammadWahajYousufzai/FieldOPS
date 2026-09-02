@@ -148,9 +148,9 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
         const approveBusy = busy === `approve:${review.id}`;
         const rejectBusy = busy === `reject:${review.id}`;
         return <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_42px_rgba(20,33,61,0.08)]" key={review.id}>
-          <header className="flex flex-col justify-between gap-3 border-b border-slate-200 bg-[#14213D] px-5 py-4 text-white sm:flex-row sm:items-center sm:px-6">
+          <header className="flex flex-col justify-between gap-3 border-b border-slate-200 bg-[#2D2729] px-5 py-4 text-white sm:flex-row sm:items-center sm:px-6">
             <div className="flex items-center gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#D8A629] text-[10px] font-black tracking-wider text-[#14213D]">GPS</span>
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#D8A629] text-[10px] font-black tracking-wider text-[#2D2729]">GPS</span>
               <div><p className="text-[10px] font-black uppercase tracking-[0.13em] text-blue-200">Marked by {review.employeeName}</p><h3 className="mt-1 text-xl font-black tracking-tight">{review.submittedName}</h3></div>
             </div>
             <div className="text-left sm:text-right"><span className="block text-xs font-extrabold text-amber-200">Awaiting admin decision</span><small className="mt-1 block text-slate-300">{formatDateTime(review.capturedAt)}</small></div>
@@ -178,7 +178,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
             </section>
 
             <section className="grid content-start gap-4 p-5 sm:p-6" aria-label={`Permanent place details for ${review.submittedName}`}>
-              <div><p className={ui.eyebrow}>Permanent place record</p><h3 className="mt-1 text-xl font-black text-[#14213D]">Confirm what the field team will see</h3><p className="mt-2 text-sm leading-6 text-slate-600">Editing here does not change the original report or verified coordinates.</p></div>
+              <div><p className={ui.eyebrow}>Permanent place record</p><h3 className="mt-1 text-xl font-black text-[#2D2729]">Confirm what the field team will see</h3><p className="mt-2 text-sm leading-6 text-slate-600">Editing here does not change the original report or verified coordinates.</p></div>
               <label className={ui.label} htmlFor={`official-name-${review.id}`}>Official place name<input id={`official-name-${review.id}`} className={ui.input} value={draft.name} maxLength={160} onChange={(event) => updateDraft(review.id, { name: event.target.value })} /></label>
               {draft.name.trim() !== review.submittedName.trim() && <p className="-mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800">Submitted as “{review.submittedName}” — this remains in the visit history.</p>}
               <label className={ui.label} htmlFor={`official-address-${review.id}`}>Official address<input id={`official-address-${review.id}`} className={ui.input} value={draft.address} maxLength={500} placeholder="Address recorded at the verified GPS point" onChange={(event) => updateDraft(review.id, { address: event.target.value })} /></label>
@@ -201,7 +201,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
         <span className="text-sm font-black text-slate-500">{approvedPlaces.length} saved</span>
       </div>
       {approvedPlaces.length > 0 ? <div className="divide-y divide-slate-200">{approvedPlaces.map((place) => <article className="grid gap-4 px-5 py-5 sm:grid-cols-[1fr_auto] sm:items-center sm:px-6" key={place.id}>
-          <div><span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-800">Permanent · {place.code}</span><strong className="mt-2 block text-lg text-[#14213D]">{place.name}</strong><small className="mt-1 block leading-5 text-slate-500">{place.address}<br />{place.territoryName} · marked by {place.salespersonName}<br />Approved {formatDateTime(place.approvedAt)}</small>{place.submittedName && place.submittedName !== place.name && <small className="mt-1 block font-bold text-blue-700">Submitted as “{place.submittedName}”</small>}</div>
+          <div><span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-800">Permanent · {place.code}</span><strong className="mt-2 block text-lg text-[#2D2729]">{place.name}</strong><small className="mt-1 block leading-5 text-slate-500">{place.address}<br />{place.territoryName} · marked by {place.salespersonName}<br />Approved {formatDateTime(place.approvedAt)}</small>{place.submittedName && place.submittedName !== place.name && <small className="mt-1 block font-bold text-blue-700">Submitted as “{place.submittedName}”</small>}</div>
           <div className="flex flex-wrap gap-2 sm:justify-end"><a className={ui.quietButton} href={mapUrl(place.latitude, place.longitude)} target="_blank" rel="noreferrer">Open point</a><a className={ui.button} href="/management/places">Manage place</a></div>
         </article>)}</div> : <p className="px-5 py-7 text-sm leading-6 text-slate-500 sm:px-6">No salesperson-marked place has been approved yet. The first approved review will become the first permanent entry here.</p>}
     </section>
@@ -209,7 +209,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
 }
 
 function Fact({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
-  return <div className={`rounded-xl border border-slate-200 bg-white p-3 ${wide ? "col-span-2" : ""}`}><span className="block text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</span><strong className="mt-1 block text-sm leading-5 text-[#14213D]">{value}</strong></div>;
+  return <div className={`rounded-xl border border-slate-200 bg-white p-3 ${wide ? "col-span-2" : ""}`}><span className="block text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</span><strong className="mt-1 block text-sm leading-5 text-[#2D2729]">{value}</strong></div>;
 }
 
 function MissingEvidence({ label }: { label: string }) {

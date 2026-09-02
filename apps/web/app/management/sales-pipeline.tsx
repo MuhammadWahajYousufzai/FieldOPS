@@ -75,7 +75,7 @@ export function SalesPipeline({ employees, deals }: {
   }
 
   return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(20,33,61,0.07)]" id="sales-pipeline" aria-labelledby="sales-pipeline-title">
-    <div className="grid gap-5 bg-[#14213D] px-5 py-5 text-white sm:px-6 lg:grid-cols-[1fr_auto] lg:items-end">
+    <div className="grid gap-5 bg-[#2D2729] px-5 py-5 text-white sm:px-6 lg:grid-cols-[1fr_auto] lg:items-end">
       <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-200">Customer follow-up</p><h2 className="mt-1 text-2xl font-black" id="sales-pipeline-title">Sales pipeline</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Keep every customer opportunity attached to a clear next action and follow-up date.</p></div>
       <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-white/15 bg-white/5 text-center">
         <PipelineStat label="Open" value={openDeals} />
@@ -86,7 +86,7 @@ export function SalesPipeline({ employees, deals }: {
     {status && <p className={`mx-5 mt-5 sm:mx-6 ${status.tone === "success" ? ui.messageSuccess : ui.messageError}`} role={status.tone === "error" ? "alert" : "status"} aria-live={status.tone === "error" ? "assertive" : "polite"}>{status.text}</p>}
     <div className="p-5 sm:p-6">
       <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-        <div><p className={ui.eyebrow}>Seller-entered opportunities</p><h3 className="text-xl font-black text-[#14213D]">Next action first</h3><p className="mt-1 text-sm text-slate-500">Working values are estimates, not booked revenue.</p></div>
+        <div><p className={ui.eyebrow}>Seller-entered opportunities</p><h3 className="text-xl font-black text-[#2D2729]">Next action first</h3><p className="mt-1 text-sm text-slate-500">Working values are estimates, not booked revenue.</p></div>
         <label className={ui.label}>Salesperson<select className={ui.input} value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">All salespeople</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.label}{employee.status === "inactive" ? " · inactive" : ""}</option>)}</select></label>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">{visibleDeals.map((deal) => <DealCard key={deal.id} deal={deal} busy={busy === `deal:${deal.id}`} onSave={(updates) => submit({ dealId: deal.id, expectedUpdatedAt: deal.updatedAt, ...updates }, `deal:${deal.id}`)} />)}</div>
@@ -112,8 +112,8 @@ function DealCard({ deal, busy, onSave }: { deal: SalesPipelineDeal; busy: boole
   }
 
   return <article className="rounded-2xl border border-slate-200 p-4 sm:p-5">
-    <div className="flex items-start justify-between gap-3"><div><small className="font-black uppercase tracking-wider text-slate-500">{deal.employeeLabel}</small><h4 className="mt-1 text-lg font-black text-[#14213D]">{deal.title}</h4><p className="mt-1 text-sm font-bold text-slate-600">{deal.customerName}{deal.outletLabel ? ` · ${deal.outletLabel}` : ""}</p></div><span className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${deal.stage === "won" ? "bg-emerald-50 text-emerald-800" : deal.stage === "lost" ? "bg-red-50 text-red-800" : "bg-blue-50 text-blue-800"}`}>{deal.stage}</span></div>
-    <div className="my-4 grid grid-cols-2 border-y border-slate-200 py-3"><div><small className="font-black uppercase tracking-wider text-slate-500">Working value</small><b className="mt-1 block text-[#14213D]">{deal.amount === null ? "Not entered" : `PKR ${deal.amount.toLocaleString("en-PK")}`}</b></div><div className="text-right"><small className="font-black uppercase tracking-wider text-slate-500">Follow-up</small><b className={`mt-1 block ${due.tone}`}>{due.label}</b></div></div>
+    <div className="flex items-start justify-between gap-3"><div><small className="font-black uppercase tracking-wider text-slate-500">{deal.employeeLabel}</small><h4 className="mt-1 text-lg font-black text-[#2D2729]">{deal.title}</h4><p className="mt-1 text-sm font-bold text-slate-600">{deal.customerName}{deal.outletLabel ? ` · ${deal.outletLabel}` : ""}</p></div><span className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${deal.stage === "won" ? "bg-emerald-50 text-emerald-800" : deal.stage === "lost" ? "bg-red-50 text-red-800" : "bg-blue-50 text-blue-800"}`}>{deal.stage}</span></div>
+    <div className="my-4 grid grid-cols-2 border-y border-slate-200 py-3"><div><small className="font-black uppercase tracking-wider text-slate-500">Working value</small><b className="mt-1 block text-[#2D2729]">{deal.amount === null ? "Not entered" : `PKR ${deal.amount.toLocaleString("en-PK")}`}</b></div><div className="text-right"><small className="font-black uppercase tracking-wider text-slate-500">Follow-up</small><b className={`mt-1 block ${due.tone}`}>{due.label}</b></div></div>
     <form className="grid gap-3" onSubmit={save}><label className={ui.label}>Stage<select className={ui.input} name="stage" defaultValue={deal.stage}>{stages.map((stage) => <option key={stage} value={stage}>{stage[0]?.toUpperCase()}{stage.slice(1)}</option>)}</select></label><label className={ui.label}>Next action<input className={ui.input} name="nextAction" defaultValue={deal.nextAction} placeholder="What must happen next?" maxLength={500} /></label><label className={ui.label}>Follow-up<input className={ui.input} name="followUpAt" type="datetime-local" defaultValue={toLocalInput(deal.followUpAt)} /></label><button className={ui.quietButton} disabled={busy}>{busy ? "Saving…" : "Save deal follow-up"}</button></form>
   </article>;
 }
@@ -129,7 +129,7 @@ function dueCopy(deal: SalesPipelineDeal) {
   const state = dealDueState(deal);
   if (state === "overdue") return { label: `Overdue · ${dateOnly(deal.followUpAt)}`, tone: "text-red-700" };
   if (state === "today") return { label: `Due today · ${dateOnly(deal.followUpAt)}`, tone: "text-amber-700" };
-  return { label: dateOnly(deal.followUpAt), tone: "text-[#14213D]" };
+  return { label: dateOnly(deal.followUpAt), tone: "text-[#2D2729]" };
 }
 
 function dealDueState(deal: SalesPipelineDeal): "overdue" | "today" | "future" | "none" {

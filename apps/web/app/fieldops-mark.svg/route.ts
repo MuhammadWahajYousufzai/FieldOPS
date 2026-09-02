@@ -1,9 +1,14 @@
-// Serve the brand through the application bundle. Appwrite's monorepo SSR
-// packaging does not copy apps/web/public into the root public directory.
-const mark = "<svg width=\"512\" height=\"512\" viewBox=\"0 0 512 512\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n  <defs>\n    <linearGradient id=\"fieldops-bg\" x1=\"64\" y1=\"24\" x2=\"448\" y2=\"488\" gradientUnits=\"userSpaceOnUse\">\n      <stop stop-color=\"#576BFF\"/>\n      <stop offset=\"0.52\" stop-color=\"#327FEF\"/>\n      <stop offset=\"1\" stop-color=\"#0CC8D8\"/>\n    </linearGradient>\n    <linearGradient id=\"fieldops-grain\" x1=\"217\" y1=\"105\" x2=\"337\" y2=\"360\" gradientUnits=\"userSpaceOnUse\">\n      <stop stop-color=\"#FFF07A\"/>\n      <stop offset=\"1\" stop-color=\"#FFC938\"/>\n    </linearGradient>\n    <filter id=\"fieldops-shadow\" x=\"78\" y=\"62\" width=\"356\" height=\"390\" filterUnits=\"userSpaceOnUse\" color-interpolation-filters=\"sRGB\">\n      <feDropShadow dx=\"0\" dy=\"18\" stdDeviation=\"18\" flood-color=\"#14213D\" flood-opacity=\"0.22\"/>\n    </filter>\n  </defs>\n  <rect width=\"512\" height=\"512\" rx=\"132\" fill=\"url(#fieldops-bg)\"/>\n  <circle cx=\"405\" cy=\"100\" r=\"64\" fill=\"#88EEFF\" fill-opacity=\"0.2\"/>\n  <circle cx=\"92\" cy=\"410\" r=\"92\" fill=\"#2450C7\" fill-opacity=\"0.28\"/>\n  <g filter=\"url(#fieldops-shadow)\">\n    <path d=\"M256 72C181 103 130 172 130 251C130 336 188 393 256 440C324 393 382 336 382 251C382 172 331 103 256 72Z\" fill=\"#102A58\"/>\n    <path d=\"M256 94C210 130 183 184 183 242C183 304 211 348 256 389C301 348 329 304 329 242C329 184 302 130 256 94Z\" fill=\"url(#fieldops-grain)\"/>\n    <path d=\"M255 113C276 178 278 243 256 302C246 329 232 350 216 369\" stroke=\"#FF7468\" stroke-width=\"24\" stroke-linecap=\"round\"/>\n    <path d=\"M157 272C170 344 218 389 256 417C294 389 342 344 355 272\" stroke=\"#55E6C1\" stroke-width=\"22\" stroke-linecap=\"round\"/>\n    <circle cx=\"256\" cy=\"304\" r=\"52\" fill=\"#102A58\"/>\n    <circle cx=\"256\" cy=\"304\" r=\"23\" fill=\"#F7FCFF\"/>\n  </g>\n</svg>";
+import ribbonHeart from "../../../mobile/assets/brand/ribbon-heart-master.png";
 
+// Preserve old bookmarks while current surfaces use the content-hashed asset
+// bundled by Next. This survives Appwrite's monorepo SSR packaging, too.
 export function GET() {
-  return new Response(mark, {
-    headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff" },
+  return new Response(null, {
+    status: 308,
+    headers: {
+      Location: ribbonHeart.src,
+      "Cache-Control": "public, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+    },
   });
 }

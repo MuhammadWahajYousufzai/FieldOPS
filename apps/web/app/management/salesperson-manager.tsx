@@ -231,7 +231,7 @@ export function SalespersonManager() {
     aria-labelledby="salesperson-manager-title"
     aria-busy={initialLoading || refreshing || Boolean(busy)}
   >
-    <header className="grid gap-5 bg-[#14213D] px-5 py-5 text-white sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+    <header className="grid gap-5 bg-[#2D2729] px-5 py-5 text-white sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
       <div>
         <p className="m-0 text-[10px] font-black uppercase tracking-[0.16em] text-blue-200">Field access ledger</p>
         <h2 className="mt-1 text-2xl font-black tracking-[-0.025em]" id="salesperson-manager-title">Sales team roster</h2>
@@ -292,13 +292,13 @@ export function SalespersonManager() {
     {initialLoading && salespeople.length === 0
       ? <RosterLoading />
       : salespeople.length === 0 && loadError
-        ? <div className="grid min-h-72 place-items-center p-6 text-center"><div><strong className="text-lg text-[#14213D]">Roster unavailable</strong><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">No cached personnel records are shown. Retry the read before making access decisions.</p></div></div>
+        ? <div className="grid min-h-72 place-items-center p-6 text-center"><div><strong className="text-lg text-[#2D2729]">Roster unavailable</strong><p className="mt-2 max-w-md text-sm leading-6 text-slate-500">No cached personnel records are shown. Retry the read before making access decisions.</p></div></div>
         : salespeople.length === 0
           ? <EmptyRoster onCreate={() => setCreateOpen(true)} />
           : <div className="grid min-h-[620px] lg:grid-cols-[minmax(290px,370px)_minmax(0,1fr)]">
             <aside className="border-b border-slate-200 bg-slate-50/80 lg:border-b-0 lg:border-r" aria-label="Salespeople roster">
               <div className="border-b border-slate-200 p-4 sm:p-5">
-                <label className="grid gap-2 text-xs font-extrabold text-[#14213D]" htmlFor={searchId}>Search roster</label>
+                <label className="grid gap-2 text-xs font-extrabold text-[#2D2729]" htmlFor={searchId}>Search roster</label>
                 <div className="relative mt-2">
                   <span className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center text-sm text-slate-400" aria-hidden="true">⌕</span>
                   <input
@@ -316,7 +316,7 @@ export function SalespersonManager() {
                     key={option.value}
                     type="button"
                     aria-pressed={filter === option.value}
-                    className={`min-h-9 rounded-lg border px-2.5 py-1.5 text-[11px] font-black transition focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-blue-400 ${filter === option.value ? "border-[#14213D] bg-[#14213D] text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"}`}
+                    className={`min-h-9 rounded-lg border px-2.5 py-1.5 text-[11px] font-black transition focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-blue-400 ${filter === option.value ? "border-[#2D2729] bg-[#2D2729] text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"}`}
                     onClick={() => setFilter(option.value)}
                   >{option.label}</button>)}
                 </div>
@@ -330,7 +330,7 @@ export function SalespersonManager() {
                   onSelect={() => setSelectedId(person.id)}
                 />)}
                 {visibleSalespeople.length === 0 && <div className="m-2 rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center">
-                  <strong className="text-sm text-[#14213D]">No roster match</strong>
+                  <strong className="text-sm text-[#2D2729]">No roster match</strong>
                   <p className="mt-2 text-xs leading-5 text-slate-500">Change the search or status filter to bring personnel records back into view.</p>
                   <button type="button" className="mt-3 text-xs font-black text-blue-700 underline underline-offset-4" onClick={() => { setQuery(""); setFilter("all"); }}>Clear filters</button>
                 </div>}
@@ -340,7 +340,7 @@ export function SalespersonManager() {
             <section className="min-w-0 bg-white" aria-label="Selected salesperson record">
               {selected
                 ? <SalespersonRecord key={`${selected.id}:${selected.updatedAt}`} person={selected} busy={busy} runMutation={runMutation} />
-                : <div className="grid min-h-[520px] place-items-center p-8 text-center"><div><strong className="text-lg text-[#14213D]">Choose a personnel record</strong><p className="mt-2 text-sm text-slate-500">Select a salesperson from the roster to review access and identity details.</p></div></div>}
+                : <div className="grid min-h-[520px] place-items-center p-8 text-center"><div><strong className="text-lg text-[#2D2729]">Choose a personnel record</strong><p className="mt-2 text-sm text-slate-500">Select a salesperson from the roster to review access and identity details.</p></div></div>}
             </section>
           </div>}
   </section>;
@@ -379,7 +379,7 @@ function CreateSalespersonPanel({ busy, locked, onCancel, onCreate }: {
   return <section className="border-b border-blue-200 bg-blue-50/70 px-5 py-5 sm:px-6" id="new-salesperson-panel" aria-labelledby="new-salesperson-title">
     <form className="mx-auto grid max-w-5xl gap-4" onSubmit={submit}>
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
-        <div><p className={ui.eyebrow}>New field identity</p><h3 className="mt-1 text-xl font-black text-[#14213D]" id="new-salesperson-title">Open a salesperson record</h3><p className="mt-1 text-sm leading-6 text-slate-600">Use a work email and a separate temporary password. The salesperson can sign in as soon as creation succeeds.</p></div>
+        <div><p className={ui.eyebrow}>New field identity</p><h3 className="mt-1 text-xl font-black text-[#2D2729]" id="new-salesperson-title">Open a salesperson record</h3><p className="mt-1 text-sm leading-6 text-slate-600">Use a work email and a separate temporary password. The salesperson can sign in as soon as creation succeeds.</p></div>
         <button type="button" className="text-left text-xs font-black text-slate-600 underline underline-offset-4 sm:text-right" disabled={locked} onClick={onCancel}>Cancel</button>
       </div>
       {validation && <p className={ui.messageError} role="alert">{validation}</p>}
@@ -411,9 +411,9 @@ function RosterRow({ person, selected, disabled, onSelect }: { person: ManagedSa
     onClick={onSelect}
   >
     <span className="flex items-start gap-3">
-      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xs font-black ${selected ? "bg-[#14213D] text-white" : "bg-slate-100 text-slate-600"}`} aria-hidden="true">{initials(person.name)}</span>
+      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-xs font-black ${selected ? "bg-[#2D2729] text-white" : "bg-slate-100 text-slate-600"}`} aria-hidden="true">{initials(person.name)}</span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-start justify-between gap-2"><strong className="truncate text-sm text-[#14213D]">{person.name}</strong><span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${attention ? "bg-amber-500" : person.status === "active" ? "bg-emerald-500" : "bg-slate-400"}`} aria-hidden="true" /></span>
+        <span className="flex items-start justify-between gap-2"><strong className="truncate text-sm text-[#2D2729]">{person.name}</strong><span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${attention ? "bg-amber-500" : person.status === "active" ? "bg-emerald-500" : "bg-slate-400"}`} aria-hidden="true" /></span>
         <small className="mt-1 block truncate text-xs text-slate-500">{person.email}</small>
         <span className="mt-2 flex flex-wrap gap-1.5">
           <StatusPill label={person.status} tone={person.status === "active" ? "green" : "slate"} />
@@ -430,10 +430,10 @@ function SalespersonRecord({ person, busy, runMutation }: { person: ManagedSales
   return <div className="p-5 sm:p-6">
     <header className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start">
       <div className="flex min-w-0 items-start gap-4">
-        <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#14213D] text-sm font-black text-white" aria-hidden="true">{initials(person.name)}</span>
+        <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[#2D2729] text-sm font-black text-white" aria-hidden="true">{initials(person.name)}</span>
         <div className="min-w-0">
           <p className={ui.eyebrow}>Personnel record</p>
-          <h3 className="mt-1 truncate text-2xl font-black tracking-[-0.025em] text-[#14213D]">{person.name}</h3>
+          <h3 className="mt-1 truncate text-2xl font-black tracking-[-0.025em] text-[#2D2729]">{person.name}</h3>
           <p className="mt-1 break-all text-sm text-slate-500">{person.email}</p>
         </div>
       </div>
@@ -502,7 +502,7 @@ function ProfileEditor({ person, busy, locked, runMutation }: { person: ManagedS
   }
 
   return <form className="rounded-2xl border border-slate-200 p-4 sm:p-5" onSubmit={submit}>
-    <div><p className={ui.eyebrow}>Identity details</p><h4 className="mt-1 text-lg font-black text-[#14213D]">Profile and contact</h4><p className="mt-1 text-sm leading-6 text-slate-500">Email changes update the salesperson's sign-in identity as well as this personnel record.</p></div>
+    <div><p className={ui.eyebrow}>Identity details</p><h4 className="mt-1 text-lg font-black text-[#2D2729]">Profile and contact</h4><p className="mt-1 text-sm leading-6 text-slate-500">Email changes update the salesperson's sign-in identity as well as this personnel record.</p></div>
     {authMissing && <p className="mt-4 border-l-4 border-red-500 bg-red-50 p-3 text-sm font-bold text-red-800">Profile changes are unavailable because they cannot be synchronized to the missing sign-in account.</p>}
     <fieldset className="mt-4 grid gap-4 disabled:opacity-65 sm:grid-cols-2" disabled={editLocked}>
       <label className={ui.label}>Full name<input className={ui.input} value={name} onChange={(event) => setName(event.target.value)} maxLength={128} autoComplete="name" required /></label>
@@ -541,7 +541,7 @@ function PasswordEditor({ person, busy, locked, runMutation }: { person: Managed
   }
 
   return <form className="rounded-2xl border border-slate-200 p-4 sm:p-5" onSubmit={submit}>
-    <div><p className={ui.eyebrow}>Credentials</p><h4 className="mt-1 text-lg font-black text-[#14213D]">Set a new password</h4><p className="mt-1 text-sm leading-6 text-slate-500">This takes effect immediately. Share the password through a trusted channel and never reuse an administrator password.</p></div>
+    <div><p className={ui.eyebrow}>Credentials</p><h4 className="mt-1 text-lg font-black text-[#2D2729]">Set a new password</h4><p className="mt-1 text-sm leading-6 text-slate-500">This takes effect immediately. Share the password through a trusted channel and never reuse an administrator password.</p></div>
     {authMissing && <p className="mt-4 border-l-4 border-red-500 bg-red-50 p-3 text-sm font-bold text-red-800">Password changes are unavailable because the linked sign-in account is missing.</p>}
     {validation && <p className={`mt-4 ${ui.messageError}`} role="alert">{validation}</p>}
     <fieldset className="mt-4 grid gap-4 disabled:opacity-65 sm:grid-cols-2" disabled={locked || authMissing}>
@@ -570,7 +570,7 @@ function AccessControls({ person, busy, locked, runMutation }: { person: Managed
   }
 
   return <section className="rounded-2xl border border-slate-200 p-4 sm:p-5" aria-labelledby={`access-${person.id}`}>
-    <p className={ui.eyebrow}>Lifecycle</p><h4 className="mt-1 text-lg font-black text-[#14213D]" id={`access-${person.id}`}>Field access</h4>
+    <p className={ui.eyebrow}>Lifecycle</p><h4 className="mt-1 text-lg font-black text-[#2D2729]" id={`access-${person.id}`}>Field access</h4>
     <div className="mt-4 border-y border-slate-200 py-3">
       <div className="flex items-center justify-between gap-3"><span className="text-sm font-bold text-slate-600">Personnel record</span><strong className={person.status === "active" ? "text-emerald-700" : "text-slate-600"}>{titleCase(person.status)}</strong></div>
       <div className="mt-2 flex items-center justify-between gap-3"><span className="text-sm font-bold text-slate-600">Sign-in account</span><strong className={person.authStatus === "enabled" ? "text-blue-700" : person.authStatus === "missing" ? "text-red-700" : "text-slate-600"}>{titleCase(person.authStatus)}</strong></div>
@@ -644,7 +644,7 @@ function RosterStat({ label, value, tone }: { label: string; value: number; tone
 }
 
 function RecordDatum({ label, value, title }: { label: string; value: string; title?: string }) {
-  return <div className="border-b border-slate-200 px-4 py-3 last:border-b-0 sm:border-r sm:[&:nth-child(even)]:border-r-0 sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:border-r xl:last:border-r-0"><dt className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">{label}</dt><dd className="mt-1 truncate text-xs font-bold text-[#14213D]" title={title}>{value}</dd></div>;
+  return <div className="border-b border-slate-200 px-4 py-3 last:border-b-0 sm:border-r sm:[&:nth-child(even)]:border-r-0 sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:border-r xl:last:border-r-0"><dt className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-500">{label}</dt><dd className="mt-1 truncate text-xs font-bold text-[#2D2729]" title={title}>{value}</dd></div>;
 }
 
 function StatusPill({ label, tone }: { label: string; tone: "green" | "blue" | "slate" | "amber" | "red" }) {
@@ -668,7 +668,7 @@ function RosterLoading() {
 
 function EmptyRoster({ onCreate }: { onCreate: () => void }) {
   return <div className="grid min-h-[430px] place-items-center bg-[linear-gradient(135deg,rgba(37,99,235,0.04),transparent_55%)] p-6 text-center">
-    <div className="max-w-md"><span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl border border-blue-200 bg-blue-50 text-xl font-black text-blue-700" aria-hidden="true">+</span><p className={`${ui.eyebrow} mt-5`}>Roster ready</p><h3 className="mt-1 text-2xl font-black text-[#14213D]">Add the first salesperson</h3><p className="mt-2 text-sm leading-6 text-slate-500">Create a field-only identity here, then assign sales areas and daily work from the rest of the management workspace.</p><button type="button" className={`${ui.button} mt-5`} onClick={onCreate}>Create first salesperson</button></div>
+    <div className="max-w-md"><span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl border border-blue-200 bg-blue-50 text-xl font-black text-blue-700" aria-hidden="true">+</span><p className={`${ui.eyebrow} mt-5`}>Roster ready</p><h3 className="mt-1 text-2xl font-black text-[#2D2729]">Add the first salesperson</h3><p className="mt-2 text-sm leading-6 text-slate-500">Create a field-only identity here, then assign sales areas and daily work from the rest of the management workspace.</p><button type="button" className={`${ui.button} mt-5`} onClick={onCreate}>Create first salesperson</button></div>
   </div>;
 }
 

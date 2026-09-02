@@ -35,9 +35,11 @@ import {
   Alert,
   AppState,
   Image,
+  KeyboardAvoidingView,
   Linking,
   Platform,
   ScrollView,
+  StatusBar,
   Text,
   TextInput,
   TouchableOpacity,
@@ -200,7 +202,9 @@ type ParsedPersistedState = Omit<PersistedState, "session"> & {
 };
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
-const FIELDOPS_MARK = require("../assets/icon.png");
+// In-product identity is deliberately separate from launcher configuration.
+// Use the named master so a header never resolves a retained legacy icon asset.
+const FIELDOPS_MARK = require("../assets/brand/ribbon-heart-master.png");
 export const STORAGE_KEY = "fieldops-production-state-v3";
 const OUTBOX_STORAGE_KEY = "fieldops-production-outbox-v1";
 const RECOVERY_EMPLOYEE_STORAGE_KEY = "fieldops-recovery-employee-v1";
@@ -639,6 +643,8 @@ function FieldOpsApp() {
   const [hydrated, setHydrated] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [screen, setScreen] = useState<Screen>("today");
+  const contentScrollRef = useRef<ScrollView>(null);
+  useEffect(() => { contentScrollRef.current?.scrollTo({ y: 0, animated: false }); }, [screen]);
   const [workState, setWorkState] = useState<WorkState>("not_started");
   const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -2190,8 +2196,10 @@ function FieldOpsApp() {
 
   if (!hydrated) {
     return <SafeAreaView className="flex-1 bg-paper" edges={["top", "bottom"]}>
+      <StatusBar barStyle="dark-content" />
       <View className="flex-1 items-center justify-center px-6">
-        <Text className="text-2xl font-black text-ink">Loading FieldOPS…</Text>
+        <LogoMark size={72} />
+        <Text className="mt-5 text-xl font-semibold text-ink">Loading FieldOPS…</Text>
       </View>
     </SafeAreaView>;
   }
@@ -2207,9 +2215,11 @@ function FieldOpsApp() {
     />;
   }
 
-  return <SafeAreaView className="flex-1 bg-paper" edges={["top", "bottom"]}>
-    <View className="flex-1">
-      <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
+  return <SafeAreaView className="flex-1 bg-field" edges={["top"]}>
+    <StatusBar barStyle="light-content" />
+    <KeyboardAvoidingView className="flex-1 bg-paper" behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView ref={contentScrollRef} className="flex-1" keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, height: screen === "today" ? 420 : 150, backgroundColor: "#F6F1ED", experimental_backgroundImage: "linear-gradient(180deg, #CB183D 0%, #CB183D 45%, #EDBBC5 75%, #F6F1ED 100%)" }} />
         <View className="gap-4 px-5 pb-9 pt-5">
           <Header
             screen={screen}
@@ -2341,8 +2351,8 @@ function FieldOpsApp() {
           />}
         </View>
       </ScrollView>
-      <Nav screen={screen} pending={pending} setScreen={setScreen} />
-    </View>
+      <SafeAreaView edges={["bottom"]} className="bg-paper"><Nav screen={screen} pending={pending} setScreen={setScreen} /></SafeAreaView>
+    </KeyboardAvoidingView>
   </SafeAreaView>;
 }
 
@@ -2356,21 +2366,22 @@ function Login({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  return <SafeAreaView className="flex-1 bg-ink" edges={["top", "bottom"]}>
-    <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
-      <View className="min-h-screen justify-center gap-8 overflow-hidden px-6 py-10">
-        <View className="absolute -right-24 top-12 h-64 w-64 rounded-full border-[40px] border-[#1FC7FF]/20" />
+  return <SafeAreaView className="flex-1 bg-field" edges={["top"]}>
+    <StatusBar barStyle="light-content" />
+    <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <ScrollView className="flex-1" keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, backgroundColor: "#F6F1ED" }}>
+      <View className="flex-1 justify-center gap-8 px-6 py-10" style={{ experimental_backgroundImage: "linear-gradient(180deg, #CB183D 0%, #CB183D 50%, #F6F1ED 90%)" }}>
         <View className="items-start">
           <LogoMark size={76} />
-          <Text className="mt-5 text-[10px] font-black tracking-[1.8px] text-[#88EEFF]">THE ROUTE FROM PROMISE TO PROOF</Text>
-          <Text className="mt-3 text-[34px] font-black leading-10 text-white">Field work,{"\n"}<Text className="text-[#FFE36B]">clearly handled.</Text></Text>
-          <Text className="mt-3 max-w-[360px] leading-6 text-[#C5D2EA]">
-            Visits, evidence, orders, and route tracking built to keep working when the signal does not.
+          <Text className="mt-5 text-xs font-semibold tracking-[1.4px] text-[#FFE5EB]">YOUSUF RICE · FIELDOPS</Text>
+          <Text className="mt-3 text-[34px] font-bold leading-10 text-white">A better day{"\n"}in the field.</Text>
+          <Text className="mt-3 max-w-[360px] leading-6 text-[#FFF1F4]">
+            Your visits, customers, and orders. All in one place, even when you’re offline.
           </Text>
         </View>
         <View className="gap-3.5 rounded-[24px] border border-white/20 bg-white p-5">
-          <Text className="text-[10px] font-black tracking-[1.2px] text-field">YOUSUF RICE · SALESPERSON</Text>
-          <Text className="text-2xl font-black text-ink">Sign in to today’s route</Text>
+          <Text className="text-2xl font-bold text-ink">Welcome back</Text>
+          <Text className="mb-2 text-sm leading-5 text-muted">Sign in to get your day started.</Text>
           {recoveryRequired && <View className="rounded-[9px] bg-[#FFF4D6] p-3">
             <Text className="font-bold leading-5 text-[#6B4D00]">
               Saved work is waiting on this phone. Sign in with the same employee account to recover and upload it.
@@ -2378,24 +2389,24 @@ function Login({
           </View>}
           <TextInput
             accessibilityLabel="Work email"
-            className="min-h-14 rounded-xl border border-line bg-[#F8FAFF] px-4 text-base text-ink"
+            className="min-h-14 rounded-xl border border-line bg-[#FAF7F5] px-4 text-base text-ink"
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
             keyboardType="email-address"
             autoComplete="email"
             placeholder="Your work email"
-            placeholderTextColor="#697184"
+            placeholderTextColor="#75686B"
           />
           <TextInput
             accessibilityLabel="Password"
-            className="min-h-14 rounded-xl border border-line bg-[#F8FAFF] px-4 text-base text-ink"
+            className="min-h-14 rounded-xl border border-line bg-[#FAF7F5] px-4 text-base text-ink"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
             autoComplete="password"
-            placeholder="Your separate password"
-            placeholderTextColor="#697184"
+            placeholder="Your password"
+            placeholderTextColor="#75686B"
           />
           <Button
             label={busy ? "Signing in…" : "Sign in"}
@@ -2414,6 +2425,7 @@ function Login({
         </View>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   </SafeAreaView>;
 }
 
@@ -2433,8 +2445,10 @@ function PermissionGate({
   onLogout: () => void;
 }) {
   return <SafeAreaView className="flex-1 bg-paper" edges={["top", "bottom"]}>
+    <StatusBar barStyle="dark-content" />
     <ScrollView className="flex-1">
       <View className="min-h-screen justify-center gap-4 px-6 py-10">
+        <LogoMark size={64} />
         <Eyebrow>ONE-TIME SETUP</Eyebrow>
         <ScreenTitle>Turn on location</ScreenTitle>
         <BodyText>
@@ -2485,7 +2499,6 @@ function Header({
   onSync: () => void;
   onRefresh: () => void;
 }) {
-  const section = screen === "sync" ? "Activity" : screen === "deals" ? "Sales" : screen === "profile" ? "Profile" : "Field work";
   const syncLabel = needsAttention > 0
     ? "Check"
     : online === false
@@ -2500,7 +2513,7 @@ function Header({
     : online === false
       ? "bg-[#FFF1D0]"
       : syncing || online === null
-        ? "bg-[#E8EEF9]"
+        ? "bg-[#F8E9EE]"
         : pending > 0 ? "bg-[#FFF1D0]" : "bg-[#DFF3E9]";
   const syncTextClass = needsAttention > 0
     ? "text-danger"
@@ -2509,12 +2522,13 @@ function Header({
       : syncing || online === null
         ? "text-field"
         : pending > 0 ? "text-[#805C00]" : "text-success";
-  return <View className="flex-row items-center gap-2 rounded-[20px] border border-line bg-white p-2.5">
+  return <View className="gap-5 pb-2">
+    <View className="flex-row items-center gap-2">
     <View className="min-w-0 flex-1 flex-row items-center gap-2.5">
-      <LogoMark size={46} />
+      <LogoMark size={50} />
       <View className="min-w-0 flex-1">
-        <Text className="text-[17px] font-black tracking-tight text-ink">FieldOPS</Text>
-        <Text className="mt-0.5 text-[11px] font-bold text-muted" numberOfLines={1}>{section} · {new Date().toLocaleDateString("en-PK", { weekday: "short", day: "numeric", month: "short" })}</Text>
+        <Text className="text-[19px] font-bold tracking-tight text-white">FieldOPS</Text>
+        <Text className="mt-0.5 text-[11px] font-medium text-[#FFE4EB]">Yousuf Rice</Text>
       </View>
     </View>
     <View className="flex-row gap-1.5">
@@ -2522,11 +2536,11 @@ function Header({
         accessibilityRole="button"
         accessibilityLabel="Refresh today’s assignments and sales area"
         accessibilityState={{ disabled: refreshing }}
-        className="min-h-11 min-w-11 items-center justify-center rounded-xl bg-[#EDF0FF] px-2"
+        className="min-h-11 min-w-11 items-center justify-center rounded-full border border-white/25 bg-white/15 px-2"
         onPress={onRefresh}
         disabled={refreshing}
       >
-        <Text className="text-[11px] font-black text-field">{refreshing ? "Updating" : "Update"}</Text>
+        <Text className="text-xl font-semibold text-white">{refreshing ? "…" : "↻"}</Text>
       </TouchableOpacity>
       <TouchableOpacity
         accessibilityRole="button"
@@ -2537,6 +2551,8 @@ function Header({
         <Text className={classes("text-[11px] font-black", syncTextClass)}>{syncLabel}</Text>
       </TouchableOpacity>
     </View>
+    </View>
+    {screen === "today" && <View><Text accessibilityRole="header" className="text-[28px] font-bold tracking-tight text-white">Your field day</Text><Text className="mt-1 text-xs font-medium text-[#FFF1F4]">{new Date().toLocaleDateString("en-PK", { weekday: "long", day: "numeric", month: "long" })}</Text></View>}
   </View>;
 }
 
@@ -2581,6 +2597,9 @@ function TerritoryBanner({
       ? "FieldOPS needs your current location to mark visits and verify evidence. Saved uploads remain available in Activity."
       : "Turn on Location Services. Saved uploads remain available in Activity."
     : message;
+  if (allowed) return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Location ready. ${message}. Check current location again.`} className="min-h-11 flex-row items-center justify-between gap-2 rounded-xl bg-white/95 px-3.5 py-2.5" onPress={onCheck}>
+    <View className="flex-1 flex-row items-center gap-2"><View className="h-2 w-2 rounded-full bg-success" /><Text className="flex-1 text-xs font-semibold text-success">{policy.mode === "unrestricted" ? "Location ready · You can work here" : "Inside your work area"}</Text></View><Text className="text-xs font-semibold text-muted">Check ↻</Text>
+  </TouchableOpacity>;
   return <View
     accessibilityRole="summary"
     className={classes(
@@ -2605,7 +2624,7 @@ function TerritoryBanner({
         <Text className="font-extrabold text-ink">{checking ? "Checking…" : !policyReady ? "Update" : permissionProblem ? "Fix location" : "Check again"}</Text>
       </TouchableOpacity>
     </View>
-    <Text className="mt-2 leading-5 text-[#586273]">{detail}</Text>
+    <Text className="mt-2 leading-5 text-[#75686B]">{detail}</Text>
     {lastCheck && policyReady && !permissionProblem && <Text className="mt-2 text-[11px] font-bold text-[#607063]">
       Checked {new Date(lastCheck.checkedAt).toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit" })} · ±{lastCheck.accuracy} m · smaller is better
     </Text>}
@@ -2666,38 +2685,38 @@ function Today({
         : "We’ll check your location when you start";
   const actionEnabled = running && fieldActionsAllowed;
   return <>
-    <View className={classes(
-      "flex-row items-center justify-between gap-3 rounded-[20px] border border-line border-l-[5px] bg-white p-[18px]",
-      running ? "border-l-[#52B889]" : workState === "active" ? "border-l-[#D05242]" : "border-l-[#95A0B5]",
-    )}>
-      <View className="flex-1">
-        <Text className="text-[10px] font-black tracking-wider text-muted">TODAY’S SESSION</Text>
-        <Text className="mt-1 text-lg font-black text-ink">{title}</Text>
-        <Text className="mt-1 text-[11px] text-muted">{detail}</Text>
+    <View className="flex-row gap-3">
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View ${total} assigned visits`} onPress={onRoute} className="flex-1 justify-between rounded-[22px] bg-field p-5">
+        <View className="self-end rounded-xl bg-white/15 p-2.5"><MobileIcon name="route" color="#FFFFFF" /></View>
+        <View><Text className="text-[44px] font-bold leading-[52px] text-white">{total}</Text><Text className="mt-1 text-sm font-medium text-[#FFE4EB]">Assigned visits</Text></View>
+        <Text className="mt-5 text-xs font-semibold text-white">View today’s plan ↗</Text>
+      </TouchableOpacity>
+      <View className="flex-1 gap-3">
+        <View className="flex-row items-center justify-between gap-2 rounded-[22px] bg-white p-4"><View className="flex-1"><Text className="text-[28px] font-bold text-ink">{completed}</Text><Text className="mt-1 text-xs text-muted">Completed</Text></View><View className="rounded-xl bg-[#E5F2E9] p-2.5"><MobileIcon name="sync" color="#248564" /></View></View>
+        <View className="flex-row items-center justify-between gap-2 rounded-[22px] bg-white p-4"><View className="flex-1"><Text className="text-[28px] font-bold text-ink">{selfVisitCount}</Text><Text className="mt-1 text-xs text-muted">New places</Text></View><View className="rounded-xl bg-[#FBE9D3] p-2.5"><MobileIcon name="today" color="#AA6B18" /></View></View>
       </View>
+    </View>
+    <View className={classes(
+      "gap-4 rounded-[22px] border bg-white p-5",
+      workState === "active" && !trackingReady ? "border-danger" : "border-line",
+    )}>
+      <View className="flex-row items-start gap-3"><View className="flex-1"><Text className="text-lg font-bold text-ink">{title}</Text><Text className="mt-1 text-xs leading-5 text-muted">{detail}</Text></View><View className={classes("mt-1.5 h-2.5 w-2.5 rounded-full", running ? "bg-success" : "bg-gold")} /></View>
       {workState !== "active" && <Button label={sessionAction === "starting" ? "Starting…" : workState === "finished" ? "Start again" : "Start work"} disabled={sessionAction !== null} onPress={onStartWork} />}
-      {workState === "active" && trackingReady && <Button label={sessionAction === "finishing" ? "Finishing…" : "Finish session"} disabled={sessionAction !== null} onPress={onFinishWork} />}
+      {workState === "active" && trackingReady && <GhostButton dark label={sessionAction === "finishing" ? "Finishing…" : "Finish session"} disabled={sessionAction !== null} onPress={onFinishWork} />}
       {workState === "active" && !trackingReady && <Button label="Fix location" onPress={onFixGps} />}
     </View>
 
-    <SectionTitle>Assigned commitments</SectionTitle>
-    <View className="flex-row justify-between border-y border-line py-4">
-      <Stat value={`${completed}/${total}`} label="Completed" />
-      <Stat value={`${Math.max(0, total - completed)}`} label="Still assigned" />
-      <Stat value={running ? "Live" : "Stopped"} label="Route tracking" />
-    </View>
-
-    {nextOutlet ? <View className="overflow-hidden rounded-[22px] bg-ink p-5">
-      <View className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#1FC7FF]/20" />
-      <Text className="text-[10px] font-black tracking-wider text-[#88EEFF]">NEXT ASSIGNED VISIT</Text>
-      <Text className="mt-2.5 text-2xl font-black text-white">{nextOutlet.name}</Text>
-      <Text className="mt-1.5 text-[#C9D5EA]">{nextOutlet.address}</Text>
+    <SectionTitle>Up next</SectionTitle>
+    {nextOutlet ? <View className="overflow-hidden rounded-[22px] bg-[#541C2A] p-5" style={{ experimental_backgroundImage: "linear-gradient(130deg, #682238, #3D1E25)" }}>
+      <Text className="text-[10px] font-semibold tracking-wider text-[#F7B8CA]">NEXT ASSIGNED VISIT</Text>
+      <Text className="mt-2.5 text-2xl font-bold text-white">{nextOutlet.name}</Text>
+      <Text className="mt-1.5 text-sm leading-5 text-[#F2D7DE]">{nextOutlet.address}</Text>
       <View className="mt-5 flex-row flex-wrap gap-2.5">
-        <Button label={visitStarting ? "Finding visit GPS…" : "Check in at this shop"} disabled={!actionEnabled || visitStarting} onPress={onStartVisit} />
-        <GhostButton label="All assigned visits" onPress={onRoute} />
+        <Button label={visitStarting ? "Finding location…" : "Check in"} disabled={!actionEnabled || visitStarting} onPress={onStartVisit} />
+        <GhostButton label="All visits" onPress={onRoute} />
       </View>
       {!fieldActionsAllowed && <Text className="mt-3 leading-5 text-[#FFF1D0]">{territoryMessage}</Text>}
-      <Text className="mt-3 text-xs leading-4 text-[#C9D5EA]">Stand at the shop. FieldOPS will confirm you’re within {GEOFENCE_METERS} m.</Text>
+      <Text className="mt-3 text-xs leading-5 text-[#F2D7DE]">Check in within {GEOFENCE_METERS} m of the shop.</Text>
     </View> : <EmptyState title="No assigned visits waiting" body="You can still mark a new customer place while your work session and location are ready." />}
 
     <TouchableOpacity
@@ -2705,18 +2724,17 @@ function Today({
       accessibilityLabel="Mark a new customer place"
       accessibilityState={{ disabled: !actionEnabled }}
       className={classes(
-        "min-h-24 flex-row items-center justify-between rounded-[14px] border border-success bg-[#E4F2EA] p-[18px]",
+        "min-h-24 flex-row items-center justify-between gap-3 rounded-[22px] border border-line bg-white p-5",
         !actionEnabled && "opacity-45",
       )}
       disabled={!actionEnabled}
       onPress={onNewVisit}
     >
       <View className="flex-1">
-        <Text className="text-[10px] font-black tracking-wider text-success">NEW PLACE · {selfVisitCount} MARKED TODAY</Text>
-        <Text className="mt-1 text-xl font-black text-ink">Mark a customer place</Text>
-        <Text className="mt-1 text-xs text-[#4F655C]">You set the point · admin approves the final name</Text>
+        <Text className="text-lg font-bold text-ink">Add a customer visit</Text>
+        <Text className="mt-1 text-xs leading-5 text-muted">Mark the location, add a photo & voice report.</Text>
       </View>
-      <Text className="font-black text-success">Mark</Text>
+      <View className="h-12 w-12 items-center justify-center rounded-full bg-field"><Text className="text-[28px] font-medium text-white">+</Text></View>
     </TouchableOpacity>
 
     <TouchableOpacity
@@ -2724,23 +2742,19 @@ function Today({
       accessibilityLabel="Take a new order"
       accessibilityState={{ disabled: !fieldActionsAllowed }}
       className={classes(
-        "min-h-20 flex-row items-center justify-between rounded-[14px] bg-gold p-[18px]",
+        "min-h-20 flex-row items-center justify-between rounded-[22px] border border-line bg-white p-5",
         !fieldActionsAllowed && "opacity-45",
       )}
       disabled={!fieldActionsAllowed}
       onPress={onOrder}
     >
       <View>
-        <Text className="text-[10px] font-black tracking-wider text-[#5F4600]">QUICK ORDER</Text>
-        <Text className="mt-1 text-lg font-black text-ink">Take an order</Text>
+        <Text className="text-lg font-bold text-ink">Take an order</Text>
+        <Text className="mt-1 text-xs text-muted">Record a customer’s rice order.</Text>
       </View>
-      <Text className="font-black text-ink">Open</Text>
+      <View className="rounded-xl bg-[#FBE9D3] p-3"><MobileIcon name="deals" color="#AA6B18" /></View>
     </TouchableOpacity>
 
-    <InfoNotice
-      title="A new place takes four clear steps"
-      body="Mark the spot, add a photo, record your voice sales report, then send it. An admin reviews the name before the point becomes a permanent outlet."
-    />
   </>;
 }
 
@@ -2768,8 +2782,8 @@ function Route({
     <SectionTitle>Assigned by management</SectionTitle>
     {assigned.length > 0 && <RouteMap outlets={assigned} territories={territoryPolicy.territories} />}
     {assigned.length === 0 && <EmptyState title="No assigned visits" body="You can still add your own visit above when field access is available." />}
-    {assigned.map((outlet, index) => <View key={outlet.id} className="min-h-[68px] flex-row items-center gap-2.5 border-b border-line py-3">
-      <Text className="w-7 font-black text-[#9A7A23]">{String(index + 1).padStart(2, "0")}</Text>
+    {assigned.map((outlet, index) => <View key={outlet.id} className="gap-3 rounded-[20px] border border-line bg-white p-4">
+      <View className="flex-row items-center gap-3"><View className="h-10 w-10 items-center justify-center rounded-xl bg-[#FBE7ED]"><Text className="font-bold text-field">{index + 1}</Text></View>
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={`Open ${outlet.name}`}
@@ -2779,11 +2793,11 @@ function Route({
         <Text className="font-extrabold text-ink">{outlet.name}</Text>
         <Text className="mt-1 text-xs text-muted">{outlet.address}</Text>
       </TouchableOpacity>
-      <View className="gap-1">
+      <Status status={outlet.status} /></View>
+      <View className="flex-row justify-end gap-2 border-t border-line pt-3">
         <CompactButton label="Earlier" disabled={index === 0} onPress={() => onMove(outlet.id, -1)} />
         <CompactButton label="Later" disabled={index === assigned.length - 1} onPress={() => onMove(outlet.id, 1)} />
       </View>
-      <Status status={outlet.status} />
     </View>)}
 
     <SectionTitle>Places marked by you</SectionTitle>
@@ -2844,7 +2858,7 @@ function NewVisit({
         value={customerName}
         onChangeText={setCustomerName}
         placeholder="Example: Al Madina Store"
-        placeholderTextColor="#697184"
+        placeholderTextColor="#75686B"
         autoFocus
       />
       <InputLabel>ADDRESS OR LANDMARK · OPTIONAL</InputLabel>
@@ -2854,7 +2868,7 @@ function NewVisit({
         value={customerAddress}
         onChangeText={setCustomerAddress}
         placeholder="Example: Tariq Road, near the pharmacy"
-        placeholderTextColor="#697184"
+        placeholderTextColor="#75686B"
       />
       <Button
         label={busy || starting ? "Marking this spot…" : "Mark this spot & start report"}
@@ -2994,7 +3008,7 @@ function Visit({
         value={notes}
         onChangeText={setNotes}
         placeholder="Add useful details for your manager"
-        placeholderTextColor="#697184"
+        placeholderTextColor="#75686B"
         multiline
         textAlignVertical="top"
       />
@@ -3100,7 +3114,7 @@ function Order({
         value={notes}
         onChangeText={setNotes}
         placeholder="Order notes"
-        placeholderTextColor="#697184"
+        placeholderTextColor="#75686B"
         multiline
         textAlignVertical="top"
       />
@@ -3258,7 +3272,7 @@ function SalesPipeline({
         accessibilityRole="button"
         accessibilityLabel="Update customer deals"
         accessibilityState={{ disabled: refreshing }}
-        className="min-h-12 min-w-20 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
+        className="min-h-12 min-w-20 items-center justify-center rounded-xl border border-field bg-[#FFF4F7] px-3"
         onPress={onRefresh}
         disabled={refreshing}
       >
@@ -3308,7 +3322,7 @@ function SalesPipeline({
         value={dealNotes}
         onChangeText={setDealNotes}
         placeholder="Decision maker, requirements, risks, or useful context"
-        placeholderTextColor="#697184"
+        placeholderTextColor="#75686B"
         maxLength={2_000}
         multiline
         textAlignVertical="top"
@@ -3372,7 +3386,7 @@ function SalesPipeline({
               <Text className="text-lg font-black text-ink">{deal.title}</Text>
               <Text className="mt-1 font-bold text-muted">{deal.customerName}</Text>
             </View>
-            <View className={classes("rounded-full px-3 py-1.5", deal.stage === "won" ? "bg-[#DFF3E9]" : deal.stage === "lost" ? "bg-[#FCEDEA]" : "bg-[#E8EEF9]")}>
+            <View className={classes("rounded-full px-3 py-1.5", deal.stage === "won" ? "bg-[#DFF3E9]" : deal.stage === "lost" ? "bg-[#FCEDEA]" : "bg-[#F8E9EE]")}>
               <Text className={classes("text-[10px] font-black uppercase tracking-wider", deal.stage === "won" ? "text-success" : deal.stage === "lost" ? "text-danger" : "text-field")}>{stageName(deal.stage)}</Text>
             </View>
           </View>
@@ -3403,7 +3417,7 @@ function SalesPipeline({
                   ? `Stage change for ${deal.title} is waiting to sync`
                   : `Change stage for ${deal.title}`}
               accessibilityState={{ disabled: pendingStage }}
-              className="min-h-12 items-center justify-center rounded-xl border border-field bg-[#EEF3FC] px-3"
+              className="min-h-12 items-center justify-center rounded-xl border border-field bg-[#FFF4F7] px-3"
               disabled={pendingStage}
               onPress={() => setStageEditorId((current) => current === deal.id ? "" : deal.id)}
             ><Text className="font-black text-field">{conflictVersion && !conflictRefreshed ? "Update Sales to continue" : pendingStage ? "Stage waiting to sync" : stageEditorId === deal.id ? "Close stages" : conflictVersion ? "Choose stage again" : "Change stage"}</Text></TouchableOpacity>
@@ -3484,11 +3498,11 @@ function SyncQueue({
     <View className="overflow-hidden rounded-2xl bg-ink p-5">
       <View className="flex-row items-start justify-between gap-4">
         <View className="flex-1">
-          <Text className="text-xs font-black uppercase tracking-widest text-[#93A4C4]">
+          <Text className="text-xs font-black uppercase tracking-widest text-[#C6AFB8]">
             {online === null ? "CHECKING CONNECTION" : online ? "ONLINE · AUTO SYNC ON" : "NO INTERNET · AUTO RETRY ON"}
           </Text>
           <Text className="mt-2 text-2xl font-black text-white">{syncTitle}</Text>
-          <Text className="mt-2 leading-5 text-[#C9D3E6]">
+          <Text className="mt-2 leading-5 text-[#ECD7DD]">
             {authFailed
               ? "Your session expired. Saved work is safe—open Profile, sign out, then sign in with the same account."
               : officeSyncError
@@ -3500,7 +3514,7 @@ function SyncQueue({
                 : "FieldOPS sends saved work automatically when the internet is available."}
           </Text>
         </View>
-        <View className={classes("h-12 min-w-12 items-center justify-center rounded-full px-3", pending === 0 ? "bg-[#1E5A49]" : "bg-[#253A63]")}>
+        <View className={classes("h-12 min-w-12 items-center justify-center rounded-full px-3", pending === 0 ? "bg-[#1E5A49]" : "bg-[#682238]")}>
           <Text className="font-black text-white">{pending}</Text>
         </View>
       </View>
@@ -3523,7 +3537,7 @@ function SyncQueue({
         {visibleActivity.map((item) => <View key={item.id} className="min-h-[78px] flex-row items-start gap-3 border-b border-line px-4 py-4 last:border-b-0">
           <View className={classes(
             "h-9 w-9 items-center justify-center rounded-full",
-            item.status === "approved" ? "bg-[#DFF3E9]" : item.status === "rejected" ? "bg-[#FCEDEA]" : item.status === "pending_review" ? "bg-[#FFF1D0]" : "bg-[#E8EEF9]",
+            item.status === "approved" ? "bg-[#DFF3E9]" : item.status === "rejected" ? "bg-[#FCEDEA]" : item.status === "pending_review" ? "bg-[#FFF1D0]" : "bg-[#F8E9EE]",
           )}><Text className="text-xs font-black text-ink">{item.kind === "place" ? "PIN" : item.kind === "visit" ? "VIS" : item.kind === "order" ? "PKR" : "DAY"}</Text></View>
           <View className="flex-1">
             <View className="flex-row items-start justify-between gap-3">
@@ -3552,7 +3566,7 @@ function SyncQueue({
               : "Saved location updates waiting to reach the office"}
           </Text>
         </View>
-      <View className={classes("h-11 min-w-11 items-center justify-center rounded-xl px-3", locationRejected > 0 ? "bg-[#FCEDEA]" : "bg-[#E8EEF9]")}>
+      <View className={classes("h-11 min-w-11 items-center justify-center rounded-xl px-3", locationRejected > 0 ? "bg-[#FCEDEA]" : "bg-[#F8E9EE]")}>
         <Text className={classes("text-xl font-black", locationRejected > 0 ? "text-danger" : "text-field")}>{locationPending + locationRejected}</Text>
       </View>
     </View>
@@ -3676,8 +3690,22 @@ function Profile({
   </>;
 }
 
+type MobileIconName = "today" | "route" | "deals" | "sync" | "profile";
+
+function MobileIcon({ name, color }: { name: MobileIconName; color: string }) {
+  // Native geometry avoids icon-font loading flashes and adds no native module.
+  const stroke = { borderColor: color, borderWidth: 1.7 };
+  return <View accessible={false} importantForAccessibility="no-hide-descendants" style={{ width: 22, height: 22 }}>
+    {name === "today" && <><View style={{ ...stroke, position: "absolute", top: 2, left: 5, width: 12, height: 12, transform: [{ rotate: "45deg" }], borderRightWidth: 0, borderBottomWidth: 0 }} /><View style={{ ...stroke, position: "absolute", top: 9, left: 4, width: 14, height: 12, borderTopWidth: 0, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 }} /><View style={{ ...stroke, position: "absolute", left: 9, bottom: 1, width: 5, height: 7, borderBottomWidth: 0 }} /></>}
+    {name === "route" && <><View style={{ ...stroke, position: "absolute", left: 3, top: 1, width: 16, height: 20, borderRadius: 3 }} />{[6, 11, 16].map((top) => <View key={top} style={{ position: "absolute", left: 7, top, width: 8, height: 1.7, backgroundColor: color }} />)}</>}
+    {name === "deals" && <>{[8, 14, 20].map((height, index) => <View key={height} style={{ ...stroke, position: "absolute", bottom: 1, left: 2 + index * 7, width: 5, height, borderRadius: 1.5 }} />)}</>}
+    {name === "sync" && <><View style={{ ...stroke, width: 20, height: 20, left: 1, top: 1, borderRadius: 10 }} /><View style={{ ...stroke, position: "absolute", left: 6, top: 6, width: 10, height: 6, borderTopWidth: 0, borderRightWidth: 0, transform: [{ rotate: "-45deg" }] }} /></>}
+    {name === "profile" && <><View style={{ ...stroke, position: "absolute", left: 7, top: 0, width: 9, height: 9, borderRadius: 5 }} /><View style={{ ...stroke, position: "absolute", left: 3, bottom: 0, width: 17, height: 10, borderTopLeftRadius: 9, borderTopRightRadius: 9, borderBottomWidth: 0 }} /></>}
+  </View>;
+}
+
 function Nav({ screen, pending, setScreen }: { screen: Screen; pending: number; setScreen: (screen: Screen) => void }) {
-  const items: { key: Screen; label: string }[] = [
+  const items: { key: MobileIconName; label: string }[] = [
     { key: "today", label: "Today" },
     { key: "route", label: "Visits" },
     { key: "deals", label: "Sales" },
@@ -3687,20 +3715,20 @@ function Nav({ screen, pending, setScreen }: { screen: Screen; pending: number; 
   const selectedKey: Screen = screen === "visit" || screen === "new_visit"
     ? "route"
     : screen === "order" ? "today" : screen;
-  return <View accessibilityRole="tablist" className="mx-3.5 mb-2 flex-row rounded-[20px] border border-[#203B70] bg-ink p-1.5">
+  return <View accessibilityRole="tablist" className="mx-3 mb-1 flex-row rounded-[24px] bg-ink px-1.5 py-2">
     {items.map((item) => <TouchableOpacity
       key={item.key}
       accessibilityRole="tab"
       accessibilityLabel={item.label}
       accessibilityState={{ selected: selectedKey === item.key }}
       className={classes(
-        "relative min-h-12 flex-1 items-center justify-center rounded-[14px] border",
-        selectedKey === item.key ? "border-white/20 bg-field" : "border-transparent",
+        "relative min-h-[58px] flex-1 items-center justify-center gap-1.5 rounded-[18px]",
+        selectedKey === item.key && "bg-white/5",
       )}
       onPress={() => setScreen(item.key)}
     >
-      {selectedKey === item.key && <View className="absolute top-1 h-1 w-5 rounded-full bg-gold" />}
-      <Text className={classes("text-[10px] font-black", selectedKey === item.key ? "text-white" : "text-[#B8C6DE]")}>{item.label}</Text>
+      <MobileIcon name={item.key} color={selectedKey === item.key ? "#FF6B8C" : "#A99C9F"} />
+      <Text className={classes("text-[10px] font-semibold", selectedKey === item.key ? "text-white" : "text-[#C1B6B9]")}>{item.label}</Text>
       {item.key === "sync" && pending > 0 && <View className="absolute right-1.5 top-1.5 min-w-4 items-center rounded-full bg-gold px-1"><Text className="text-[8px] font-black text-ink">{pending > 9 ? "9+" : pending}</Text></View>}
     </TouchableOpacity>)}
   </View>;
@@ -3718,7 +3746,7 @@ function Button({ label, onPress, disabled = false }: { label: string; onPress: 
     onPress={onPress}
     disabled={disabled}
   >
-    <Text className="font-black text-white">{label}</Text>
+    <Text className="text-center font-semibold text-white">{label}</Text>
   </TouchableOpacity>;
 }
 
@@ -3727,14 +3755,14 @@ function GhostButton({ label, onPress, dark = false, disabled = false }: { label
     accessibilityRole="button"
     accessibilityLabel={label}
     className={classes(
-      "min-h-12 items-center justify-center rounded-[9px] border px-4 py-3",
-      dark ? "border-ink" : "border-[#7081A8]",
+      "min-h-12 items-center justify-center rounded-[14px] border px-4 py-3",
+      dark ? "border-line bg-white" : "border-[#B27B8D]",
       disabled && "opacity-45",
     )}
     onPress={onPress}
     disabled={disabled}
   >
-    <Text className={classes("font-black", dark ? "text-ink" : "text-white")}>{label}</Text>
+    <Text className={classes("text-center font-semibold", dark ? "text-ink" : "text-white")}>{label}</Text>
   </TouchableOpacity>;
 }
 
@@ -3756,7 +3784,7 @@ function CompactButton({ label, disabled, onPress }: { label: string; disabled: 
     accessibilityRole="button"
     accessibilityLabel={`Move visit ${label.toLowerCase()}`}
     accessibilityState={{ disabled }}
-    className={classes("min-h-8 min-w-12 items-center justify-center rounded-md bg-[#E6ECF8] px-2", disabled && "opacity-35")}
+    className={classes("min-h-11 min-w-16 items-center justify-center rounded-lg bg-[#F8EAEE] px-3", disabled && "opacity-35")}
     disabled={disabled}
     onPress={onPress}
   >
@@ -3768,7 +3796,7 @@ function CompactAction({ label, onPress }: { label: string; onPress: () => void 
   return <TouchableOpacity
     accessibilityRole="button"
     accessibilityLabel={label}
-    className="min-h-11 items-center justify-center rounded-lg border border-field bg-[#EEF3FC] px-3"
+    className="min-h-11 items-center justify-center rounded-lg border border-field bg-[#FFF4F7] px-3"
     onPress={onPress}
   >
     <Text className="text-xs font-black text-field">{label}</Text>
@@ -3824,7 +3852,7 @@ function FieldInput({
     onChangeText={onChangeText}
     keyboardType={keyboardType}
     placeholder={placeholder}
-    placeholderTextColor="#697184"
+    placeholderTextColor="#75686B"
   />;
 }
 
@@ -3837,8 +3865,8 @@ function Stat({ value, label }: { value: string; label: string }) {
 
 function Status({ status }: { status: VisitStatus }) {
   return <Text className={classes(
-    "text-[9px] font-black uppercase",
-    status === "completed" ? "text-success" : status === "active" ? "text-[#9A6300]" : "text-muted",
+    "overflow-hidden rounded-lg px-2.5 py-1.5 text-[11px] font-semibold capitalize",
+    status === "completed" ? "bg-[#E5F2E9] text-success" : status === "active" ? "bg-[#FFF0D9] text-[#805717]" : "bg-[#F3EEEB] text-muted",
   )}>{status}</Text>;
 }
 
@@ -3894,11 +3922,11 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
 }
 
 function ScreenTitle({ children }: { children: React.ReactNode }) {
-  return <Text accessibilityRole="header" className="text-[30px] font-black leading-9 text-ink">{children}</Text>;
+  return <Text accessibilityRole="header" className="text-[28px] font-bold leading-9 text-ink">{children}</Text>;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <Text accessibilityRole="header" className="mt-1 text-[19px] font-black text-ink">{children}</Text>;
+  return <Text accessibilityRole="header" className="mt-2 text-[20px] font-bold text-ink">{children}</Text>;
 }
 
 function InputLabel({ children }: { children: React.ReactNode }) {
@@ -3912,7 +3940,7 @@ function BodyText({ children }: { children: React.ReactNode }) {
 function InfoNotice({ title, body }: { title: string; body: string }) {
   return <View className="rounded-lg border-l-4 border-success bg-[#E9EEE8] p-4">
     <Text className="font-black text-ink">{title}</Text>
-    <Text className="mt-1 leading-5 text-[#586273]">{body}</Text>
+    <Text className="mt-1 leading-5 text-[#75686B]">{body}</Text>
   </View>;
 }
 
@@ -3924,9 +3952,9 @@ function WarningNotice({ title, body }: { title: string; body: string }) {
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {
-  return <View className="items-center rounded-xl bg-[#E9EEE8] p-7">
-    <Text className="text-center text-xl font-black text-ink">{title}</Text>
-    <Text className="mt-1.5 text-center leading-5 text-[#586273]">{body}</Text>
+  return <View className="items-center rounded-[22px] border border-line bg-white p-7">
+    <Text className="text-center text-lg font-bold text-ink">{title}</Text>
+    <Text className="mt-1.5 text-center leading-5 text-[#75686B]">{body}</Text>
   </View>;
 }
 
@@ -3935,7 +3963,7 @@ function ProfileLine({ children }: { children: React.ReactNode }) {
 }
 
 function LogoMark({ size }: { size: number }) {
-  return <View className="overflow-hidden rounded-[18px]" style={{ width: size, height: size }}>
-    <Image accessibilityIgnoresInvertColors source={FIELDOPS_MARK} className="h-full w-full" resizeMode="cover" />
+  return <View className="overflow-hidden bg-[#F7F7F7]" style={{ width: size, height: size, borderRadius: size * 0.28 }}>
+    <Image accessibilityLabel="FieldOPS ribbon-heart logo" accessibilityIgnoresInvertColors source={FIELDOPS_MARK} style={{ width: size, height: size }} resizeMode="contain" />
   </View>;
 }

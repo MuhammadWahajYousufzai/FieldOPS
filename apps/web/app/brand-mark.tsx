@@ -1,3 +1,5 @@
+import ribbonHeart from "../../mobile/assets/brand/ribbon-heart-master.png";
+
 type BrandMarkProps = {
   className?: string;
   priority?: boolean;
@@ -6,7 +8,9 @@ type BrandMarkProps = {
 export function BrandMark({ className = "h-12 w-12", priority = false }: BrandMarkProps) {
   return <img
     className={className}
-    src="/fieldops-mark.svg"
+    src={ribbonHeart.src}
+    width={ribbonHeart.width}
+    height={ribbonHeart.height}
     alt=""
     aria-hidden="true"
     decoding="async"

@@ -85,7 +85,7 @@ export const OperationsMap = memo(function OperationsMap({ points, routes = noRo
   return <div className="relative isolate mt-5 h-[350px] w-full overflow-hidden rounded-2xl border border-[#D7DFEC] bg-[#F5F7FB] sm:h-[430px]">
     <div className="h-full w-full" ref={container} role="region" aria-label="Map of assigned outlets and captured visit locations" />
     <MapStatus ready={Boolean(context)} error={error} retry={retry} />
-    <button type="button" disabled={!context} className="absolute bottom-7 left-3 z-10 min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-xs font-black text-[#14213D] shadow-md hover:bg-slate-50 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#5269FF] disabled:opacity-50" onClick={() => { if (context) fitMapToContent(context, points, routes, 400); }}>Fit route</button>
+    <button type="button" disabled={!context} className="absolute bottom-7 left-3 z-10 min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-xs font-black text-[#2D2729] shadow-md hover:bg-slate-50 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#CB183D] disabled:opacity-50" onClick={() => { if (context) fitMapToContent(context, points, routes, 400); }}>Fit route</button>
   </div>;
 });
 

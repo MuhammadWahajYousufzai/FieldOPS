@@ -9,9 +9,9 @@ export const metadata: Metadata = {
 
 export default function PrivacyPolicy() {
   const sectionClass = "mt-7 border-t border-slate-200 pt-6 [&_h2]:mb-3 [&_h2]:text-2xl [&_h2]:font-black [&_p]:leading-7 [&_p]:text-slate-600 [&_li]:leading-7 [&_li]:text-slate-600 [&_li+li]:mt-2 [&_a]:font-bold [&_a]:text-blue-700";
-  return <main className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 px-5 py-10 text-[#14213D] sm:px-10">
+  return <main className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 px-5 py-10 text-[#2D2729] sm:px-10">
     <article className="mx-auto max-w-4xl rounded-3xl border border-slate-200 bg-white p-7 shadow-[0_22px_70px_rgba(20,33,61,0.08)] sm:p-12">
-      <a className="mb-10 flex items-center gap-3 text-[#102A58] no-underline" href="/"><span className={ui.logo}><BrandMark className="h-full w-full" /></span><strong>Yousuf Rice FieldOPS</strong></a>
+      <a className="mb-10 flex items-center gap-3 text-[#2D2729] no-underline" href="/"><span className={ui.logo}><BrandMark className="h-full w-full" /></span><strong>Yousuf Rice FieldOPS</strong></a>
       <p className={ui.eyebrow}>Privacy policy · last updated 2 September 2026</p>
       <h1 className={ui.h1}>Work data, handled for field operations.</h1>
       <p className="border-l-4 border-blue-600 pl-5 text-lg leading-8 text-slate-600">FieldOPS is a private workforce application used by authorized Yousuf Rice personnel. It does not sell data, display advertising, or use personal data for unrelated consumer profiling.</p>

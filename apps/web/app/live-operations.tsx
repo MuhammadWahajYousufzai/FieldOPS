@@ -237,7 +237,7 @@ export function LiveOperations({
         <RouteQualityStat label="GPS gaps" value={estimatedGapCount} detail="Dashed estimates" />
         <RouteQualityStat label="Excluded" value={excludedPointCount} detail="Weak, duplicate, drift or gap" />
       </div>
-      <div className="mt-4 flex flex-col gap-3 rounded-xl bg-[#14213D] p-3 text-white sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-4 flex flex-col gap-3 rounded-xl bg-[#2D2729] p-3 text-white sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex w-full rounded-lg bg-white/10 p-1 sm:w-auto" role="group" aria-label="Route line view">
           <RouteViewButton active={routeView === "quality"} label="Quality-checked" onPress={() => setRouteView("quality")} />
           <RouteViewButton active={routeView === "raw"} label="Raw GPS" onPress={() => setRouteView("raw")} />
@@ -251,7 +251,7 @@ export function LiveOperations({
       <OperationsMap points={mapPoints} routes={routes} />
       <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500"><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-blue-700" /> Assigned visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-emerald-700" /> Completed visit</span><span className="inline-flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Latest reliable GPS</span><span className="inline-flex items-center gap-2"><i className="w-7 border-t-2 border-dashed border-slate-500" /> Estimated GPS gap</span>{pollingEnabled && <small className="sm:ml-auto">Checks confirmed GPS and progress every {pollEveryMs / 1_000} seconds</small>}</div>
     </article>
-    <aside className="self-start rounded-2xl bg-[#14213D] p-6 text-white"><p className="text-[11px] font-black uppercase tracking-[0.13em] text-slate-400">Workday status</p><h2 className="my-1 text-2xl font-black tracking-tight text-white">{date}</h2><ul className="my-6 list-none p-0">{attendance.map((record) => {
+    <aside className="self-start rounded-2xl bg-[#2D2729] p-6 text-white"><p className="text-[11px] font-black uppercase tracking-[0.13em] text-slate-400">Workday status</p><h2 className="my-1 text-2xl font-black tracking-tight text-white">{date}</h2><ul className="my-6 list-none p-0">{attendance.map((record) => {
       const points = locationsByEmployee.get(record.employeeId) ?? [];
       const latest = lastReliableRoutePoint(points, routePolicy);
       const stale = record.status === "checked_in" && (!latest || clock - new Date(latest.capturedAt).valueOf() > staleAfterMs);
@@ -265,7 +265,7 @@ export function LiveOperations({
 function RouteQualityStat({ label, value, detail }: { label: string; value: number; detail: string }) {
   return <div className="border-b border-slate-200 px-4 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
     <span className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">{label}</span>
-    <strong className="ml-2 text-xl font-black text-[#14213D] sm:ml-0 sm:mt-1 sm:block">{value.toLocaleString()}</strong>
+    <strong className="ml-2 text-xl font-black text-[#2D2729] sm:ml-0 sm:mt-1 sm:block">{value.toLocaleString()}</strong>
     <small className="ml-2 text-xs text-slate-500 sm:ml-0 sm:block">{detail}</small>
   </div>;
 }
@@ -274,7 +274,7 @@ function RouteViewButton({ active, label, onPress }: { active: boolean; label: s
   return <button
     type="button"
     aria-pressed={active}
-    className={`min-h-10 flex-1 rounded-md px-3 text-xs font-black transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D8A629] sm:flex-none ${active ? "bg-[#D8A629] text-[#14213D]" : "text-white hover:bg-white/10"}`}
+    className={`min-h-10 flex-1 rounded-md px-3 text-xs font-black transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D8A629] sm:flex-none ${active ? "bg-[#D8A629] text-[#2D2729]" : "text-white hover:bg-white/10"}`}
     onClick={onPress}
   >{label}</button>;
 }

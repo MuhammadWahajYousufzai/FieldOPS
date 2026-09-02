@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { BrandMark } from "./brand-mark";
 import { LogoutButton } from "./logout-button";
 import { ui } from "./ui";
@@ -46,36 +46,39 @@ export function ManagementDashboardShell({ actorName, children }: { actorName: s
 
 function AppShell({ actorName, queryString = "", children }: { actorName: string; queryString?: string; children: ReactNode }) {
   const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
   const filterSuffix = queryString ? `?${queryString}` : "";
   return <main className={ui.shell}>
+    <a href="#workspace" className="skip-link">Skip to content</a>
     <aside className={ui.rail}>
       <div className={ui.brand}>
         <span className={ui.logo}><BrandMark className="h-full w-full" priority /></span>
-        <div className="min-w-0"><strong className="font-display block truncate text-[15px] tracking-[-0.025em]">Yousuf Rice FieldOPS</strong><small className="mt-1 flex items-center gap-1.5 text-[#BDCAE1]"><span className="h-1.5 w-1.5 rounded-full bg-[#55E6C1] shadow-[0_0_0_3px_rgba(85,230,193,0.13)]" />Operations live</small></div>
+        <div className="min-w-0 flex-1"><strong className="font-display block text-xl font-bold tracking-tight">FieldOPS</strong><small className="mt-0.5 block text-[11px] text-[#C6BDBF]">Yousuf Rice · Operations</small></div>
+        <button type="button" className="grid h-11 w-11 place-items-center rounded-xl border border-white/20 lg:hidden" aria-label={menuOpen ? "Close navigation" : "Open navigation"} aria-expanded={menuOpen} aria-controls="dashboard-navigation" onClick={() => setMenuOpen(!menuOpen)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d={menuOpen ? "m6 6 12 12M6 18 18 6" : "M4 6h16M4 12h16M4 18h16"} /></svg></button>
       </div>
-      <nav className={ui.nav} aria-label="Primary navigation">
-        {navigation.map((group) => <div className="contents lg:block" key={group.label}>
-          <p className="font-utility hidden px-3 pb-2 pt-4 text-[9px] font-black uppercase tracking-[0.18em] text-[#8194B7] first:pt-0 lg:block">{group.label}</p>
-          <div className="contents lg:grid lg:gap-1">
+      <nav id="dashboard-navigation" className={`${menuOpen ? "grid" : "hidden"} min-h-0 gap-3 overflow-y-auto lg:grid`} aria-label="Primary navigation">
+        {navigation.map((group) => <div key={group.label}>
+          <p className="font-utility px-3 pb-2 pt-3 text-[10px] font-semibold uppercase tracking-[0.13em] text-[#9B8E92]">{group.label}</p>
+          <div className="grid grid-cols-2 gap-1 lg:grid-cols-1">
             {group.items.map((item) => {
               const active = pathname === item.href;
               const preserveFilter = ["/", "/routes", "/visits", "/orders"].includes(item.href);
-              return <Link key={item.href} href={`${item.href}${preserveFilter ? filterSuffix : ""}`} className={`${ui.navLink} ${active ? ui.navSelected : ""}`} aria-current={active ? "page" : undefined}>
-                <NavIcon name={item.icon} /><span className="whitespace-nowrap">{item.label}</span>
+              return <Link key={item.href} href={`${item.href}${preserveFilter ? filterSuffix : ""}`} onClick={() => setMenuOpen(false)} className={`${ui.navLink} ${active ? ui.navSelected : ""}`} aria-current={active ? "page" : undefined}>
+                <NavIcon name={item.icon} /><span>{item.label}</span>
               </Link>;
             })}
           </div>
         </div>)}
       </nav>
-      <div className="hidden rounded-2xl border border-white/10 bg-[#071D49]/35 px-4 py-3 lg:mt-auto lg:block">
-        <small className="font-utility mb-1 block text-[9px] uppercase tracking-[0.12em] text-[#8EA0C1]">Command access</small><strong className="block truncate text-sm">{actorName}</strong><LogoutButton />
+      <div className={`${menuOpen ? "block" : "hidden"} mt-5 shrink-0 rounded-2xl border border-white/10 px-4 py-3 lg:mt-auto lg:block`}>
+        <small className="mb-1 block text-[10px] text-[#AB9FA3]">Signed in as administrator</small><strong className="block truncate text-sm">{actorName}</strong><LogoutButton />
       </div>
     </aside>
-    <section className={ui.workspace}>{children}</section>
+    <section id="workspace" tabIndex={-1} className={ui.workspace}>{children}</section>
   </main>;
 }
 
-function NavIcon({ name }: { name: IconName }) {
+export function NavIcon({ name }: { name: IconName }) {
   const paths: Record<IconName, ReactNode> = {
     today: <><path d="M4 13h6V3H4v10Zm0 8h6v-4H4v4Zm10 0h6V11h-6v10Zm0-18v4h6V3h-6Z" /></>,
     routes: <><path d="M6 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12-8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /><path d="M8.5 14.5 16 9.5" /></>,

@@ -8,6 +8,7 @@ import { operationalPolicyFromRow } from "../../lib/operational-policy";
 import { listAllRows } from "../../lib/table-data";
 import { ManagementDashboardShell } from "../dashboard-shells";
 import { ui } from "../ui";
+import { WorkspaceLink } from "../dashboard-cards";
 import { ManagementForms } from "./management-forms";
 import { EvidenceManager, type RetainedEvidenceItem } from "./evidence-manager";
 import { PlaceApprovals, type ApprovedPlace, type PlaceReviewItem } from "./place-approvals";
@@ -212,19 +213,19 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     };
   }).sort((left, right) => right.capturedAt.localeCompare(left.capturedAt));
   const pageMeta = {
-    overview: { eyebrow: "Operations control room", title: "What needs management attention.", lede: "See integrity issues first, then open the one management task that needs action." },
-    sales: { eyebrow: "Customer opportunities", title: "Move every deal to a clear next action.", lede: "Review salesperson-entered opportunities, follow-up dates, and working estimates without inventing a forecast." },
-    reviews: { eyebrow: "Place review queue", title: "Verify salesperson-marked places.", lede: "Review GPS accuracy, photo and voice evidence, then approve the official place or reject it with a clear reason." },
-    plan: { eyebrow: "Daily visit plan", title: "Publish today’s outlet commitments.", lede: "Assign existing outlets to active salespeople and keep started field records locked." },
-    places: { eyebrow: "Permanent field directory", title: "Manage outlets and verified points.", lede: "Create management outlets or correct official details without moving a salesperson-verified GPS point." },
-    territories: { eyebrow: "Sales area control", title: "Draw and protect sales areas.", lede: "Create boundaries that contain active outlets before enforcing field access." },
-    team: { eyebrow: "People & access", title: "Manage salesperson access safely.", lede: "Create, update, disable, and scope field accounts without confusing them with dashboard administrators." },
-    operations: { eyebrow: "Tracking & sync", title: "Set the phone’s operating policy.", lede: "Control capture quality, route gaps, and automatic sync while preserving raw GPS evidence." },
-    media: { eyebrow: "Media retention", title: "Keep evidence brief, private, and controlled.", lede: "Review every retained photo and voice note, see when it expires, or delete it immediately." },
+    overview: { eyebrow: "Team workspace", title: "Management overview", lede: "Review what needs attention and keep your field team moving." },
+    sales: { eyebrow: "Customer opportunities", title: "Sales pipeline", lede: "Review opportunities, follow-up dates, and each deal’s next step." },
+    reviews: { eyebrow: "Field submissions", title: "Place reviews", lede: "Check the location and evidence, then approve or return a place for correction." },
+    plan: { eyebrow: "Team assignments", title: "Daily visit plan", lede: "Assign outlets to your salespeople. Visits already started stay protected." },
+    places: { eyebrow: "Customer directory", title: "Outlets", lede: "Manage customer details and verified locations." },
+    territories: { eyebrow: "Field coverage", title: "Sales areas", lede: "Manage area boundaries and where your team can work." },
+    team: { eyebrow: "People & permissions", title: "Your team", lede: "Manage salesperson accounts and their assigned areas." },
+    operations: { eyebrow: "App settings", title: "Tracking & sync", lede: "Set location quality and automatic upload preferences for field devices." },
+    media: { eyebrow: "Visit evidence", title: "Photos & voice notes", lede: "Review saved media, check expiry dates, or remove evidence files." },
   }[view];
-  const header = <header className="relative mb-7 flex flex-col items-start justify-between gap-5 overflow-hidden rounded-[26px] border border-[#DCE4F2] bg-white p-5 shadow-[0_16px_46px_rgba(16,42,88,0.07)] before:absolute before:inset-y-0 before:left-0 before:w-1.5 before:bg-[linear-gradient(#FFC938,#FF7468)] sm:p-7 xl:flex-row"><div><p className={ui.eyebrow}>{pageMeta.eyebrow}</p><h1 className={ui.h1}>{pageMeta.title}</h1><p className={ui.lede}>{pageMeta.lede}</p></div><a className={ui.button} href="/routes">View live routes</a></header>;
+  const header = <header className={ui.pageHeader}><div><p className={ui.eyebrow}>{pageMeta.eyebrow}</p><h1 className={ui.h1}>{pageMeta.title}</h1><p className={ui.lede}>{pageMeta.lede}</p></div><a className={ui.quietButton} href="/routes">View live routes <span aria-hidden="true">↗</span></a></header>;
   const overview = <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(20,33,61,0.07)]" aria-labelledby="operations-integrity-title">
-        <div className="grid bg-[#14213D] px-5 py-4 text-white sm:grid-cols-[1fr_auto] sm:items-center sm:px-6"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-200">Operations integrity</p><h2 className="mt-1 text-xl font-black" id="operations-integrity-title">What needs management attention now</h2></div><span className={`mt-3 inline-flex w-max rounded-full px-3 py-1.5 text-xs font-black sm:mt-0 ${outletMapIssues.length || pendingReviews.length ? "bg-amber-300 text-[#14213D]" : "bg-emerald-300 text-emerald-950"}`}>{outletMapIssues.length + pendingReviews.length || "All checks clear"}</span></div>
+        <div className="grid bg-[#2D2729] px-5 py-4 text-white sm:grid-cols-[1fr_auto] sm:items-center sm:px-6"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-200">Operations integrity</p><h2 className="mt-1 text-xl font-black" id="operations-integrity-title">What needs management attention now</h2></div><span className={`mt-3 inline-flex w-max rounded-full px-3 py-1.5 text-xs font-black sm:mt-0 ${outletMapIssues.length || pendingReviews.length ? "bg-amber-300 text-[#2D2729]" : "bg-emerald-300 text-emerald-950"}`}>{outletMapIssues.length + pendingReviews.length || "All checks clear"}</span></div>
         <div className="grid sm:grid-cols-2 xl:grid-cols-4">
           <IntegrityCell value={pendingReviews.length} label="Marks awaiting review" tone={pendingReviews.length ? "pending" : "good"} />
           <IntegrityCell value={outletMapIssues.length} label="Outlet map issues" tone={outletMapIssues.length ? "blocking" : "good"} />
@@ -246,11 +247,11 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     operations: <ManagementForms {...managementFormsProps} view="operations" />,
     media: <EvidenceManager initialItems={retainedEvidence} />,
   }[view];
-  return <ManagementDashboardShell actorName={actor.user.name}>{header}{content}</ManagementDashboardShell>;
+  return <ManagementDashboardShell actorName={actor.user.name}>{header}{content}{view === "overview" && <section className="mt-7" aria-labelledby="management-actions"><h2 className={`${ui.h2} mb-4`} id="management-actions">Manage your day</h2><div className="grid gap-4 sm:grid-cols-2"><WorkspaceLink href="/management/reviews" icon="reviews" title="Review new places" detail={`${pendingReviews.length} field submissions waiting for review`} /><WorkspaceLink href="/management/plan" icon="plan" title="Plan team visits" detail="Assign customers & organize the daily route" /><WorkspaceLink href="/management/places" icon="places" title="Manage outlets" detail={`${outlets.length} active customer locations`} /><WorkspaceLink href="/management/team" icon="team" title="Manage your team" detail={`${employees.length} active salespeople`} /></div></section>}</ManagementDashboardShell>;
 }
 
 function IntegrityCell({ value, label, tone }: { value: string | number; label: string; tone: "good" | "pending" | "blocking" | "neutral" }) {
-  const color = tone === "good" ? "text-emerald-700" : tone === "pending" ? "text-amber-700" : tone === "blocking" ? "text-red-700" : "text-[#14213D]";
+  const color = tone === "good" ? "text-emerald-700" : tone === "pending" ? "text-amber-700" : tone === "blocking" ? "text-red-700" : "text-[#2D2729]";
   return <article className="border-b border-slate-200 px-5 py-4 last:border-b-0 sm:border-r sm:last:border-r-0 xl:border-b-0"><b className={`block text-3xl font-black ${color}`}>{value}</b><span className="mt-1 block text-xs font-bold text-slate-500">{label}</span></article>;
 }
 

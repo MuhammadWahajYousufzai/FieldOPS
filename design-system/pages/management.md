@@ -6,14 +6,14 @@ Help a Karachi field-operations manager see integrity problems first, then compl
 
 ## Visual direction
 
-- Route navy `#102A58`: structure, navigation, and the operations-integrity header.
-- Signal blue `#5269FF`: primary actions and movement.
-- Rice sun `#FFC938`: pending decisions only.
-- Field mint `#21B985`: confirmed and healthy states.
-- Paper sky `#F5F7FF`: quiet workspace background.
-- Clay red `#B5523B`: blocking integrity failures only.
+- Charcoal `#2D2729`: text, navigation, and the operations-integrity header.
+- Ribbon red `#CB183D`: page headers, primary actions, and selection.
+- Amber `#EDB35E`: pending decisions only.
+- Green `#248564`: confirmed and healthy states.
+- Warm ivory `#F6F1ED`: quiet workspace background.
+- Clay red `#AA342C`: blocking integrity failures, with an explicit status label.
 
-Typography uses the existing compact, heavy operational hierarchy. Labels and data remain plain and literal; controls use the same verb before and after completion.
+Typography uses restrained bold headings and readable sentence-case labels. Data remains plain and literal; controls use the same verb before and after completion. Rounded white cards and a crimson header follow the supplied field-sales UI reference.
 
 ## Layout
 
