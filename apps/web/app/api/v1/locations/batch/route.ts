@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { mobileActor, number, text, workDate } from "../../../../../lib/mobile-auth";
+import { isSameLocationFix } from "../../../../../lib/location-idempotency";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 const MAX_BATCH_SIZE = 100;
@@ -138,14 +139,15 @@ export async function POST(request: Request) {
       if (isConflict(error)) {
         try {
           const stored = await db.getRow({ databaseId, tableId: "location_points", rowId: write.idempotencyKey });
-          const storedCapturedAt = new Date(String(stored.captured_at)).valueOf();
-          const matches = String(stored.employee_id) === actor.employee.$id
-            && String(stored.idempotency_key) === write.idempotencyKey
-            && storedCapturedAt === new Date(write.data.captured_at).valueOf()
-            && Number(stored.latitude) === write.data.latitude
-            && Number(stored.longitude) === write.data.longitude
-            && Number(stored.accuracy) === write.data.accuracy
-            && String(stored.source) === write.data.source;
+          // Both Android watchers can deliver one fix with different source or
+          // accuracy metadata. Acknowledge that existing fix; never overwrite it.
+          const matches = isSameLocationFix({
+            employee_id: stored.employee_id,
+            idempotency_key: stored.idempotency_key,
+            captured_at: stored.captured_at,
+            latitude: stored.latitude,
+            longitude: stored.longitude,
+          }, write.data);
           if (matches) return { confirmed: write.idempotencyKey } as const;
           return { rejected: { idempotencyKey: write.idempotencyKey, reason: "idempotency_conflict", retryable: false } satisfies RejectedPoint } as const;
         } catch {
