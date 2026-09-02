@@ -200,6 +200,7 @@ type ParsedPersistedState = Omit<PersistedState, "session"> & {
 };
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://fieldops.sherazwaqar.tech/api/v1";
+const FIELDOPS_MARK = require("../assets/icon.png");
 export const STORAGE_KEY = "fieldops-production-state-v3";
 const OUTBOX_STORAGE_KEY = "fieldops-production-outbox-v1";
 const RECOVERY_EMPLOYEE_STORAGE_KEY = "fieldops-recovery-employee-v1";
@@ -2209,7 +2210,7 @@ function FieldOpsApp() {
   return <SafeAreaView className="flex-1 bg-paper" edges={["top", "bottom"]}>
     <View className="flex-1">
       <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
-        <View className="gap-4 px-5 py-5">
+        <View className="gap-4 px-5 pb-9 pt-5">
           <Header
             screen={screen}
             pending={pending}
@@ -2357,18 +2358,19 @@ function Login({
   const [busy, setBusy] = useState(false);
   return <SafeAreaView className="flex-1 bg-ink" edges={["top", "bottom"]}>
     <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
-      <View className="min-h-screen justify-center gap-7 px-6 py-10">
-        <View className="items-center">
-          <View className="h-[62px] w-[62px] items-center justify-center rounded-[18px] bg-gold">
-            <Text className="text-2xl font-black text-ink">FO</Text>
-          </View>
-          <Text className="mt-4 text-center text-[29px] font-black text-white">Yousuf Rice FieldOPS</Text>
-          <Text className="mt-2 max-w-[360px] text-center leading-5 text-[#BAC4D8]">
-            Assigned visits, sales-area-aware field work, evidence, orders, and offline route tracking.
+      <View className="min-h-screen justify-center gap-8 overflow-hidden px-6 py-10">
+        <View className="absolute -right-24 top-12 h-64 w-64 rounded-full border-[40px] border-[#1FC7FF]/20" />
+        <View className="items-start">
+          <LogoMark size={76} />
+          <Text className="mt-5 text-[10px] font-black tracking-[1.8px] text-[#88EEFF]">THE ROUTE FROM PROMISE TO PROOF</Text>
+          <Text className="mt-3 text-[34px] font-black leading-10 text-white">Field work,{"\n"}<Text className="text-[#FFE36B]">clearly handled.</Text></Text>
+          <Text className="mt-3 max-w-[360px] leading-6 text-[#C5D2EA]">
+            Visits, evidence, orders, and route tracking built to keep working when the signal does not.
           </Text>
         </View>
-        <View className="gap-3.5 rounded-[18px] bg-white p-5">
-          <Eyebrow>SALESPERSON SIGN IN</Eyebrow>
+        <View className="gap-3.5 rounded-[24px] border border-white/20 bg-white p-5">
+          <Text className="text-[10px] font-black tracking-[1.2px] text-field">YOUSUF RICE · SALESPERSON</Text>
+          <Text className="text-2xl font-black text-ink">Sign in to today’s route</Text>
           {recoveryRequired && <View className="rounded-[9px] bg-[#FFF4D6] p-3">
             <Text className="font-bold leading-5 text-[#6B4D00]">
               Saved work is waiting on this phone. Sign in with the same employee account to recover and upload it.
@@ -2376,7 +2378,7 @@ function Login({
           </View>}
           <TextInput
             accessibilityLabel="Work email"
-            className="min-h-12 rounded-[9px] border border-line bg-white px-3 text-base text-ink"
+            className="min-h-14 rounded-xl border border-line bg-[#F8FAFF] px-4 text-base text-ink"
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
@@ -2387,7 +2389,7 @@ function Login({
           />
           <TextInput
             accessibilityLabel="Password"
-            className="min-h-12 rounded-[9px] border border-line bg-white px-3 text-base text-ink"
+            className="min-h-14 rounded-xl border border-line bg-[#F8FAFF] px-4 text-base text-ink"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -2507,13 +2509,11 @@ function Header({
       : syncing || online === null
         ? "text-field"
         : pending > 0 ? "text-[#805C00]" : "text-success";
-  return <View className="flex-row items-center gap-2">
+  return <View className="flex-row items-center gap-2 rounded-[20px] border border-line bg-white p-2.5">
     <View className="min-w-0 flex-1 flex-row items-center gap-2.5">
-      <View className="h-11 w-11 items-center justify-center rounded-[14px] bg-ink">
-        <Text className="text-xs font-black tracking-wider text-gold">YR</Text>
-      </View>
+      <LogoMark size={46} />
       <View className="min-w-0 flex-1">
-        <Text className="text-[17px] font-black text-ink">FieldOPS</Text>
+        <Text className="text-[17px] font-black tracking-tight text-ink">FieldOPS</Text>
         <Text className="mt-0.5 text-[11px] font-bold text-muted" numberOfLines={1}>{section} · {new Date().toLocaleDateString("en-PK", { weekday: "short", day: "numeric", month: "short" })}</Text>
       </View>
     </View>
@@ -2522,7 +2522,7 @@ function Header({
         accessibilityRole="button"
         accessibilityLabel="Refresh today’s assignments and sales area"
         accessibilityState={{ disabled: refreshing }}
-        className="min-h-11 min-w-11 items-center justify-center rounded-full bg-[#E6ECF8] px-2"
+        className="min-h-11 min-w-11 items-center justify-center rounded-xl bg-[#EDF0FF] px-2"
         onPress={onRefresh}
         disabled={refreshing}
       >
@@ -2667,13 +2667,13 @@ function Today({
   const actionEnabled = running && fieldActionsAllowed;
   return <>
     <View className={classes(
-      "flex-row items-center justify-between gap-3 rounded-2xl border-l-[5px] bg-ink p-[18px]",
+      "flex-row items-center justify-between gap-3 rounded-[20px] border border-line border-l-[5px] bg-white p-[18px]",
       running ? "border-l-[#52B889]" : workState === "active" ? "border-l-[#D05242]" : "border-l-[#95A0B5]",
     )}>
       <View className="flex-1">
-        <Text className="text-[10px] font-black tracking-wider text-[#AAB3C5]">TODAY’S SESSION</Text>
-        <Text className="mt-1 text-lg font-black text-white">{title}</Text>
-        <Text className="mt-1 text-[11px] text-[#BAC4D8]">{detail}</Text>
+        <Text className="text-[10px] font-black tracking-wider text-muted">TODAY’S SESSION</Text>
+        <Text className="mt-1 text-lg font-black text-ink">{title}</Text>
+        <Text className="mt-1 text-[11px] text-muted">{detail}</Text>
       </View>
       {workState !== "active" && <Button label={sessionAction === "starting" ? "Starting…" : workState === "finished" ? "Start again" : "Start work"} disabled={sessionAction !== null} onPress={onStartWork} />}
       {workState === "active" && trackingReady && <Button label={sessionAction === "finishing" ? "Finishing…" : "Finish session"} disabled={sessionAction !== null} onPress={onFinishWork} />}
@@ -2687,16 +2687,17 @@ function Today({
       <Stat value={running ? "Live" : "Stopped"} label="Route tracking" />
     </View>
 
-    {nextOutlet ? <View className="rounded-2xl bg-field p-5">
-      <Text className="text-[10px] font-black tracking-wider text-[#B6C2DF]">NEXT ASSIGNED VISIT</Text>
+    {nextOutlet ? <View className="overflow-hidden rounded-[22px] bg-ink p-5">
+      <View className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#1FC7FF]/20" />
+      <Text className="text-[10px] font-black tracking-wider text-[#88EEFF]">NEXT ASSIGNED VISIT</Text>
       <Text className="mt-2.5 text-2xl font-black text-white">{nextOutlet.name}</Text>
-      <Text className="mt-1.5 text-[#C2CBE0]">{nextOutlet.address}</Text>
+      <Text className="mt-1.5 text-[#C9D5EA]">{nextOutlet.address}</Text>
       <View className="mt-5 flex-row flex-wrap gap-2.5">
         <Button label={visitStarting ? "Finding visit GPS…" : "Check in at this shop"} disabled={!actionEnabled || visitStarting} onPress={onStartVisit} />
         <GhostButton label="All assigned visits" onPress={onRoute} />
       </View>
       {!fieldActionsAllowed && <Text className="mt-3 leading-5 text-[#FFF1D0]">{territoryMessage}</Text>}
-      <Text className="mt-3 text-xs leading-4 text-[#C2CBE0]">Stand at the shop. FieldOPS will confirm you’re within {GEOFENCE_METERS} m.</Text>
+      <Text className="mt-3 text-xs leading-4 text-[#C9D5EA]">Stand at the shop. FieldOPS will confirm you’re within {GEOFENCE_METERS} m.</Text>
     </View> : <EmptyState title="No assigned visits waiting" body="You can still mark a new customer place while your work session and location are ready." />}
 
     <TouchableOpacity
@@ -3019,7 +3020,7 @@ function Visit({
       {(photo || audio) && <InfoNotice
         title={photo && audio ? "Evidence ready to upload" : "Evidence is still incomplete"}
         body={photo && audio
-          ? `The photo and voice report are currently on this phone. Tap ${selfCreated ? "Send for admin review" : "Complete visit"} and wait for “uploaded” before expecting them on the dashboard.`
+          ? `The photo and voice report are currently on this phone. Tap ${selfCreated ? "Send for admin review" : "Complete visit"} and wait for “uploaded” before expecting them on the dashboard. The office copy is automatically deleted after 7 days.`
           : "Captured evidence stays on this phone until both items are ready and the completed visit is accepted by the server."}
       />}
       <Button label={action === "finishing" ? "Saving & uploading visit…" : selfCreated ? "Send for admin review" : "Complete visit"} disabled={!accessAllowed || !photo || !audio || recording || action !== null} onPress={onFinish} />
@@ -3640,6 +3641,7 @@ function Profile({
       <ProfileLine>Route quality: fixes weaker than about ±{routePolicy.maxAcceptedAccuracyMeters} m are left out of the drawn line</ProfileLine>
       <ProfileLine>Route recording: {workState === "active" && trackingReady ? "Active" : "Stopped"}</ProfileLine>
       <ProfileLine>Records waiting: {pending}</ProfileLine>
+      <ProfileLine>Visit media: photos and voice notes auto-delete from the office after 7 days</ProfileLine>
     </View>
     <View className="gap-3 rounded-[14px] border border-[#B7C7E6] bg-[#EEF3FB] p-[18px]">
       <View className="flex-row items-start justify-between gap-3">
@@ -3675,33 +3677,31 @@ function Profile({
 }
 
 function Nav({ screen, pending, setScreen }: { screen: Screen; pending: number; setScreen: (screen: Screen) => void }) {
-  const items: { key: Screen; label: string; icon: string }[] = [
-    { key: "today", label: "Today", icon: "●" },
-    { key: "route", label: "Visits", icon: "⌖" },
-    { key: "deals", label: "Sales", icon: "◆" },
-    { key: "sync", label: "Activity", icon: "↻" },
-    { key: "profile", label: "Profile", icon: "○" },
+  const items: { key: Screen; label: string }[] = [
+    { key: "today", label: "Today" },
+    { key: "route", label: "Visits" },
+    { key: "deals", label: "Sales" },
+    { key: "sync", label: "Activity" },
+    { key: "profile", label: "Profile" },
   ];
   const selectedKey: Screen = screen === "visit" || screen === "new_visit"
     ? "route"
     : screen === "order" ? "today" : screen;
-  return <View accessibilityRole="tablist" className="mx-3.5 mb-2 flex-row rounded-2xl border border-[#253652] bg-ink p-1.5">
+  return <View accessibilityRole="tablist" className="mx-3.5 mb-2 flex-row rounded-[20px] border border-[#203B70] bg-ink p-1.5">
     {items.map((item) => <TouchableOpacity
       key={item.key}
       accessibilityRole="tab"
       accessibilityLabel={item.label}
       accessibilityState={{ selected: selectedKey === item.key }}
       className={classes(
-        "min-h-12 flex-1 items-center justify-center rounded-xl border",
-        selectedKey === item.key ? "border-[#4F7CE8] bg-[#254A9A]" : "border-transparent",
+        "relative min-h-12 flex-1 items-center justify-center rounded-[14px] border",
+        selectedKey === item.key ? "border-white/20 bg-field" : "border-transparent",
       )}
       onPress={() => setScreen(item.key)}
     >
-      <View className="relative">
-        <Text className={classes("text-center text-sm font-black", selectedKey === item.key ? "text-white" : "text-[#AAB3C5]")}>{item.icon}</Text>
-        {item.key === "sync" && pending > 0 && <View className="absolute -right-3 -top-1 min-w-4 items-center rounded-full bg-gold px-1"><Text className="text-[8px] font-black text-ink">{pending > 9 ? "9+" : pending}</Text></View>}
-      </View>
-      <Text className={classes("mt-0.5 text-[9px] font-extrabold", selectedKey === item.key ? "text-white" : "text-[#AAB3C5]")}>{item.label}</Text>
+      {selectedKey === item.key && <View className="absolute top-1 h-1 w-5 rounded-full bg-gold" />}
+      <Text className={classes("text-[10px] font-black", selectedKey === item.key ? "text-white" : "text-[#B8C6DE]")}>{item.label}</Text>
+      {item.key === "sync" && pending > 0 && <View className="absolute right-1.5 top-1.5 min-w-4 items-center rounded-full bg-gold px-1"><Text className="text-[8px] font-black text-ink">{pending > 9 ? "9+" : pending}</Text></View>}
     </TouchableOpacity>)}
   </View>;
 }
@@ -3712,7 +3712,7 @@ function Button({ label, onPress, disabled = false }: { label: string; onPress: 
     accessibilityLabel={label}
     accessibilityState={{ disabled }}
     className={classes(
-      "min-h-12 items-center justify-center rounded-xl bg-[#2563EB] px-4 py-3",
+      "min-h-12 items-center justify-center rounded-[14px] bg-field px-4 py-3",
       disabled && "opacity-45",
     )}
     onPress={onPress}
@@ -3932,4 +3932,10 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 
 function ProfileLine({ children }: { children: React.ReactNode }) {
   return <Text className="border-t border-line pt-3 font-bold leading-5 text-ink">{children}</Text>;
+}
+
+function LogoMark({ size }: { size: number }) {
+  return <View className="overflow-hidden rounded-[18px]" style={{ width: size, height: size }}>
+    <Image accessibilityIgnoresInvertColors source={FIELDOPS_MARK} className="h-full w-full" resizeMode="cover" />
+  </View>;
 }

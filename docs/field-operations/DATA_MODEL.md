@@ -30,9 +30,9 @@ This deployment is intentionally single-organization and operated through one ma
 
 The active `organizations` row also stores guarded route-quality and automatic-sync controls. Management can tune capture cadence, movement threshold, weak-fix cutoff, stationary jitter radius, route-gap segmentation, plausible speed, and phone sync cadence from the web dashboard. Mobile and route rendering normalize every value against safe bounds and fall back to production defaults when an older cached context has no policy.
 
-Storage uses the single private `visit-evidence` bucket. There are no public customer, employee, location, order, or evidence resources.
+Storage uses the single private `visit-evidence` bucket. There are no public customer, employee, location, order, or evidence resources. Photo and audio files, together with their `visit_evidence` metadata rows, have a strict seven-day window measured from `captured_at`. The scheduled `evidence-retention` function removes expired files and rows hourly, while `/api/evidence/[fileId]` refuses playback as soon as the seven-day boundary is reached. Managers can delete a retained item sooner from the Media retention dashboard. Automatic and manager-initiated deletions write immutable audit records; visit outcomes, GPS checks, orders, and audit history remain.
 
-Visit check-in remains a persisted mobile draft and is not sent to the server. When the salesperson explicitly submits, `POST /api/v1/visits/submit` validates both GPS points plus the required photo and audio note, stores both evidence records with stable retry IDs, and only then creates or marks the visit `completed`. The retired check-in endpoint rejects partial visits, and reporting only reads completed visits.
+Visit check-in remains a persisted mobile draft and is not sent to the server. When the salesperson explicitly submits, `POST /api/v1/visits/submit` validates both GPS points plus the required photo and audio note, stores both evidence records with stable retry IDs, and only then creates or marks the visit `completed`. The phone deletes its protected local copies after explicit server confirmation. The retired check-in endpoint rejects partial visits, and reporting only reads completed visits.
 
 ## Salesperson-marked places
 

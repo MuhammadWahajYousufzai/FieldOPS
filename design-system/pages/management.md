@@ -6,11 +6,11 @@ Help a Karachi field-operations manager see integrity problems first, then compl
 
 ## Visual direction
 
-- Field navy `#14213D`: structure, navigation, and the operations-integrity header.
-- Route blue `#2563EB`: primary actions and movement.
-- Rice gold `#D8A629`: pending decisions only.
-- Route green `#267057`: confirmed and healthy states.
-- Canvas `#F8FAFC`: quiet workspace background.
+- Route navy `#102A58`: structure, navigation, and the operations-integrity header.
+- Signal blue `#5269FF`: primary actions and movement.
+- Rice sun `#FFC938`: pending decisions only.
+- Field mint `#21B985`: confirmed and healthy states.
+- Paper sky `#F5F7FF`: quiet workspace background.
 - Clay red `#B5523B`: blocking integrity failures only.
 
 Typography uses the existing compact, heavy operational hierarchy. Labels and data remain plain and literal; controls use the same verb before and after completion.

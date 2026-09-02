@@ -1,10 +1,88 @@
 @import "tailwindcss";
 
+:root {
+  --route-navy: #102a58;
+  --signal-blue: #5269ff;
+  --signal-sky: #1fc7ff;
+  --rice-sun: #ffc938;
+  --field-mint: #21b985;
+  --paper-sky: #f5f7ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--paper-sky);
+}
+
+body {
+  font-family: "Avenir Next", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: ui-rounded, "Avenir Next", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+}
+
+.font-utility {
+  font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", ui-monospace, monospace;
+}
+
+::selection {
+  background: #c6f6ff;
+  color: var(--route-navy);
+}
+
+.dashboard-workspace::before {
+  position: fixed;
+  inset: 0 0 auto 276px;
+  z-index: -1;
+  height: 250px;
+  background:
+    radial-gradient(circle at 82% 8%, rgb(31 199 255 / 0.12), transparent 30%),
+    linear-gradient(115deg, rgb(82 105 255 / 0.05), transparent 52%);
+  content: "";
+  pointer-events: none;
+}
+
+button,
+a,
+summary,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+summary,
+select {
+  cursor: pointer;
+}
+
+audio {
+  accent-color: var(--signal-blue);
+}
+
+details > summary::marker {
+  color: var(--signal-blue);
+}
+
 @keyframes dashboard-view-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { scroll-behavior: auto !important; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .dashboard-workspace::before {
+    inset-inline: 0;
+  }
 }

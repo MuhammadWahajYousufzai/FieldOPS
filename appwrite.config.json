@@ -27,6 +27,26 @@
       "path": "."
         }
     ],
+    "functions": [
+        {
+            "$id": "evidence-retention",
+            "name": "FieldOPS Evidence Retention",
+            "enabled": true,
+            "logging": true,
+            "runtime": "node-22",
+            "buildSpecification": "s-1vcpu-512mb",
+            "runtimeSpecification": "s-1vcpu-512mb",
+            "deploymentRetention": 7,
+            "scopes": ["rows.read", "rows.write", "files.read", "files.write"],
+            "events": [],
+            "schedule": "17 * * * *",
+            "timeout": 60,
+            "entrypoint": "src/main.js",
+            "commands": "npm install",
+            "ignore": "node_modules\n.tmp",
+            "path": "functions/evidence-retention"
+        }
+    ],
     "settings": {
         "services": {
             "account": true,

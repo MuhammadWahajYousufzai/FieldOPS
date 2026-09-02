@@ -20,4 +20,12 @@ corepack pnpm dev
 
 Copy `.env.example` to `.env.local` only after Appwrite infrastructure is available. No migration is automatically executed.
 
-For an existing installation, run the versioned migrations in order. The current route, control-room, sales-pipeline, and identity-login release requires `scripts/migrate-008-activity-sync.mjs` through `scripts/migrate-013-auth-rate-limit.mjs` after migration 007 and before the matching server code is deployed; rehearse migrations on a scrubbed snapshot first. Migration 012 is fail-closed: it uses the installation's existing single-manager records only to provision the initial `admin` label. Runtime dashboard authorization uses the valid Appwrite session and exact `admin` label only; it does not query employee roles or assignments. Migration 013 adds private, pseudonymous credential-attempt counters used by both admin and salesperson login.
+For an existing installation, run the versioned migrations in order. The current route, control-room, sales-pipeline, identity-login, and media-retention release requires `scripts/migrate-008-activity-sync.mjs` through `scripts/migrate-014-evidence-retention.mjs` after migration 007 and before the matching server code is deployed; rehearse migrations on a scrubbed snapshot first. Migration 012 is fail-closed: it uses the installation's existing single-manager records only to provision the initial `admin` label. Runtime dashboard authorization uses the valid Appwrite session and exact `admin` label only; it does not query employee roles or assignments. Migration 013 adds private, pseudonymous credential-attempt counters used by both admin and salesperson login. Migration 014 adds the capture-time index used by the seven-day media cleanup query.
+
+The `evidence-retention` Appwrite Function is declared in `appwrite.config.json` with an hourly schedule. After migration 014, deploy and activate it with:
+
+```bash
+appwrite push functions --function-id evidence-retention --activate
+```
+
+The function receives the Appwrite function endpoint, project ID, and execution API key from its runtime, and defaults to the `fieldops` database and `visit-evidence` bucket. Configure `APPWRITE_DATABASE_ID` or `APPWRITE_EVIDENCE_BUCKET_ID` as function variables only when an installation uses different IDs.

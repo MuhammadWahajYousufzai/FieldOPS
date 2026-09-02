@@ -1,14 +1,24 @@
 import { NextResponse } from "next/server";
-import { createAdminStorage } from "@fieldops/appwrite/server";
+import { createAdminStorage, createAdminTablesDb } from "@fieldops/appwrite/server";
 import { requireDashboardAdmin } from "../../../../lib/auth";
 import { parseEvidenceByteRange } from "../../../../lib/evidence-range";
+import { evidenceRetentionState } from "../../../../lib/evidence-retention";
 
+const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 const bucketId = process.env.APPWRITE_EVIDENCE_BUCKET_ID?.trim() || "visit-evidence";
 
 export async function GET(request: Request, context: { params: Promise<{ fileId: string }> }) {
   if (!await requireDashboardAdmin()) return NextResponse.json({ error: "Admin access is required." }, { status: 403 });
   const { fileId } = await context.params;
   try {
+    const evidence = await createAdminTablesDb().getRow({ databaseId, tableId: "visit_evidence", rowId: fileId });
+    const retention = evidenceRetentionState(String(evidence.captured_at || evidence.$createdAt));
+    if (!retention || retention.expired) {
+      return NextResponse.json({ error: "This evidence has reached the end of its seven-day retention window." }, {
+        status: 410,
+        headers: { "cache-control": "private, no-store" },
+      });
+    }
     const storage = createAdminStorage();
     const [file, bytes] = await Promise.all([
       storage.getFile({ bucketId, fileId }),

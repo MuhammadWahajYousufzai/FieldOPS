@@ -9,12 +9,13 @@ import { listAllRows } from "../../lib/table-data";
 import { ManagementDashboardShell } from "../dashboard-shells";
 import { ui } from "../ui";
 import { ManagementForms } from "./management-forms";
+import { EvidenceManager, type RetainedEvidenceItem } from "./evidence-manager";
 import { PlaceApprovals, type ApprovedPlace, type PlaceReviewItem } from "./place-approvals";
 import { SalesPipeline, type SalesPipelineDeal, type SalesPipelineEmployee } from "./sales-pipeline";
 
 export const dynamic = "force-dynamic";
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
-export type ManagementView = "overview" | "sales" | "reviews" | "plan" | "places" | "territories" | "team" | "operations";
+export type ManagementView = "overview" | "sales" | "reviews" | "plan" | "places" | "territories" | "team" | "operations" | "media";
 
 export default function ManagementPage() {
   return ManagementPageView({ view: "overview" });
@@ -191,6 +192,25 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     sequence: Number(route.sequence || 0),
     status: String(route.status || "planned"),
   })).sort((a, b) => a.employeeLabel.localeCompare(b.employeeLabel) || a.sequence - b.sequence);
+  const completedVisitById = new Map(completedVisitRows.map((visit) => [visit.$id, visit]));
+  const retainedEvidence: RetainedEvidenceItem[] = evidenceRows.map((evidence) => {
+    const visit = completedVisitById.get(String(evidence.visit_id));
+    const outletName = String(
+      outletLabels.get(String(visit?.approved_outlet_id || visit?.outlet_id || evidence.outlet_id || ""))
+      || visit?.customer_name
+      || "Visit evidence",
+    );
+    return {
+      id: evidence.$id,
+      fileId: String(evidence.file_id),
+      visitId: String(evidence.visit_id),
+      type: String(evidence.type) === "photo" ? "photo" as const : "audio" as const,
+      filename: String(evidence.filename || evidence.type),
+      capturedAt: String(evidence.captured_at || evidence.$createdAt),
+      employeeName: allEmployeeLabels.get(String(evidence.employee_id)) ?? "Unknown salesperson",
+      outletName,
+    };
+  }).sort((left, right) => right.capturedAt.localeCompare(left.capturedAt));
   const pageMeta = {
     overview: { eyebrow: "Operations control room", title: "What needs management attention.", lede: "See integrity issues first, then open the one management task that needs action." },
     sales: { eyebrow: "Customer opportunities", title: "Move every deal to a clear next action.", lede: "Review salesperson-entered opportunities, follow-up dates, and working estimates without inventing a forecast." },
@@ -200,8 +220,9 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     territories: { eyebrow: "Sales area control", title: "Draw and protect sales areas.", lede: "Create boundaries that contain active outlets before enforcing field access." },
     team: { eyebrow: "People & access", title: "Manage salesperson access safely.", lede: "Create, update, disable, and scope field accounts without confusing them with dashboard administrators." },
     operations: { eyebrow: "Tracking & sync", title: "Set the phone’s operating policy.", lede: "Control capture quality, route gaps, and automatic sync while preserving raw GPS evidence." },
+    media: { eyebrow: "Media retention", title: "Keep evidence brief, private, and controlled.", lede: "Review every retained photo and voice note, see when it expires, or delete it immediately." },
   }[view];
-  const header = <header className="mb-7 flex flex-col items-start justify-between gap-5 xl:flex-row"><div><p className={ui.eyebrow}>{pageMeta.eyebrow}</p><h1 className={ui.h1}>{pageMeta.title}</h1><p className={ui.lede}>{pageMeta.lede}</p></div><a className={ui.button} href="/routes">View live routes</a></header>;
+  const header = <header className="relative mb-7 flex flex-col items-start justify-between gap-5 overflow-hidden rounded-[26px] border border-[#DCE4F2] bg-white p-5 shadow-[0_16px_46px_rgba(16,42,88,0.07)] before:absolute before:inset-y-0 before:left-0 before:w-1.5 before:bg-[linear-gradient(#FFC938,#FF7468)] sm:p-7 xl:flex-row"><div><p className={ui.eyebrow}>{pageMeta.eyebrow}</p><h1 className={ui.h1}>{pageMeta.title}</h1><p className={ui.lede}>{pageMeta.lede}</p></div><a className={ui.button} href="/routes">View live routes</a></header>;
   const overview = <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(20,33,61,0.07)]" aria-labelledby="operations-integrity-title">
         <div className="grid bg-[#14213D] px-5 py-4 text-white sm:grid-cols-[1fr_auto] sm:items-center sm:px-6"><div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-blue-200">Operations integrity</p><h2 className="mt-1 text-xl font-black" id="operations-integrity-title">What needs management attention now</h2></div><span className={`mt-3 inline-flex w-max rounded-full px-3 py-1.5 text-xs font-black sm:mt-0 ${outletMapIssues.length || pendingReviews.length ? "bg-amber-300 text-[#14213D]" : "bg-emerald-300 text-emerald-950"}`}>{outletMapIssues.length + pendingReviews.length || "All checks clear"}</span></div>
         <div className="grid sm:grid-cols-2 xl:grid-cols-4">
@@ -223,6 +244,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     territories: <ManagementForms {...managementFormsProps} view="territories" />,
     team: <ManagementForms {...managementFormsProps} view="team" />,
     operations: <ManagementForms {...managementFormsProps} view="operations" />,
+    media: <EvidenceManager initialItems={retainedEvidence} />,
   }[view];
   return <ManagementDashboardShell actorName={actor.user.name}>{header}{content}</ManagementDashboardShell>;
 }

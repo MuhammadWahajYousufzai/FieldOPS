@@ -1,227 +1,76 @@
-# Design System Master File
+# FieldOPS design system — Sunlit Route
 
-> **LOGIC:** When building a specific page, first check `design-system/pages/[page-name].md`.
-> If that file exists, its rules **override** this Master file.
-> If not, strictly follow the rules below.
+## Product ground
 
----
+**Subject:** Karachi rice-distribution field operations.
 
-**Project:** FieldOPS
-**Generated:** 2026-08-11 18:57:38
-**Category:** Event Management
-**Design Dials:** Variance 6/10 (Balanced / Modern) | Motion 4/10 (Standard) | Density 7/10 (Standard)
+**Audience:** sales representatives working outdoors on intermittent connections, plus managers coordinating verified visits, routes, outlets, and evidence.
 
----
+**Single system job:** make it immediately clear what is live, what needs action, and what has been safely recorded.
 
-## Global Rules
+## Visual idea
 
-### Color Palette
+FieldOPS should feel like a crisp dispatch instrument under bright daylight—not a generic SaaS admin template. The grain-and-map-pin mark carries a coral route through its center, connecting the product's three truths: rice, place, and movement.
 
-| Role | Hex | CSS Variable |
-|------|-----|--------------|
-| Primary | `#1E293B` | `--color-primary` |
-| On Primary | `#FFFFFF` | `--color-on-primary` |
-| Secondary | `#334155` | `--color-secondary` |
-| Accent/CTA | `#2563EB` | `--color-accent` |
-| Background | `#0F172A` | `--color-background` |
-| Foreground | `#FFFFFF` | `--color-foreground` |
-| Muted | `#10182B` | `--color-muted` |
-| Border | `rgba(255,255,255,0.08)` | `--color-border` |
-| Destructive | `#DC2626` | `--color-destructive` |
-| Ring | `#1E293B` | `--color-ring` |
+The deliberate aesthetic risk is a high-energy cyan, yellow, mint, and coral mark against route navy. It improves recognition in outdoor glare and gives the product a specific identity. The rest of the interface remains quiet, structured, and information-first.
 
-**Color Notes:** Map dark + route blue
+## Core tokens
 
-### Typography
+| Token | Hex | Job |
+|---|---|---|
+| Route navy | `#102A58` | Navigation, deep surfaces, primary text |
+| Signal blue | `#5269FF` | Primary actions and active routes |
+| Signal sky | `#1FC7FF` | Live state and focus accents |
+| Rice sun | `#FFC938` | Pending work and the crop identity |
+| Field mint | `#21B985` | Confirmed, safe, synchronized states |
+| Paper sky | `#F5F7FF` | Quiet canvas |
 
-- **Heading Font:** Plus Jakarta Sans
-- **Body Font:** Plus Jakarta Sans
-- **Mood:** enterprise, saas, b2b, professional, indigo, modern, approachable, legible, ios dynamic type, android scaling
-- **Google Fonts:** [Plus Jakarta Sans + Plus Jakarta Sans](https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400)
+Clay red remains a semantic exception for destructive or blocking states; it is not part of the decorative palette.
 
-**CSS Import:**
-```css
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap');
+## Type roles
+
+- **Display:** platform rounded display stack, used for page and card titles with tight spacing.
+- **Body:** Avenir Next / Segoe UI variable / platform sans, optimized for long operational copy.
+- **Utility:** SF Mono / Cascadia Code / Roboto Mono, used sparingly for dates, status eyebrows, and data labels.
+
+Mobile follows the same hierarchy with native system fonts, heavier display weights, and utility letter spacing so Dynamic Type and Android scaling remain reliable.
+
+## Layout language
+
+```text
+WEB
+┌── dispatch rail ──┬── page job / immediate action ──────────┐
+│ bright mark       │  quiet title card with route spine       │
+│ monitor           ├───────────────────────────────────────────┤
+│ manage            │  the one operational workspace           │
+│ system            │  tables, maps, review cards, controls     │
+│ signed-in state   │                                           │
+└───────────────────┴───────────────────────────────────────────┘
+
+MOBILE
+┌── brand + sync signal ────────────────────────────────────────┐
+│ current work access                                           │
+│ one dominant next action                                      │
+│ supporting tasks and evidence steps                           │
+├── Today | Visits | Sales | Activity | Profile ────────────────┤
+└────────────────────────────────────────────────────────────────┘
 ```
 
-### Spacing Variables
+## Component rules
 
-*Density: 7/10 — Standard*
+- Page titles live in a bordered white job card with one slim route-color spine.
+- The web rail is the dispatch board; the selected destination becomes a bright white route card.
+- Cards use 20–24 px radii, cool blue-gray borders, and low navy shadows.
+- Primary actions use Signal blue. Pending is Rice sun; confirmed is Field mint; delete is clay red.
+- Buttons preserve their width while busy and disable only the action in flight.
+- Status labels state what happened or what the person can do next.
+- No decorative metric bento grids, invented forecasts, emoji icons, or ornamental numbering.
+- Media screens always show the seven-day expiry and explain that visit history remains after media deletion.
 
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--space-xs` | `4px` / `0.25rem` | Tight gaps |
-| `--space-sm` | `8px` / `0.5rem` | Icon gaps, inline spacing |
-| `--space-md` | `16px` / `1rem` | Standard padding |
-| `--space-lg` | `24px` / `1.5rem` | Section padding |
-| `--space-xl` | `32px` / `2rem` | Large gaps |
-| `--space-2xl` | `48px` / `3rem` | Section margins |
-| `--space-3xl` | `64px` / `4rem` | Hero padding |
+## Motion and access
 
-### Shadow Depths
-
-| Level | Value | Usage |
-|-------|-------|-------|
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | Subtle lift |
-| `--shadow-md` | `0 4px 6px rgba(0,0,0,0.1)` | Cards, buttons |
-| `--shadow-lg` | `0 10px 15px rgba(0,0,0,0.1)` | Modals, dropdowns |
-| `--shadow-xl` | `0 20px 25px rgba(0,0,0,0.15)` | Hero images, featured cards |
-
----
-
-## Component Specs
-
-### Buttons
-
-```css
-/* Primary Button */
-.btn-primary {
-  background: #2563EB;
-  color: white;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-
-.btn-primary:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
-}
-
-/* Secondary Button */
-.btn-secondary {
-  background: transparent;
-  color: #1E293B;
-  border: 2px solid #1E293B;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-```
-
-### Cards
-
-```css
-.card {
-  background: #0F172A;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: var(--shadow-md);
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-
-.card:hover {
-  box-shadow: var(--shadow-lg);
-  transform: translateY(-2px);
-}
-```
-
-### Inputs
-
-```css
-.input {
-  padding: 12px 16px;
-  border: 1px solid #E2E8F0;
-  border-radius: 8px;
-  font-size: 16px;
-  transition: border-color 200ms ease;
-}
-
-.input:focus {
-  border-color: #1E293B;
-  outline: none;
-  box-shadow: 0 0 0 3px #1E293B20;
-}
-```
-
-### Modals
-
-```css
-.modal-overlay {
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-}
-
-.modal {
-  background: white;
-  border-radius: 16px;
-  padding: 32px;
-  box-shadow: var(--shadow-xl);
-  max-width: 500px;
-  width: 90%;
-}
-```
-
----
-
-## Style Guidelines
-
-**Style:** Soft UI Evolution
-
-**Keywords:** Evolved soft UI, better contrast, modern aesthetics, subtle depth, accessibility-focused, improved shadows, hybrid
-
-**Best For:** Modern enterprise apps, SaaS platforms, health/wellness, modern business tools, professional, hybrid
-
-**Key Effects:** Improved shadows (softer than flat, clearer than neumorphism), modern (200-300ms), focus visible, WCAG AA/AAA
-
-### Page Pattern
-
-**Pattern Name:** Enterprise Gateway
-
-- **Conversion Strategy:** Path selection (I am a...). Mega menu navigation. Trust signals prominent.
-- **CTA Placement:** Contact Sales (Primary) + Login (Secondary)
-- **Section Order:** 1. Hero (Video/Mission), 2. Solutions by Industry, 3. Solutions by Role, 4. Client Logos, 5. Contact Sales
-
----
-
-## Motion
-
-**Stagger List** (Standard) — Trigger: load or scroll | Duration: 300-450ms | Easing: `back.out(1.4)`
-
-```js
-gsap.from('.grid-item', { opacity: 0, scale: 0.92, y: 16, duration: 0.4, stagger: { each: 0.06, from: 'start', grid: 'auto' }, ease: 'back.out(1.4)' });
-```
-
-**Framework notes:** grid: 'auto' lets GSAP infer rows/columns from a CSS grid layout for a natural wave stagger
-
-- ✅ Combine with from: 'center' for a bento-grid layout to draw the eye inward first
-- ❌ Don't use back.out on dense data tables; the overshoot reads as sloppy on informational UI
-- ⚡ Group DOM writes; avoid interleaving layout reads (getBoundingClientRect) between staggered tweens
-
----
-
-## Anti-Patterns (Do NOT Use)
-
-- ❌ Confusing registration
-- ❌ No countdown
-
-### Additional Forbidden Patterns
-
-- ❌ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)
-- ❌ **Missing cursor:pointer** — All clickable elements must have cursor:pointer
-- ❌ **Layout-shifting hovers** — Avoid scale transforms that shift layout
-- ❌ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio
-- ❌ **Instant state changes** — Always use transitions (150-300ms)
-- ❌ **Invisible focus states** — Focus states must be visible for a11y
-
----
-
-## Pre-Delivery Checklist
-
-Before delivering any UI code, verify:
-
-- [ ] No emojis used as icons (use SVG instead)
-- [ ] All icons from consistent icon set (Heroicons/Lucide)
-- [ ] `cursor-pointer` on all clickable elements
-- [ ] Hover states with smooth transitions (150-300ms)
-- [ ] Light mode: text contrast 4.5:1 minimum
-- [ ] Focus states visible for keyboard navigation
-- [ ] `prefers-reduced-motion` respected
-- [ ] Responsive: 375px, 768px, 1024px, 1440px
-- [ ] No content hidden behind fixed navbars
-- [ ] No horizontal scroll on mobile
+- Use one subtle page-entry transition and restrained hover/focus feedback; do not animate dense data rows.
+- Respect `prefers-reduced-motion` and keep all essential state independent of animation.
+- Minimum touch target is 44 px; mobile primary actions use 48 px or greater.
+- Keyboard focus uses Signal sky or Signal blue with visible offset.
+- Verify 375, 768, 1024, and 1440 px widths; never hide content behind the navigation deck.

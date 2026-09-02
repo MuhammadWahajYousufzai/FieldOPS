@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { BrandMark } from "./brand-mark";
 import { LogoutButton } from "./logout-button";
 import { ui } from "./ui";
 
-type IconName = "today" | "routes" | "visits" | "orders" | "control" | "plan" | "reviews" | "sales" | "places" | "territories" | "team" | "settings";
+type IconName = "today" | "routes" | "visits" | "orders" | "control" | "plan" | "reviews" | "sales" | "places" | "territories" | "team" | "settings" | "media";
 type NavigationItem = { href: string; label: string; icon: IconName };
 
 const navigation: { label: string; items: NavigationItem[] }[] = [
@@ -27,6 +28,7 @@ const navigation: { label: string; items: NavigationItem[] }[] = [
   ] },
   { label: "System", items: [
     { href: "/management/settings", label: "Tracking & sync", icon: "settings" },
+    { href: "/management/media", label: "Media retention", icon: "media" },
   ] },
 ];
 
@@ -48,12 +50,12 @@ function AppShell({ actorName, queryString = "", children }: { actorName: string
   return <main className={ui.shell}>
     <aside className={ui.rail}>
       <div className={ui.brand}>
-        <span className={ui.logo} aria-hidden="true">YR</span>
-        <div><strong className="block text-sm tracking-[-0.01em]">Yousuf Rice FieldOps</strong><small className="mt-1 block text-slate-400">Operations command</small></div>
+        <span className={ui.logo}><BrandMark className="h-full w-full" priority /></span>
+        <div className="min-w-0"><strong className="font-display block truncate text-[15px] tracking-[-0.025em]">Yousuf Rice FieldOPS</strong><small className="mt-1 flex items-center gap-1.5 text-[#BDCAE1]"><span className="h-1.5 w-1.5 rounded-full bg-[#55E6C1] shadow-[0_0_0_3px_rgba(85,230,193,0.13)]" />Operations live</small></div>
       </div>
       <nav className={ui.nav} aria-label="Primary navigation">
         {navigation.map((group) => <div className="contents lg:block" key={group.label}>
-          <p className="hidden px-3 pb-2 pt-5 text-[9px] font-black uppercase tracking-[0.18em] text-slate-500 first:pt-0 lg:block">{group.label}</p>
+          <p className="font-utility hidden px-3 pb-2 pt-4 text-[9px] font-black uppercase tracking-[0.18em] text-[#8194B7] first:pt-0 lg:block">{group.label}</p>
           <div className="contents lg:grid lg:gap-1">
             {group.items.map((item) => {
               const active = pathname === item.href;
@@ -65,8 +67,8 @@ function AppShell({ actorName, queryString = "", children }: { actorName: string
           </div>
         </div>)}
       </nav>
-      <div className="hidden border-t border-white/15 px-2 pt-4 lg:mt-auto lg:block">
-        <small className="mb-1 block text-slate-400">Signed in as</small><strong className="block truncate text-sm">{actorName}</strong><LogoutButton />
+      <div className="hidden rounded-2xl border border-white/10 bg-[#071D49]/35 px-4 py-3 lg:mt-auto lg:block">
+        <small className="font-utility mb-1 block text-[9px] uppercase tracking-[0.12em] text-[#8EA0C1]">Command access</small><strong className="block truncate text-sm">{actorName}</strong><LogoutButton />
       </div>
     </aside>
     <section className={ui.workspace}>{children}</section>
@@ -87,6 +89,7 @@ function NavIcon({ name }: { name: IconName }) {
     territories: <><path d="m4 6 5-3 6 3 5-3v15l-5 3-6-3-5 3V6Z" /><path d="M9 3v15M15 6v15" /></>,
     team: <><circle cx="9" cy="8" r="3" /><path d="M3 20c.4-4 2.4-6 6-6s5.6 2 6 6M16 5a3 3 0 0 1 0 6M17 14c2.4.5 3.7 2.5 4 6" /></>,
     settings: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
+    media: <><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z" /><path d="m7 16 3-3 2 2 2.5-3 2.5 4M15 8h3M16.5 6.5v3" /></>,
   };
   return <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }

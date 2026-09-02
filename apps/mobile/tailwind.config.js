@@ -5,14 +5,15 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        ink: "#17233B",
-        field: "#243D74",
-        gold: "#D8A629",
-        paper: "#F7F8F4",
-        line: "#DCE0D8",
-        muted: "#697184",
-        success: "#267057",
-        danger: "#A53B2E",
+        ink: "#102A58",
+        field: "#5269FF",
+        sky: "#1FC7FF",
+        gold: "#FFC938",
+        paper: "#F5F7FF",
+        line: "#DCE4F2",
+        muted: "#60708C",
+        success: "#168267",
+        danger: "#B8473E",
       },
     },
   },
