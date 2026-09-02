@@ -10,7 +10,7 @@ Check the following before shipping map changes:
 
 - Routes: crisp English-labelled vector streets, solid recorded route, dashed GPS-gap link, three marker colors, location popups, smooth zoom/pan and Fit route.
 - Move live marker, remove all data, and restore it. Layers must update without duplicates; the street map must remain usable when empty.
-- Outlet: click within the shaded area or use map center. Clicking outside must show validation and preserve the last valid selection.
+- Outlet: click within a shaded area or use map center. Clicking outside must also save the selected pin; matching areas highlight automatically. Check the Google Maps link uses the selected latitude and longitude.
 - Boundary: add three distinct points, inspect the closed polygon, undo, clear, pan, and add map center.
 - Switch between all three views repeatedly to exercise teardown/reinitialization.
 - Inspect rendered map: one active WebGL canvas, loaded style/tiles, English label expressions, and the expected route features/markers. Switching views must not accumulate active canvases.

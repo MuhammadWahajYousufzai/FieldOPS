@@ -12,6 +12,7 @@ import {
 } from "../../../../lib/management-write";
 import { text } from "../../../../lib/mobile-auth";
 import { listAllRowsChecked } from "../../../../lib/table-data";
+import { syncOutletAssignments } from "../../../../lib/outlet-auto-assignment";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
         assigned_by: actor.user.$id,
         reason: "Assigned from management dashboard",
       }, permissions: [] });
+      await syncOutletAssignments(db, databaseId, actor.user.$id, transactionId, undefined, { id: territoryId });
       await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
         actor_user_id: actor.user.$id,
         action: "territory.assigned",
@@ -134,6 +136,7 @@ export async function DELETE(request: Request) {
           reason: "Role retained after sales area removal",
         }, permissions: [] });
       }
+      await syncOutletAssignments(db, databaseId, actor.user.$id, transactionId, undefined, { id: territoryId });
       await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
         actor_user_id: actor.user.$id,
         action: "territory.unassigned",

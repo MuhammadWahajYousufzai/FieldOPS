@@ -1,5 +1,6 @@
 "use client";
 
+import { googleMapsUrl } from "../lib/outlet-location";
 import type { GeoJSONSource, Marker } from "maplibre-gl";
 import { memo, useEffect, useMemo, useRef } from "react";
 import { validMapCoordinate } from "../lib/map-coordinates";
@@ -55,7 +56,7 @@ export const OperationsMap = memo(function OperationsMap({ points, routes = noRo
       const existing = markers.current.get(point.id);
       if (existing) {
         if (point.longitude !== existing.point.longitude || point.latitude !== existing.point.latitude) existing.marker.setLngLat([point.longitude, point.latitude]);
-        if (point.name !== existing.point.name || point.address !== existing.point.address) existing.marker.getPopup()?.setDOMContent(popupContent(point));
+        if (point.name !== existing.point.name || point.address !== existing.point.address || point.latitude !== existing.point.latitude || point.longitude !== existing.point.longitude) existing.marker.getPopup()?.setDOMContent(popupContent(point));
         if (point.kind !== existing.point.kind) {
           existing.marker.getElement().classList.remove(`fieldops-map-marker--${existing.point.kind}`);
           existing.marker.getElement().classList.add(`fieldops-map-marker--${point.kind}`);
@@ -95,7 +96,12 @@ function popupContent(point: MapPoint) {
   title.textContent = point.name;
   const address = document.createElement("div");
   address.textContent = point.address;
-  content.append(title, address);
+  const link = document.createElement("a");
+  link.href = googleMapsUrl(point.latitude, point.longitude);
+  link.textContent = "Open in Google Maps ↗";
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  content.append(title, address, link);
   return content;
 }
 

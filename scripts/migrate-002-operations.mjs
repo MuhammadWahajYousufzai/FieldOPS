@@ -23,7 +23,7 @@ const tables = [
       ["code", "varchar", 32, true], ["name", "varchar", 160, true],
       ["address", "varchar", 500, true], ["latitude", "float", true], ["longitude", "float", true], ["coordinates", "point", true],
       ["contact_name", "varchar", 128, false], ["phone", "varchar", 32, false],
-      ["status", "varchar", 24, true], ["territory_id", "varchar", 36, true],
+      ["status", "varchar", 24, true], ["territory_id", "varchar", 36, false],
       ["assigned_employee_id", "varchar", 36, false], ["visit_frequency", "varchar", 32, true],
       ["notes", "text", false], ["created_by", "varchar", 36, true],
       ["origin_visit_id", "varchar", 36, false], ["source", "varchar", 24, false],

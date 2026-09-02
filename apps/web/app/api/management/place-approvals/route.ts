@@ -2,9 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { ID, Query, type Models } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
-import { hasRequiredVisitEvidence, MAX_PLACE_MARK_ACCURACY_METERS, parseTerritoryBoundary, pointInTerritory } from "@fieldops/domain";
+import { hasRequiredVisitEvidence, MAX_PLACE_MARK_ACCURACY_METERS } from "@fieldops/domain";
 import { requireDashboardAdmin } from "../../../../lib/auth";
 import { number, text } from "../../../../lib/mobile-auth";
+
+import { syncOutletAssignments } from "../../../../lib/outlet-auto-assignment";
+import { outletPointAddress } from "../../../../lib/outlet-location";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 type DataRow = Models.Row & Record<string, unknown>;
@@ -98,11 +101,9 @@ export async function POST(request: Request) {
   }
 
   const officialName = text(body.name, 160);
-  const territoryId = text(body.territoryId, 36);
-  const address = text(body.address, 500) || text(visit.customer_address, 500) || "Address recorded at the verified GPS point";
   const latitude = number(visit.latitude), longitude = number(visit.longitude), accuracy = number(visit.accuracy);
-  if (!officialName || !territoryId || latitude === null || longitude === null) {
-    return NextResponse.json({ error: "Official place name, sales area, and a valid marked point are required." }, { status: 400 });
+  if (!officialName || latitude === null || longitude === null || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+    return NextResponse.json({ error: "Official place name and a valid marked point are required." }, { status: 400 });
   }
   if (accuracy === null || accuracy < 0 || accuracy > MAX_PLACE_MARK_ACCURACY_METERS) {
     return NextResponse.json({ error: "This point has a weak GPS reading and cannot become permanent. Ask the salesperson to mark it again near the shop entrance after the accuracy number improves." }, { status: 409 });
@@ -114,14 +115,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, visitId, outletId: String(visit.approved_outlet_id || visitId), placeApprovalStatus: "approved" });
   }
 
-  const territory = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId }).catch(() => null);
-  const boundary = territory && territory.active === true ? parseTerritoryBoundary(territory.boundary) : null;
-  if (!territory || !boundary) {
-    return NextResponse.json({ error: "Choose an active sales area with a saved map boundary." }, { status: 409 });
-  }
-  if (!pointInTerritory({ latitude, longitude }, boundary)) {
-    return NextResponse.json({ error: `The salesperson's verified point is outside ${String(territory.name)}. Choose the sales area containing this point.` }, { status: 422 });
-  }
+  const address = text(body.address, 500) || text(visit.customer_address, 500) || outletPointAddress(latitude, longitude);
 
   const outletId = visitId;
   const transaction = await db.createTransaction({ ttl: 60 });
@@ -134,14 +128,14 @@ export async function POST(request: Request) {
       longitude,
       coordinates: [longitude, latitude],
       status: "active",
-      territory_id: territoryId,
-      assigned_employee_id: String(visit.employee_id),
       visit_frequency: "on_demand",
       notes: "Approved from a salesperson-marked visit with photo and voice evidence.",
       created_by: actor.user.$id,
       origin_visit_id: visitId,
       source: "salesperson_mark",
     }, permissions: [] });
+    const [assignment] = await syncOutletAssignments(db, databaseId, actor.user.$id, transaction.$id, [outletId]);
+    const territoryId = assignment?.territoryId ?? null;
     await db.updateRow({ databaseId, tableId: "visits", rowId: visitId, transactionId: transaction.$id, data: {
       place_approval_status: "approved",
       candidate_territory_id: territoryId,

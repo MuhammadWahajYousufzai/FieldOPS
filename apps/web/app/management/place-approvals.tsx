@@ -1,7 +1,9 @@
 "use client";
 
+import { googleMapsUrl, salesAreasAtPoint } from "../../lib/outlet-location";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { TerritoryMapOption } from "./map-editors";
 import { ui } from "../ui";
 
 type EvidenceItem = {
@@ -45,7 +47,6 @@ export type ApprovedPlace = {
 type ReviewDraft = {
   name: string;
   address: string;
-  territoryId: string;
   reason: string;
 };
 
@@ -55,7 +56,6 @@ function reviewDraft(review: PlaceReviewItem): ReviewDraft {
   return {
     name: review.submittedName,
     address: review.submittedAddress,
-    territoryId: review.candidateTerritoryId,
     reason: "",
   };
 }
@@ -73,7 +73,7 @@ async function requestJson(path: string, method: "POST" | "PATCH", body: object)
 
 export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
   reviews: PlaceReviewItem[];
-  territories: Array<{ id: string; name: string }>;
+  territories: TerritoryMapOption[];
   approvedPlaces: ApprovedPlace[];
 }) {
   const router = useRouter();
@@ -91,8 +91,8 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
 
   async function reviewPlace(review: PlaceReviewItem, action: "approve" | "reject") {
     const draft = drafts[review.id] ?? reviewDraft(review);
-    if (action === "approve" && (!draft.name.trim() || !draft.territoryId)) {
-      setMessage({ tone: "error", text: "Enter the official name and choose the sales area containing the verified point." });
+    if (action === "approve" && !draft.name.trim()) {
+      setMessage({ tone: "error", text: "Enter the official place name." });
       return;
     }
     if (action === "reject" && !draft.reason.trim()) {
@@ -108,7 +108,6 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
         action,
         name: draft.name.trim(),
         address: draft.address.trim(),
-        territoryId: draft.territoryId,
         reason: draft.reason.trim(),
       });
       setResolved((current) => [...current, review.id]);
@@ -131,7 +130,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
       <div>
         <p className={ui.eyebrow}>Verified field marks</p>
         <h2 className={ui.h2} id="place-approvals-title">Approve the place, preserve the report.</h2>
-        <p className={ui.lede}>Check the salesperson&apos;s photo, voice report and GPS point. You control the official name and sales area before the place joins the permanent outlet list.</p>
+        <p className={ui.lede}>Check the salesperson&apos;s photo, voice report and GPS point. Confirm the official name. Its sales areas and assigned salespeople are determined from the verified GPS point.</p>
       </div>
       <span className={`inline-flex min-h-10 items-center rounded-full px-4 text-xs font-black ${openReviews.length ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
         {openReviews.length ? `${openReviews.length} awaiting review` : "Review queue clear"}
@@ -164,7 +163,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
               </div>
               {review.submittedAddress && <Fact label="Submitted address" value={review.submittedAddress} wide />}
               {review.notes && <Fact label="Written note" value={review.notes} wide />}
-              <a className="inline-flex min-h-11 items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-blue-300" href={mapUrl(review.latitude, review.longitude)} target="_blank" rel="noreferrer">
+              <a className="inline-flex min-h-11 items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-blue-300" href={googleMapsUrl(review.latitude, review.longitude)} target="_blank" rel="noreferrer">
                 <span>Open verified GPS point</span><span className="font-mono text-[10px]">{review.latitude.toFixed(5)}, {review.longitude.toFixed(5)} ↗</span>
               </a>
               {photo
@@ -182,7 +181,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
               <label className={ui.label} htmlFor={`official-name-${review.id}`}>Official place name<input id={`official-name-${review.id}`} className={ui.input} value={draft.name} maxLength={160} onChange={(event) => updateDraft(review.id, { name: event.target.value })} /></label>
               {draft.name.trim() !== review.submittedName.trim() && <p className="-mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800">Submitted as “{review.submittedName}” — this remains in the visit history.</p>}
               <label className={ui.label} htmlFor={`official-address-${review.id}`}>Official address<input id={`official-address-${review.id}`} className={ui.input} value={draft.address} maxLength={500} placeholder="Address recorded at the verified GPS point" onChange={(event) => updateDraft(review.id, { address: event.target.value })} /></label>
-              <label className={ui.label} htmlFor={`official-territory-${review.id}`}>Sales area<select id={`official-territory-${review.id}`} className={ui.input} value={draft.territoryId} onChange={(event) => updateDraft(review.id, { territoryId: event.target.value })}><option value="">Choose the sales area containing this point</option>{territories.map((territory) => <option key={territory.id} value={territory.id}>{territory.name}</option>)}</select></label>
+              <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">Sales area: {salesAreasAtPoint(review, territories).map((area) => area.name).join(" · ") || "Awaiting a sales area covering this point"}. Assignment is automatic.</p>
               <label className={ui.label} htmlFor={`review-reason-${review.id}`}>Review note <span className="font-medium text-slate-500">required only when rejecting</span><textarea id={`review-reason-${review.id}`} className={`${ui.input} min-h-24 resize-y`} value={draft.reason} maxLength={1000} placeholder="Why was it rejected, or what did you verify?" onChange={(event) => updateDraft(review.id, { reason: event.target.value })} /></label>
               <div className="grid gap-3 border-t border-slate-200 pt-4 sm:grid-cols-[1fr_auto]">
                 <button type="button" className={ui.button} disabled={Boolean(busy) || !review.evidenceComplete || !review.pointAccurate} onClick={() => reviewPlace(review, "approve")}>{approveBusy ? "Approving place…" : "Approve permanent place"}</button>
@@ -202,7 +201,7 @@ export function PlaceApprovals({ reviews, territories, approvedPlaces }: {
       </div>
       {approvedPlaces.length > 0 ? <div className="divide-y divide-slate-200">{approvedPlaces.map((place) => <article className="grid gap-4 px-5 py-5 sm:grid-cols-[1fr_auto] sm:items-center sm:px-6" key={place.id}>
           <div><span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-800">Permanent · {place.code}</span><strong className="mt-2 block text-lg text-[#2D2729]">{place.name}</strong><small className="mt-1 block leading-5 text-slate-500">{place.address}<br />{place.territoryName} · marked by {place.salespersonName}<br />Approved {formatDateTime(place.approvedAt)}</small>{place.submittedName && place.submittedName !== place.name && <small className="mt-1 block font-bold text-blue-700">Submitted as “{place.submittedName}”</small>}</div>
-          <div className="flex flex-wrap gap-2 sm:justify-end"><a className={ui.quietButton} href={mapUrl(place.latitude, place.longitude)} target="_blank" rel="noreferrer">Open point</a><a className={ui.button} href="/management/places">Manage place</a></div>
+          <div className="flex flex-wrap gap-2 sm:justify-end"><a className={ui.quietButton} href={googleMapsUrl(place.latitude, place.longitude)} target="_blank" rel="noreferrer">Open in Google Maps</a><a className={ui.button} href="/management/places">Manage place</a></div>
         </article>)}</div> : <p className="px-5 py-7 text-sm leading-6 text-slate-500 sm:px-6">No salesperson-marked place has been approved yet. The first approved review will become the first permanent entry here.</p>}
     </section>
   </section>;
@@ -216,9 +215,6 @@ function MissingEvidence({ label }: { label: string }) {
   return <div className="rounded-xl border border-dashed border-red-300 bg-red-50 p-4 text-sm font-extrabold text-red-800">{label}</div>;
 }
 
-function mapUrl(latitude: number, longitude: number) {
-  return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=18/${latitude}/${longitude}`;
-}
 
 function formatDateTime(value: string) {
   const date = new Date(value);

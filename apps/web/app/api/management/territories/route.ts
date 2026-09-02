@@ -14,8 +14,8 @@ import {
   stableManagementId,
 } from "../../../../lib/management-write";
 import { text } from "../../../../lib/mobile-auth";
-import { listAllRows, listAllRowsChecked } from "../../../../lib/table-data";
-import { territoryBoundaryImpact } from "../../../../lib/territory-impact";
+import { listAllRowsChecked } from "../../../../lib/table-data";
+import { syncOutletAssignments } from "../../../../lib/outlet-auto-assignment";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -84,6 +84,7 @@ export async function POST(request: Request) {
           reason: "Assigned when sales area was created",
         }, permissions: [] });
       }
+      await syncOutletAssignments(db, databaseId, actor.user.$id, transactionId, undefined, { id: territoryId });
       await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
         actor_user_id: actor.user.$id,
         action: "territory.created",
@@ -126,28 +127,10 @@ export async function PATCH(request: Request) {
   const db = createAdminTablesDb();
   try {
     const before = await db.getRow({ databaseId, tableId: "territories", rowId: territoryId });
-    const outletRows = await listAllRows(db, databaseId, "outlets", [
-      Query.equal("territory_id", territoryId),
-      Query.equal("status", "active"),
-    ]);
-    const impact = territoryBoundaryImpact(boundary, outletRows.map((outlet) => ({
-      id: outlet.$id,
-      name: String(outlet.name || outlet.code || "Unnamed outlet"),
-      latitude: Number(outlet.latitude),
-      longitude: Number(outlet.longitude),
-    })));
-    const affected = [...impact.outside, ...impact.invalid];
-    if (affected.length > 0) {
-      return NextResponse.json({
-        error: `This boundary would leave ${affected.length} active ${affected.length === 1 ? "outlet" : "outlets"} outside the sales area. Include them in the boundary or move them to the correct sales area first.`,
-        code: "territory_boundary_strands_outlets",
-        affectedOutlets: affected.map((outlet) => ({ id: outlet.id, name: outlet.name })),
-      }, { status: 409 });
-    }
-
     const transaction = await db.createTransaction({ ttl: 60 });
     try {
       await db.updateRow({ databaseId, tableId: "territories", rowId: territoryId, transactionId: transaction.$id, data: { boundary: boundary.coordinates } });
+      await syncOutletAssignments(db, databaseId, actor.user.$id, transaction.$id, undefined, { id: territoryId, previousBoundary: parseTerritoryBoundary(before.boundary) });
       await db.createRow({ databaseId, tableId: "audit_logs", rowId: ID.unique(), transactionId: transaction.$id, data: {
         actor_user_id: actor.user.$id,
         action: "territory.boundary_updated",
@@ -155,7 +138,7 @@ export async function PATCH(request: Request) {
         entity_id: territoryId,
         occurred_at: new Date().toISOString(),
         before_json: JSON.stringify({ boundary: before.boundary ?? null }),
-        after_json: JSON.stringify({ boundary: boundary.coordinates, outletsChecked: impact.checked }),
+        after_json: JSON.stringify({ boundary: boundary.coordinates }),
         reason: "Management dashboard boundary validation",
         correlation_id: randomUUID(),
       }, permissions: [] });
@@ -235,6 +218,7 @@ export async function DELETE(request: Request) {
       });
 
       const { auditId, correlationId } = managementAuditIdentity("territory.deleted", territoryId, operationKey);
+      await syncOutletAssignments(db, databaseId, actor.user.$id, transactionId, undefined, { id: territoryId, previousBoundary: parseTerritoryBoundary(territory.boundary) });
       await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId, data: {
         actor_user_id: actor.user.$id,
         action: "territory.deleted",

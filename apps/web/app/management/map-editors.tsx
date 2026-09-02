@@ -1,8 +1,9 @@
 "use client";
 
-import { pointInTerritory, type LngLat, type TerritoryBoundary } from "@fieldops/domain";
+import type { LngLat, TerritoryBoundary } from "@fieldops/domain";
 import type { GeoJSONSource } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
+import { googleMapsUrl, salesAreasAtPoint } from "../../lib/outlet-location";
 import { validMapCoordinate } from "../../lib/map-coordinates";
 import { MapStatus } from "../map-status";
 import { useVectorMap, type VectorMapContext } from "../use-vector-map";
@@ -11,9 +12,8 @@ import { ui } from "../ui";
 export type TerritoryMapOption = { id: string; name: string; code: string; boundary: TerritoryBoundary | null };
 export type SelectedPoint = { latitude: number; longitude: number };
 
-export function PointMapPicker({ territories, selectedTerritoryId, value, onChange }: {
+export function PointMapPicker({ territories, value, onChange }: {
   territories: TerritoryMapOption[];
-  selectedTerritoryId: string;
   value: SelectedPoint | null;
   onChange: (point: SelectedPoint) => void;
 }) {
@@ -21,13 +21,11 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
   const [selectionError, setSelectionError] = useState("");
   const selectPoint = useRef<(point: SelectedPoint) => void>(() => undefined);
   const lastFit = useRef("");
+  const selectedTerritoryIds = value ? salesAreasAtPoint(value, territories).map((territory) => territory.id) : [];
   selectPoint.current = (point) => {
-    const territory = territories.find((item) => item.id === selectedTerritoryId);
-    if (!territory) { setSelectionError("Choose a sales area before placing the outlet."); return; }
-    if (!territory.boundary) { setSelectionError(`Draw and save ${territory.name}'s boundary before placing an outlet.`); return; }
-    if (!pointInTerritory(point, territory.boundary)) { setSelectionError(`That point is outside ${territory.name}. Choose a point inside the shaded boundary.`); return; }
+    if (!validMapCoordinate([point.longitude, point.latitude])) { setSelectionError("Choose a valid location on the map."); return; }
     setSelectionError("");
-    onChange(point);
+    onChange({ latitude: Number(point.latitude.toFixed(6)), longitude: Number(point.longitude.toFixed(6)) });
   };
 
   useEffect(() => {
@@ -49,16 +47,18 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
       map.addLayer({ id: "fieldops-territories-fill", type: "fill", source: "fieldops-territories", paint: { "fill-color": "#CB183D", "fill-opacity": 0.12 } });
       map.addLayer({ id: "fieldops-territories-line", type: "line", source: "fieldops-territories", paint: { "line-color": "#CB183D", "line-width": 2 } });
     }
-    map.setPaintProperty("fieldops-territories-fill", "fill-opacity", ["case", ["==", ["get", "id"], selectedTerritoryId], 0.18, 0.04]);
-    map.setPaintProperty("fieldops-territories-line", "line-color", ["case", ["==", ["get", "id"], selectedTerritoryId], "#B41438", "#A8B4C9"]);
-    const selected = territories.find((territory) => territory.id === selectedTerritoryId);
-    const fitKey = JSON.stringify([selectedTerritoryId, selected?.boundary]);
-    if (fitKey !== lastFit.current) {
-      if (selected?.boundary) fitBoundary(context, selected.boundary);
-      lastFit.current = fitKey;
-      setSelectionError("");
+    map.setPaintProperty("fieldops-territories-fill", "fill-opacity", ["case", ["in", ["get", "id"], ["literal", selectedTerritoryIds]], 0.18, 0.08]);
+    map.setPaintProperty("fieldops-territories-line", "line-color", ["case", ["in", ["get", "id"], ["literal", selectedTerritoryIds]], "#B41438", "#A8B4C9"]);
+    if (!lastFit.current) {
+      const coordinates = territories.flatMap((territory) => territory.boundary?.coordinates[0] ?? []);
+      if (coordinates.length) {
+        const bounds = new context.lib.LngLatBounds();
+        for (const coordinate of coordinates) bounds.extend(coordinate);
+        map.fitBounds(bounds, { padding: 35, maxZoom: 14, duration: 0 });
+      }
+      lastFit.current = "fitted";
     }
-  }, [context, territories, selectedTerritoryId]);
+  }, [context, territories, value]);
 
   useEffect(() => {
     if (!context || !value || !validMapCoordinate([value.longitude, value.latitude])) return;
@@ -75,6 +75,7 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
     </div>
     <div className="flex flex-wrap items-center gap-3">
       <button type="button" className={ui.quietButton} disabled={!context} onClick={() => { const center = context?.map.getCenter(); if (center) selectPoint.current({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
+      {value && <a className={ui.quietButton} href={googleMapsUrl(value.latitude, value.longitude)} target="_blank" rel="noreferrer">Open in Google Maps ↗</a>}
       <span className="text-xs font-bold text-slate-500" aria-live="polite">{value ? `${value.latitude.toFixed(6)}, ${value.longitude.toFixed(6)} selected` : "No visit point selected"}</span>
     </div>
     {selectionError && <p className={ui.messageError} role="alert">{selectionError}</p>}

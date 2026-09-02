@@ -12,7 +12,7 @@ import {
 } from "../../../../lib/management-write";
 import { text, workDate } from "../../../../lib/mobile-auth";
 import { allocateRouteSequence } from "../../../../lib/route-sequence";
-import { employeeHasTerritory, territoryAccessForEmployee } from "../../../../lib/territory-access";
+import { evaluateTerritoryAccess, territoryAccessForEmployee } from "../../../../lib/territory-access";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -33,20 +33,25 @@ export async function POST(request: Request) {
   if (!outlet || outlet.status !== "active") return NextResponse.json({ error: "Select an active outlet." }, { status: 409 });
   if (!employee || employee.status !== "active") return NextResponse.json({ error: "Select an active salesperson." }, { status: 409 });
   const access = await territoryAccessForEmployee(db, employeeId);
-  if (access.restricted && !employeeHasTerritory(access, String(outlet.territory_id))) {
+  if (!evaluateTerritoryAccess(access, { latitude: Number(outlet.latitude), longitude: Number(outlet.longitude) }).allowed) {
     return NextResponse.json({ error: "This outlet is outside the salesperson's assigned sales areas." }, { status: 409 });
   }
 
   const routeId = stableManagementId("route", `${date}:${employeeId}:${outletId}`);
-  const existing = await getRoute(db, routeId);
-  if (existing) return NextResponse.json({ ok: true, routeId, created: false, replayed: true });
+  const existing = (await db.listRows({ databaseId, tableId: "route_assignments", queries: [
+    Query.equal("employee_id", employeeId), Query.equal("outlet_id", outletId), Query.equal("work_date", date), Query.limit(1),
+  ] })).rows[0];
+  if (existing) return NextResponse.json({ ok: true, routeId: existing.$id, created: false, replayed: true });
 
   const operationKey = managementOperationKey(body.operationId, "outlet.assign", date, employeeId, outletId);
   const { auditId, correlationId } = managementAuditIdentity("outlet.assigned", routeId, operationKey);
   const now = new Date().toISOString();
   try {
-    const created = await runManagementTransactionWithRetry(db, async (transactionId) => {
-      if (await getRoute(db, routeId, transactionId)) return false;
+    const replayedRouteId = await runManagementTransactionWithRetry(db, async (transactionId) => {
+      const existingInTransaction = (await db.listRows({ databaseId, tableId: "route_assignments", transactionId, queries: [
+        Query.equal("employee_id", employeeId), Query.equal("outlet_id", outletId), Query.equal("work_date", date), Query.limit(1),
+      ] })).rows[0];
+      if (existingInTransaction) return existingInTransaction.$id;
       const sequence = await allocateRouteSequence(db, databaseId, employeeId, date, transactionId);
       await db.createRow({ databaseId, tableId: "route_assignments", rowId: routeId, transactionId, data: {
         work_date: date,
@@ -67,9 +72,9 @@ export async function POST(request: Request) {
         reason: "Management dashboard",
         correlation_id: correlationId,
       }, permissions: [] });
-      return true;
+      return null;
     });
-    if (!created) return NextResponse.json({ ok: true, routeId, created: false, replayed: true });
+    if (replayedRouteId) return NextResponse.json({ ok: true, routeId: replayedRouteId, created: false, replayed: true });
     return NextResponse.json({ ok: true, routeId, created: true, replayed: false }, { status: 201 });
   } catch (error) {
     if (isAppwriteConflict(error) && await getRoute(db, routeId).catch(() => null)) {

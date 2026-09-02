@@ -73,8 +73,8 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     const territory = territoryById.get(String(outlet.territory_id));
     const latitude = Number(outlet.latitude), longitude = Number(outlet.longitude);
     let reason = "";
-    if (!territory) reason = "sales area is missing";
-    else if (territory.active) {
+    if (!territory && outlet.territory_id) reason = "sales area is missing";
+    else if (territory?.active) {
       if (!territory.boundary) reason = `${territory.name} has no saved boundary`;
       else if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) reason = "GPS point is invalid";
       else if (!pointInTerritory({ latitude, longitude }, territory.boundary)) reason = `outside ${territory.name}`;
@@ -89,8 +89,8 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     name: String(outlet.name),
     address: String(outlet.address),
     notes: String(outlet.notes || ""),
-    territoryId: String(outlet.territory_id),
-    territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Unknown sales area",
+    territoryId: String(outlet.territory_id || ""),
+    territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Awaiting sales area",
     territoryActive: territoryById.get(String(outlet.territory_id))?.active === true,
     source: outlet.source === "salesperson_mark" || outlet.origin_visit_id ? "Salesperson mark" : "Management",
     updatedAt: outlet.$updatedAt,
@@ -153,7 +153,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
         address: String(outlet.address),
         latitude: Number(outlet.latitude),
         longitude: Number(outlet.longitude),
-        territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Unknown sales area",
+        territoryName: territoryLabels.get(String(outlet.territory_id)) ?? "Awaiting sales area",
         submittedName: visit ? String(visit.customer_name || "") : "",
         salespersonName: visit ? allEmployeeLabels.get(String(visit.employee_id)) ?? "Unknown salesperson" : "Unknown salesperson",
         approvedAt: visit ? String(visit.reviewed_at || outlet.$createdAt) : String(outlet.$createdAt),
@@ -163,7 +163,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
     const employeeId = String(row.employee_id), territoryId = String(row.territory_id ?? "");
     const effective = new Date(String(row.effective_from)).valueOf() <= now && (!row.effective_to || new Date(String(row.effective_to)).valueOf() > now);
     const employeeLabel = employeeLabels.get(employeeId), territoryLabel = territoryLabels.get(territoryId);
-    return effective && employeeLabel && territoryLabel ? [{ employeeId, employeeLabel, territoryId, territoryLabel }] : [];
+    return effective && String(row.role_id) === salesRoleId && employeeLabel && territoryLabel && territoryById.get(territoryId)?.active ? [{ employeeId, employeeLabel, territoryId, territoryLabel }] : [];
   });
   const outletLabels = new Map(outletRows.map((outlet) => [outlet.$id, String(outlet.name)]));
   const pipelineDeals: SalesPipelineDeal[] = dealRows.flatMap((row) => {
@@ -239,7 +239,7 @@ export async function ManagementPageView({ view }: { view: ManagementView }) {
   const content = {
     overview,
     sales: <SalesPipeline employees={pipelineEmployees} deals={pipelineDeals} />,
-    reviews: <PlaceApprovals reviews={pendingReviews} territories={territories.map(({ id, name }) => ({ id, name }))} approvedPlaces={approvedPlaces} />,
+    reviews: <PlaceApprovals reviews={pendingReviews} territories={territories} approvedPlaces={approvedPlaces} />,
     plan: <ManagementForms {...managementFormsProps} view="plan" />,
     places: <ManagementForms {...managementFormsProps} view="places" />,
     territories: <ManagementForms {...managementFormsProps} view="territories" />,

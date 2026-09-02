@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { PointMapPicker, TerritoryBoundaryEditor, type SelectedPoint, type TerritoryMapOption } from "./map-editors";
 import { SalespersonManager } from "./salesperson-manager";
 import { ui } from "../ui";
+import { salesAreasAtPoint } from "../../lib/outlet-location";
 import { preciseOperationalPolicy, type OperationalPolicy } from "../../lib/operational-policy";
 
 type Option = { id: string; label: string };
@@ -59,11 +60,14 @@ export function ManagementForms({ employees, outlets, outletRecords, territories
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [outletPoint, setOutletPoint] = useState<SelectedPoint | null>(null);
-  const [outletTerritoryId, setOutletTerritoryId] = useState("");
   const [newBoundary, setNewBoundary] = useState<TerritoryBoundary | null>(null);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [editorKey, setEditorKey] = useState(0);
   const [policyDraft, setPolicyDraft] = useState(operationsPolicy);
+
+  const outletAreas = outletPoint ? salesAreasAtPoint(outletPoint, territories) : [];
+  const outletEmployeeIds = new Set(territoryAssignments.filter((assignment) => outletAreas.some((area) => area.id === assignment.territoryId)).map((assignment) => assignment.employeeId));
+  const outletEmployees = employees.filter((employee) => outletEmployeeIds.has(employee.id));
 
   function setActionBusy(key: string, value: boolean) {
     setBusy((current) => {
@@ -87,7 +91,7 @@ export function ManagementForms({ employees, outlets, outletRecords, territories
       await requestJson(path, { ...Object.fromEntries(new FormData(form)), ...extras });
       form.reset();
       showSuccess(`${label} saved. The mobile app will receive the change after refresh.`);
-      if (label === "Outlet") { setOutletPoint(null); setOutletTerritoryId(""); }
+      if (label === "Outlet") setOutletPoint(null);
     } catch (error) { setStatus(error instanceof Error ? error.message : "Could not save."); }
     finally { setActionBusy(label, false); }
   }
@@ -176,18 +180,17 @@ export function ManagementForms({ employees, outlets, outletRecords, territories
       </form>}
 
       {view === "places" && <form className={`${ui.card} grid gap-4 lg:col-span-2`} onSubmit={(event) => runForm(event, "/api/management/outlets", "Outlet", outletPoint ?? {})}>
-        <div><p className={ui.eyebrow}>Stores</p><h2 className={ui.h2}>Add and assign outlet</h2><p className={ui.lede}>Choose a sales area, then tap its shaded map area to place the visit marker.</p></div>
-        <div className="grid gap-3 sm:grid-cols-2"><label className={ui.label}>Store code<input className={ui.input} name="code" placeholder="KHI-001" required /></label><label className={ui.label}>Store name<input className={ui.input} name="name" placeholder="Restaurant or retailer" required /></label></div>
-        <label className={ui.label}>Address<input className={ui.input} name="address" placeholder="Full Karachi address" required /></label>
-        <label className={ui.label}>Sales area<select className={ui.input} name="territoryId" value={outletTerritoryId} onChange={(event) => { setOutletTerritoryId(event.target.value); setOutletPoint(null); }} required><option value="">Select sales area</option>{territories.map((item) => <option key={item.id} value={item.id}>{item.name}{item.boundary ? "" : " · map required"}</option>)}</select></label>
-        <PointMapPicker territories={territories} selectedTerritoryId={outletTerritoryId} value={outletPoint} onChange={setOutletPoint} />
-        <input type="hidden" name="latitude" value={outletPoint?.latitude ?? ""} /><input type="hidden" name="longitude" value={outletPoint?.longitude ?? ""} />
-        <label className={ui.label}>Assign to<select className={ui.input} name="employeeId"><option value="">Assign later</option>{employees.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-        <label className={ui.label}>Notes<input className={ui.input} name="notes" placeholder="Contact, preferred visit time, instructions" /></label>
-        <button className={ui.button} disabled={Boolean(busy.Outlet) || !outletPoint || !outletTerritoryId}>{busy.Outlet ? "Saving…" : "Save outlet"}</button>
+        <div><p className={ui.eyebrow}>Stores</p><h2 className={ui.h2}>Add and assign outlet</h2><p className={ui.lede}>Enter the store name and place its pin. Its sales area and salespeople are assigned automatically.</p></div>
+        <label className={ui.label}>Store name<input className={ui.input} name="name" placeholder="Restaurant or retailer" maxLength={160} required /></label>
+        <PointMapPicker territories={territories} value={outletPoint} onChange={setOutletPoint} />
+        {outletPoint && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm" role="status" aria-live="polite">
+          <p className="font-extrabold">{outletAreas.length ? outletAreas.map((area) => area.name).join(" · ") : "No sales area covers this location yet"}</p>
+          <p className="mt-1 text-slate-600">{outletEmployees.length ? `Automatically assigned to ${outletEmployees.map((employee) => employee.label).join(", ")}.` : "You can save this outlet now. It will be assigned when a salesperson is assigned to a sales area covering this pin."}</p>
+        </div>}
+        <button className={ui.button} disabled={Boolean(busy.Outlet) || !outletPoint}>{busy.Outlet ? "Saving…" : "Save outlet"}</button>
       </form>}
 
-      {view === "places" && <OutletDirectory records={outletRecords} territories={territories} onSaved={(name) => showSuccess(`${name} updated. The verified GPS point was not changed.`)} setStatus={setStatus} />}
+      {view === "places" && <OutletDirectory records={outletRecords} onSaved={(name) => showSuccess(`${name} updated. The verified GPS point was not changed.`)} setStatus={setStatus} />}
 
       {view === "territories" && <section className={`${ui.card} grid gap-2`} aria-labelledby="territory-library-title">
         <div><p className={ui.eyebrow}>Saved map areas</p><h2 className={ui.h2} id="territory-library-title">Sales Area boundaries</h2><p className={ui.lede}>Sales Areas are temporary salesperson restrictions. Deleting one ends its assignments while every outlet stays intact.</p></div>
@@ -269,16 +272,15 @@ function PolicyNumber({ label, detail, value, min, max, suffix, step = 1, onChan
   return <label className={ui.label}>{label}<span className="relative"><input className={`${ui.input} pr-14`} type="number" inputMode="decimal" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} required /><span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-xs font-black text-slate-400">{suffix}</span></span><small className="font-medium leading-4 text-slate-500">{detail}</small></label>;
 }
 
-function OutletDirectory({ records, territories, onSaved, setStatus }: {
+function OutletDirectory({ records, onSaved, setStatus }: {
   records: OutletRecord[];
-  territories: TerritoryMapOption[];
   onSaved: (name: string) => void;
   setStatus: (message: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState("");
   const [busy, setBusy] = useState("");
-  const [draft, setDraft] = useState({ name: "", address: "", notes: "", territoryId: "", expectedUpdatedAt: "" });
+  const [draft, setDraft] = useState({ name: "", address: "", notes: "", expectedUpdatedAt: "" });
   const normalized = query.trim().toLowerCase();
   const visible = records.filter((record) => !normalized || [record.name, record.code, record.address, record.territoryName].some((value) => value.toLowerCase().includes(normalized)));
 
@@ -288,7 +290,6 @@ function OutletDirectory({ records, territories, onSaved, setStatus }: {
       name: record.name,
       address: record.address,
       notes: record.notes,
-      territoryId: record.territoryId,
       expectedUpdatedAt: record.updatedAt,
     });
   }
@@ -310,15 +311,15 @@ function OutletDirectory({ records, territories, onSaved, setStatus }: {
   }
 
   return <section className={`${ui.card} grid gap-4 lg:col-span-2`} aria-labelledby="outlet-directory-title">
-    <div className="grid gap-3 sm:grid-cols-[1fr_minmax(220px,.55fr)] sm:items-end"><div><p className={ui.eyebrow}>Permanent field directory</p><h2 className={ui.h2} id="outlet-directory-title">Manage saved outlets</h2><p className={ui.lede}>Edit official details or move an outlet to a sales area that contains its locked GPS point.</p></div><label className={ui.label}>Search outlets<input className={ui.input} type="search" value={query} placeholder="Name, code, address, sales area" onChange={(event) => setQuery(event.target.value)} /></label></div>
+    <div className="grid gap-3 sm:grid-cols-[1fr_minmax(220px,.55fr)] sm:items-end"><div><p className={ui.eyebrow}>Permanent field directory</p><h2 className={ui.h2} id="outlet-directory-title">Manage saved outlets</h2><p className={ui.lede}>Edit official details. Sales areas and assignments follow the saved map point automatically.</p></div><label className={ui.label}>Search outlets<input className={ui.input} type="search" value={query} placeholder="Name, code, address, sales area" onChange={(event) => setQuery(event.target.value)} /></label></div>
     <div className="divide-y divide-slate-200 border-y border-slate-200">
       {visible.map((record) => editing === record.id
         ? <article className="grid gap-3 py-4" key={record.id}>
           <div className="flex items-center justify-between gap-3"><span><strong>{record.code}</strong><small className="ml-2 text-slate-500">{record.source}</small></span><span className="text-xs font-bold text-slate-500">GPS locked</span></div>
-          <div className="grid gap-3 sm:grid-cols-2"><label className={ui.label}>Official name<input className={ui.input} value={draft.name} maxLength={160} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label><label className={ui.label}>Sales area<select className={ui.input} value={draft.territoryId} onChange={(event) => setDraft((current) => ({ ...current, territoryId: event.target.value }))}>{!record.territoryActive && !territories.some((territory) => territory.id === record.territoryId) && <option value={record.territoryId}>{record.territoryName} · restriction ended</option>}{territories.map((territory) => <option key={territory.id} value={territory.id}>{territory.name}{territory.boundary ? "" : " · boundary missing"}</option>)}</select></label></div>
+          <div className="grid gap-3 sm:grid-cols-2"><label className={ui.label}>Official name<input className={ui.input} value={draft.name} maxLength={160} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label><p className="self-end text-sm text-slate-500">{record.territoryName} · automatic</p></div>
           <label className={ui.label}>Address<input className={ui.input} value={draft.address} maxLength={500} onChange={(event) => setDraft((current) => ({ ...current, address: event.target.value }))} /></label>
           <label className={ui.label}>Notes<textarea className={`${ui.input} min-h-20 resize-y`} value={draft.notes} maxLength={4000} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
-          <div className="flex flex-wrap gap-2"><button type="button" className={ui.button} disabled={busy === record.id || !draft.name.trim() || !draft.address.trim() || !draft.territoryId} onClick={() => save(record)}>{busy === record.id ? "Saving…" : "Save outlet details"}</button><button type="button" className={ui.quietButton} disabled={busy === record.id} onClick={() => setEditing("")}>Cancel</button></div>
+          <div className="flex flex-wrap gap-2"><button type="button" className={ui.button} disabled={busy === record.id || !draft.name.trim() || !draft.address.trim()} onClick={() => save(record)}>{busy === record.id ? "Saving…" : "Save outlet details"}</button><button type="button" className={ui.quietButton} disabled={busy === record.id} onClick={() => setEditing("")}>Cancel</button></div>
         </article>
         : <article className="grid gap-3 py-4 sm:grid-cols-[1fr_auto] sm:items-center" key={record.id}><div><span className="inline-flex rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-600">{record.code} · {record.source}</span><strong className="mt-2 block text-[#2D2729]">{record.name}</strong><small className="mt-1 block leading-5 text-slate-500">{record.address}<br />{record.territoryName}</small></div><button type="button" className={ui.quietButton} onClick={() => begin(record)}>Edit details</button></article>)}
       {visible.length === 0 && <p className="py-7 text-center text-sm text-slate-500">No outlets match this search.</p>}

@@ -2903,9 +2903,15 @@ function RouteMap({ outlets, territories }: { outlets: Outlet[]; territories: Te
     properties: { name: territory.name },
     geometry: territory.boundary,
   }] : [])).replaceAll("<", "\\u003c");
-  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"></head><body style="height:100%;margin:0"><div id="map" style="height:100%"></div><script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script><script>const points=${points};const polygons=${polygons};const map=new maplibregl.Map({container:'map',style:'https://tiles.openfreemap.org/styles/liberty',center:[67.035,24.815],zoom:11.8});const bounds=new maplibregl.LngLatBounds();map.on('load',()=>{if(polygons.length){map.addSource('territories',{type:'geojson',data:{type:'FeatureCollection',features:polygons}});map.addLayer({id:'territory-fill',type:'fill',source:'territories',paint:{'fill-color':'#243D74','fill-opacity':0.14}});map.addLayer({id:'territory-line',type:'line',source:'territories',paint:{'line-color':'#243D74','line-width':3}});polygons.forEach(f=>f.geometry.coordinates[0].forEach(p=>bounds.extend(p)))}points.forEach((p,i)=>{new maplibregl.Marker({color:'#D8A629'}).setLngLat([p.lng,p.lat]).setPopup(new maplibregl.Popup().setText((i+1)+'. '+p.name+' · '+p.address)).addTo(map);bounds.extend([p.lng,p.lat])});if(!bounds.isEmpty())map.fitBounds(bounds,{padding:35,maxZoom:14,duration:0})});</script></body></html>`;
+  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"></head><body style="height:100%;margin:0"><div id="map" style="height:100%"></div><script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script><script>const points=${points};const polygons=${polygons};const map=new maplibregl.Map({container:'map',style:'https://tiles.openfreemap.org/styles/liberty',center:[67.035,24.815],zoom:11.8});const bounds=new maplibregl.LngLatBounds();map.on('load',()=>{if(polygons.length){map.addSource('territories',{type:'geojson',data:{type:'FeatureCollection',features:polygons}});map.addLayer({id:'territory-fill',type:'fill',source:'territories',paint:{'fill-color':'#243D74','fill-opacity':0.14}});map.addLayer({id:'territory-line',type:'line',source:'territories',paint:{'line-color':'#243D74','line-width':3}});polygons.forEach(f=>f.geometry.coordinates[0].forEach(p=>bounds.extend(p)))}points.forEach((p,i)=>{const content=document.createElement('div');const title=document.createElement('div');title.textContent=(i+1)+'. '+p.name+' · '+p.address;const link=document.createElement('a');link.href='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(p.lat+','+p.lng);link.textContent='Open in Google Maps';content.append(title,link);new maplibregl.Marker({color:'#D8A629'}).setLngLat([p.lng,p.lat]).setPopup(new maplibregl.Popup().setDOMContent(content)).addTo(map);bounds.extend([p.lng,p.lat])});if(!bounds.isEmpty())map.fitBounds(bounds,{padding:35,maxZoom:14,duration:0})});</script></body></html>`;
   return <View className="h-[265px] overflow-hidden rounded-[14px] border border-line">
-    <WebView source={{ html }} originWhitelist={["*"]} javaScriptEnabled />
+    <WebView source={{ html }} originWhitelist={["*"]} javaScriptEnabled onShouldStartLoadWithRequest={(request) => {
+      if (request.url.startsWith("https://www.google.com/maps/")) {
+        void Linking.openURL(request.url).catch(() => Alert.alert("Could not open Google Maps", "Please try again."));
+        return false;
+      }
+      return true;
+    }} />
   </View>;
 }
 
@@ -3894,7 +3900,7 @@ function PlaceReviewNotice({ outlet }: { outlet: Outlet }) {
   }
   return <WarningNotice
     title="Waiting for admin review"
-    body="Your point, photo, and voice sales report reached the office. Admin will confirm the sales area and official name before saving this as a permanent outlet."
+    body="Your point, photo, and voice sales report reached the office. Admin will confirm the official name before saving this as a permanent outlet. Its sales area and assignments follow the GPS point automatically."
   />;
 }
 

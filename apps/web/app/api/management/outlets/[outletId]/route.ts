@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { parseTerritoryBoundary, pointInTerritory } from "@fieldops/domain";
-import { ID, Query } from "node-appwrite";
+import { ID } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { createAdminTablesDb } from "@fieldops/appwrite/server";
 import { requireDashboardAdmin } from "../../../../../lib/auth";
@@ -12,6 +11,8 @@ import {
   optimisticWriteDecision,
 } from "../../../../../lib/management-write";
 import { text } from "../../../../../lib/mobile-auth";
+
+import { syncOutletAssignments } from "../../../../../lib/outlet-auto-assignment";
 
 const databaseId = process.env.APPWRITE_DATABASE_ID ?? "fieldops";
 
@@ -70,40 +71,21 @@ async function updateOutletMetadata(outletId: string, body: Record<string, unkno
   const name = text(body.name, 160);
   const address = text(body.address, 500);
   const notes = text(body.notes, 4000);
-  const territoryId = text(body.territoryId, 36);
   const expectedUpdatedAt = text(body.expectedUpdatedAt, 40);
-  if (!name || !address || !territoryId || !expectedUpdatedAt) {
-    return NextResponse.json({ error: "Name, address, sales area, and the current record version are required." }, { status: 400 });
+  if (!name || !address || !expectedUpdatedAt) {
+    return NextResponse.json({ error: "Name, address, and the current record version are required." }, { status: 400 });
   }
 
   const db = createAdminTablesDb();
-  const after = { name, address, notes, territoryId };
+  const after = { name, address, notes };
   const transaction = await db.createTransaction({ ttl: 60 });
   try {
-    const [outlet, territory] = await Promise.all([
-      getRowOrNull(db, "outlets", outletId, transaction.$id),
-      getRowOrNull(db, "territories", territoryId, transaction.$id),
-    ]);
+    const outlet = await getRowOrNull(db, "outlets", outletId, transaction.$id);
     if (!outlet) {
       await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
       return NextResponse.json({ error: "The outlet was not found." }, { status: 404 });
     }
-    const keepsEndedSalesArea = Boolean(territory)
-      && territory?.active !== true
-      && String(outlet.territory_id) === territoryId;
-    const boundary = territory?.active === true ? parseTerritoryBoundary(territory.boundary) : null;
     const latitude = Number(outlet.latitude), longitude = Number(outlet.longitude);
-    if (!keepsEndedSalesArea) {
-      if (!territory || !boundary) {
-        await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
-        return NextResponse.json({ error: "Choose an active sales area with a saved boundary." }, { status: 409 });
-      }
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !pointInTerritory({ latitude, longitude }, boundary)) {
-        await db.updateTransaction({ transactionId: transaction.$id, rollback: true }).catch(() => undefined);
-        return NextResponse.json({ error: `This outlet's locked GPS point is outside ${String(territory.name)}. Redraw the correct boundary or choose the sales area containing the point.` }, { status: 422 });
-      }
-    }
-
     const before = outletMetadata(outlet);
     const decision = optimisticWriteDecision(
       expectedUpdatedAt,
@@ -126,8 +108,9 @@ async function updateOutletMetadata(outletId: string, body: Record<string, unkno
       tableId: "outlets",
       rowId: outletId,
       transactionId: transaction.$id,
-      data: { name, address, notes, territory_id: territoryId },
+      data: { name, address, notes },
     });
+    await syncOutletAssignments(db, databaseId, actorUserId, transaction.$id, [outletId]);
     await db.createRow({ databaseId, tableId: "audit_logs", rowId: auditId, transactionId: transaction.$id, data: {
       actor_user_id: actorUserId,
       action: "outlet.metadata_updated",
@@ -154,7 +137,7 @@ async function updateOutletMetadata(outletId: string, body: Record<string, unkno
     if (isAppwriteNotFound(error)) {
       const current = await getRowOrNull(db, "outlets", outletId).catch(() => null);
       return current
-        ? NextResponse.json({ error: "Choose an active sales area with a saved boundary." }, { status: 409 })
+        ? NextResponse.json({ error: "The outlet assignment changed. Refresh and try again." }, { status: 409 })
         : NextResponse.json({ error: "The outlet was not found." }, { status: 404 });
     }
     return NextResponse.json({
@@ -168,7 +151,6 @@ function outletMetadata(outlet: Record<string, unknown>) {
     name: String(outlet.name),
     address: String(outlet.address),
     notes: String(outlet.notes || ""),
-    territoryId: String(outlet.territory_id),
   };
 }
 
@@ -178,8 +160,7 @@ function sameOutletMetadata(
 ) {
   return current.name === requested.name
     && current.address === requested.address
-    && current.notes === requested.notes
-    && current.territoryId === requested.territoryId;
+    && current.notes === requested.notes;
 }
 
 async function getRowOrNull(
