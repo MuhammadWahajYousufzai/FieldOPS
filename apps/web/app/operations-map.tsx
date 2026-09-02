@@ -1,94 +1,113 @@
 "use client";
 
-import type { Marker, Polyline } from "leaflet";
-import { useEffect, useRef } from "react";
-import { leafletRouteSegments, toLeafletCoordinate, validMapCoordinate } from "../lib/map-coordinates";
-import { useLeafletMap, type LeafletContext } from "./use-leaflet-map";
+import type { GeoJSONSource, Marker } from "maplibre-gl";
+import { memo, useEffect, useMemo, useRef } from "react";
+import { validMapCoordinate } from "../lib/map-coordinates";
+import { buildMapRoutes, type MapPoint, type RouteLine } from "../lib/map-route-data";
+import { MapStatus } from "./map-status";
+import { useVectorMap, type VectorMapContext } from "./use-vector-map";
 
-export type MapPoint = {
-  id: string;
-  name: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  kind: "outlet" | "visit" | "live";
-};
+export type { MapPoint, RouteLine } from "../lib/map-route-data";
+const noRoutes: RouteLine[] = [];
 
-export type RouteLine = {
-  id: string;
-  name: string;
-  color: string;
-  coordinates: [number, number][];
-  estimated?: boolean;
-};
-
-export function OperationsMap({ points, routes = [] }: { points: MapPoint[]; routes?: RouteLine[] }) {
-  const { container, context, error, retry } = useLeafletMap();
-  const markers = useRef(new Map<string, Marker>());
-  const lines = useRef(new Map<string, Polyline>());
+export const OperationsMap = memo(function OperationsMap({ points, routes = noRoutes }: { points: MapPoint[]; routes?: RouteLine[] }) {
+  const { container, context, error, retry } = useVectorMap();
+  const markers = useRef(new Map<string, { marker: Marker; point: MapPoint }>());
   const fitted = useRef(false);
+  const lastRoutes = useRef("");
+  const routeData = useMemo(() => buildMapRoutes(routes), [routes]);
 
   useEffect(() => {
     markers.current.clear();
-    lines.current.clear();
     fitted.current = false;
+    lastRoutes.current = "";
   }, [context]);
 
   useEffect(() => {
     if (!context) return;
-    const { map, leaflet } = context;
-    const visibleRoutes = routes.filter((route) => leafletRouteSegments(route.coordinates).length > 0);
-    const nextRouteIds = new Set(visibleRoutes.map((route) => route.id));
-    for (const [id, line] of lines.current) {
-      if (!nextRouteIds.has(id)) { line.remove(); lines.current.delete(id); }
+    const { map } = context;
+    const signature = JSON.stringify(routeData);
+    if (!map.getSource("fieldops-routes")) {
+      map.addSource("fieldops-routes", { type: "geojson", data: routeData });
+      map.addLayer({ id: "fieldops-route-recorded", type: "line", source: "fieldops-routes",
+        filter: ["==", ["get", "estimated"], false],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ["get", "color"], "line-width": 4, "line-opacity": 0.9 } });
+      map.addLayer({ id: "fieldops-route-estimated", type: "line", source: "fieldops-routes",
+        filter: ["==", ["get", "estimated"], true],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.7, "line-dasharray": [2, 2] } });
+    } else if (signature !== lastRoutes.current) {
+      (map.getSource("fieldops-routes") as GeoJSONSource).setData(routeData);
     }
-    for (const route of visibleRoutes) {
-      const coordinates = leafletRouteSegments(route.coordinates);
-      const style = { color: route.color, weight: route.estimated ? 3 : 4, opacity: route.estimated ? 0.68 : 0.85, dashArray: route.estimated ? "6 6" : undefined };
-      const line = lines.current.get(route.id);
-      if (line) line.setLatLngs(coordinates).setStyle(style);
-      else lines.current.set(route.id, leaflet.polyline(coordinates, { ...style, className: route.estimated ? "fieldops-route-estimated" : "fieldops-route-recorded" }).addTo(map));
-    }
+    lastRoutes.current = signature;
+  }, [context, routeData]);
 
-    const visiblePoints = points.filter((point) => validMapCoordinate([point.longitude, point.latitude]));
-    const nextPointIds = new Set(visiblePoints.map((point) => point.id));
-    for (const [id, marker] of markers.current) {
-      if (!nextPointIds.has(id)) { marker.remove(); markers.current.delete(id); }
+  useEffect(() => {
+    if (!context) return;
+    const { map, lib } = context;
+    const validPoints = points.filter((point) => validMapCoordinate([point.longitude, point.latitude]));
+    const ids = new Set(validPoints.map((point) => point.id));
+    for (const [id, record] of markers.current) {
+      if (!ids.has(id)) { record.marker.remove(); markers.current.delete(id); }
     }
-    for (const point of visiblePoints) {
-      const position: [number, number] = [point.latitude, point.longitude];
-      const popup = document.createElement("div");
-      const title = document.createElement("strong");
-      title.textContent = point.name;
-      const address = document.createElement("div");
-      address.textContent = point.address;
-      popup.append(title, address);
+    for (const point of validPoints) {
       const existing = markers.current.get(point.id);
-      if (existing) existing.setLatLng(position).setPopupContent(popup);
-      else {
-        const icon = leaflet.divIcon({ className: `fieldops-map-marker fieldops-map-marker--${point.kind}`, html: '<span aria-hidden="true"></span>', iconSize: [24, 24], iconAnchor: [12, 12] });
-        const marker = leaflet.marker(position, { icon, title: point.name, alt: point.name, keyboard: true }).bindPopup(popup).addTo(map);
-        markers.current.set(point.id, marker);
+      if (existing) {
+        if (point.longitude !== existing.point.longitude || point.latitude !== existing.point.latitude) existing.marker.setLngLat([point.longitude, point.latitude]);
+        if (point.name !== existing.point.name || point.address !== existing.point.address) existing.marker.getPopup()?.setDOMContent(popupContent(point));
+        if (point.kind !== existing.point.kind) {
+          existing.marker.getElement().classList.remove(`fieldops-map-marker--${existing.point.kind}`);
+          existing.marker.getElement().classList.add(`fieldops-map-marker--${point.kind}`);
+        }
+        existing.marker.getElement().setAttribute("aria-label", point.name);
+        existing.point = point;
+      } else {
+        const element = document.createElement("button");
+        element.type = "button";
+        element.className = `fieldops-map-marker fieldops-map-marker--${point.kind}`;
+        element.setAttribute("aria-label", point.name);
+        const dot = document.createElement("span");
+        dot.setAttribute("aria-hidden", "true");
+        element.append(dot);
+        const marker = new lib.Marker({ element, anchor: "center" })
+          .setLngLat([point.longitude, point.latitude])
+          .setPopup(new lib.Popup({ offset: 18 }).setDOMContent(popupContent(point))).addTo(map);
+        markers.current.set(point.id, { marker, point });
       }
     }
-    if (!fitted.current) fitted.current = fitMapToContent(context, points, routes);
+  }, [context, points]);
+
+  useEffect(() => {
+    if (context && !fitted.current) fitted.current = fitMapToContent(context, points, routes, 0);
   }, [context, points, routes]);
 
-  return <div className="relative isolate mt-5 h-[350px] w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 sm:h-[430px]">
+  return <div className="relative isolate mt-5 h-[350px] w-full overflow-hidden rounded-2xl border border-[#D7DFEC] bg-[#F5F7FB] sm:h-[430px]">
     <div className="h-full w-full" ref={container} role="region" aria-label="Map of assigned outlets and captured visit locations" />
-    {!context && <div className="absolute inset-0 z-[1000] grid place-content-center bg-slate-50/95 p-6 text-center" role="status">
-      <p className="font-bold">{error ? "The map could not load. Please retry." : "Loading street map…"}</p>
-      {error && <button type="button" className="mt-3 rounded-lg bg-[#5269FF] px-4 py-2 font-bold text-white" onClick={retry}>Retry map</button>}
-    </div>}
-    <button type="button" disabled={!context} className="absolute bottom-7 left-3 z-[1000] min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-xs font-black text-[#14213D] shadow-md hover:bg-slate-50 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#5269FF] disabled:opacity-50" onClick={() => { if (context) fitMapToContent(context, points, routes); }}>Fit route</button>
+    <MapStatus ready={Boolean(context)} error={error} retry={retry} />
+    <button type="button" disabled={!context} className="absolute bottom-7 left-3 z-10 min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-xs font-black text-[#14213D] shadow-md hover:bg-slate-50 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#5269FF] disabled:opacity-50" onClick={() => { if (context) fitMapToContent(context, points, routes, 400); }}>Fit route</button>
   </div>;
+});
+
+function popupContent(point: MapPoint) {
+  const content = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = point.name;
+  const address = document.createElement("div");
+  address.textContent = point.address;
+  content.append(title, address);
+  return content;
 }
 
-function fitMapToContent({ map, leaflet }: LeafletContext, points: MapPoint[], routes: RouteLine[]) {
-  const routeCoordinates = routes.flatMap((route) => route.coordinates).filter(validMapCoordinate).map(toLeafletCoordinate);
-  const coordinates = routeCoordinates.length ? routeCoordinates : points.flatMap((point): [number, number][] => validMapCoordinate([point.longitude, point.latitude]) ? [[point.latitude, point.longitude]] : []);
+function fitMapToContent({ map, lib }: VectorMapContext, points: MapPoint[], routes: RouteLine[], duration: number) {
+  const routeCoordinates = routes.flatMap((route) => route.coordinates).filter(validMapCoordinate);
+  const coordinates = routeCoordinates.length ? routeCoordinates : points.flatMap((point): [number, number][] => validMapCoordinate([point.longitude, point.latitude]) ? [[point.longitude, point.latitude]] : []);
   if (!coordinates.length) return false;
-  if (coordinates.length === 1) map.setView(coordinates[0]!, 15, { animate: false });
-  else map.fitBounds(leaflet.latLngBounds(coordinates), { padding: [45, 45], maxZoom: 15, animate: false });
+  if (coordinates.length === 1) map.easeTo({ center: coordinates[0]!, zoom: 15, duration });
+  else {
+    const bounds = new lib.LngLatBounds();
+    for (const point of coordinates) bounds.extend(point);
+    map.fitBounds(bounds, { padding: 45, maxZoom: 15, duration });
+  }
   return true;
 }

@@ -10,14 +10,16 @@ import { GET as logo } from "../app/fieldops-mark.svg/route.ts";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bundle = await build({ absWorkingDir: root, entryPoints: ["tests/map-smoke.tsx"], bundle: true, write: false, format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"development"' } });
 const cssDir = path.join(root, ".next/static/chunks");
-const css = (await Promise.all((await readdir(cssDir)).filter((name) => name.endsWith(".css")).map((name) => readFile(path.join(cssDir, name), "utf8")))).join("\n");
+const css = (await Promise.all((await readdir(cssDir)).filter((name) => name.endsWith(".css")).map((name) => readFile(path.join(cssDir, name), "utf8")))).join("\n") + "\n" + await readFile(path.join(root, "node_modules/maplibre-gl/dist/maplibre-gl.css"), "utf8");
 const svg = await logo().text();
+const webglCheck = await readFile(path.join(root, "tests/webgl-check.html"), "utf8");
 createServer((request, response) => {
   const routes = {
     "/": ["text/html", '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/app.css"><title>FieldOPS map regression check</title></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>'],
     "/app.css": ["text/css", css],
     "/fixture.js": ["text/javascript", bundle.outputFiles[0].contents],
     "/fieldops-mark.svg": ["image/svg+xml", svg],
+    "/webgl-check": ["text/html", webglCheck],
   };
   const match = routes[request.url];
   if (!match) { response.writeHead(404).end(); return; }

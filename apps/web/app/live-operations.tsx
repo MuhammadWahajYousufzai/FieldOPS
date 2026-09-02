@@ -159,15 +159,15 @@ export function LiveOperations({
   const gapConnectorsByEmployee = useMemo(() => new Map(
     [...routeSegmentsByEmployee.entries()].map(([employeeId, segments]) => [employeeId, buildRouteGapConnectors(segments, routePolicy)]),
   ), [routePolicy, routeSegmentsByEmployee]);
-  const recordedRoutes: RouteLine[] = [...routeSegmentsByEmployee.entries()].flatMap(([employeeId, segments]) => (
+  const recordedRoutes = useMemo<RouteLine[]>(() => [...routeSegmentsByEmployee.entries()].flatMap(([employeeId, segments]) => (
     segments.flatMap((segment, index): RouteLine[] => segment.length < 2 ? [] : [{
       id: `${employeeId}-segment-${index}`,
       name: employeeById.get(employeeId)?.name ?? "Salesperson",
       color: employeeColor.get(employeeId) ?? routeColors[0]!,
       coordinates: segment.map((point) => [point.longitude, point.latitude]),
     }])
-  ));
-  const estimatedGapRoutes: RouteLine[] = [...gapConnectorsByEmployee.entries()].flatMap(([employeeId, connectors]) => (
+  )), [routeSegmentsByEmployee, employeeById, employeeColor]);
+  const estimatedGapRoutes = useMemo<RouteLine[]>(() => [...gapConnectorsByEmployee.entries()].flatMap(([employeeId, connectors]) => (
     connectors.map(([from, to], index) => ({
       id: `${employeeId}-estimated-gap-${index}`,
       name: `${employeeById.get(employeeId)?.name ?? "Salesperson"} · estimated GPS gap`,
@@ -175,9 +175,9 @@ export function LiveOperations({
       coordinates: [[from.longitude, from.latitude], [to.longitude, to.latitude]],
       estimated: true,
     }))
-  ));
-  const qualityRoutes = [...recordedRoutes, ...estimatedGapRoutes];
-  const rawRoutes: RouteLine[] = [...locationsByEmployee.entries()].flatMap(([employeeId, points]) => {
+  )), [gapConnectorsByEmployee, employeeById, employeeColor]);
+  const qualityRoutes = useMemo(() => [...recordedRoutes, ...estimatedGapRoutes], [recordedRoutes, estimatedGapRoutes]);
+  const rawRoutes = useMemo<RouteLine[]>(() => [...locationsByEmployee.entries()].flatMap(([employeeId, points]) => {
     const coordinates = points.flatMap((point): [number, number][] => (
       Number.isFinite(point.longitude) && Number.isFinite(point.latitude)
         ? [[point.longitude, point.latitude]]
@@ -189,7 +189,7 @@ export function LiveOperations({
       color: employeeColor.get(employeeId) ?? routeColors[0]!,
       coordinates,
     }];
-  });
+  }), [locationsByEmployee, employeeById, employeeColor]);
   const routes = routeView === "quality" ? qualityRoutes : rawRoutes;
   const recordedPointIds = useMemo(() => new Set(
     [...routeSegmentsByEmployee.values()].flatMap((segments) => (
@@ -205,7 +205,7 @@ export function LiveOperations({
   const drawnPointCount = drawnPointIds.size;
   const excludedPointCount = Math.max(0, locations.length - drawnPointCount);
   const estimatedGapCount = estimatedGapRoutes.length;
-  const latestLocations = [...locationsByEmployee.entries()].flatMap(([employeeId, points]) => {
+  const latestLocations = useMemo(() => [...locationsByEmployee.entries()].flatMap(([employeeId, points]) => {
     const point = lastReliableRoutePoint(points, routePolicy);
     if (!point) return [];
     return [{
@@ -216,8 +216,12 @@ export function LiveOperations({
       longitude: point.longitude,
       kind: "live" as const,
     }];
-  });
-  const mapPoints = [...staticPoints, ...latestLocations];
+  }), [locationsByEmployee, employeeById, routePolicy]);
+  const mapPoints = useMemo(() => [...staticPoints, ...latestLocations], [staticPoints, latestLocations]);
+  // The one-second status clock must not rebuild thousands of GPS audit rows.
+  const auditLog = useMemo(() => (
+  <details className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(20,33,61,0.055)]"><summary className="flex cursor-pointer list-none items-center justify-between gap-5 p-5 sm:p-6"><span><span className={ui.eyebrow}>Audit trail</span><strong className="mt-1 block text-xl font-black">Open raw GPS audit log</strong></span><b className="text-sm text-emerald-700">{locations.length} fixes</b></summary><div className="overflow-x-auto border-t border-slate-200 px-5 pb-5 sm:px-6 sm:pb-6"><table className={ui.table}><thead><tr><th>Captured</th><th>Salesperson</th><th>Coordinates</th><th>Accuracy</th><th>Route line</th><th>Source</th><th>Server received</th></tr></thead><tbody>{locations.map((point) => { const routeStatus = recordedPointIds.has(point.id) ? "Recorded" : estimatedPointIds.has(point.id) ? "Gap endpoint" : "Excluded"; const routeStatusStyle = routeStatus === "Recorded" ? "bg-emerald-50 text-emerald-800" : routeStatus === "Gap endpoint" ? "bg-blue-50 text-blue-800" : "bg-slate-100 text-slate-600"; return <tr key={point.id}><td>{time(point.capturedAt)}</td><td>{employeeById.get(point.employeeId)?.name ?? "Unknown"}</td><td><a className="font-extrabold text-blue-700 hover:text-blue-900" href={`https://www.openstreetmap.org/?mlat=${point.latitude}&mlon=${point.longitude}#map=18/${point.latitude}/${point.longitude}`} target="_blank">{point.latitude.toFixed(6)}, {point.longitude.toFixed(6)}</a></td><td>±{Math.round(point.accuracy)} m</td><td><span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${routeStatusStyle}`}>{routeStatus}</span></td><td>{point.source.replaceAll("_", " ")}</td><td>{time(point.receivedAt)}</td></tr>; })}</tbody></table></div></details>
+  ), [locations, employeeById, recordedPointIds, estimatedPointIds]);
   const statusCopy = connectionCopy(connection, lastUpdatedAt, clock);
 
   const connectionStyle = connection === "live" ? "bg-emerald-50 text-emerald-800" : connection === "delayed" ? "bg-red-50 text-red-800" : connection === "history" ? "bg-blue-50 text-blue-800" : "bg-amber-50 text-amber-800";
@@ -255,7 +259,7 @@ export function LiveOperations({
       return <li className="border-t border-white/15 py-4" key={record.id}><span className={`inline-block rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-wider ${flagStyle}`}>{record.status === "checked_out" ? "finished" : stale ? "route update paused" : "working live"}</span><strong className="my-2 block">{employeeById.get(record.employeeId)?.name ?? "Salesperson"}</strong><small className="block text-slate-300">{time(record.checkInAt)} → {time(record.checkOutAt)} · {points.length} route points</small>{latest && <small className="mt-2 block text-emerald-200">Last reliable position {relativeTime(latest.capturedAt, clock)}</small>}</li>;
     })}</ul>{attendance.length === 0 && <p className="leading-6 text-slate-300">No one started work for this filter.</p>}</aside>
   </section>
-  <details className="mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_10px_30px_rgba(20,33,61,0.055)]"><summary className="flex cursor-pointer list-none items-center justify-between gap-5 p-5 sm:p-6"><span><span className={ui.eyebrow}>Audit trail</span><strong className="mt-1 block text-xl font-black">Open raw GPS audit log</strong></span><b className="text-sm text-emerald-700">{locations.length} fixes</b></summary><div className="overflow-x-auto border-t border-slate-200 px-5 pb-5 sm:px-6 sm:pb-6"><table className={ui.table}><thead><tr><th>Captured</th><th>Salesperson</th><th>Coordinates</th><th>Accuracy</th><th>Route line</th><th>Source</th><th>Server received</th></tr></thead><tbody>{locations.map((point) => { const routeStatus = recordedPointIds.has(point.id) ? "Recorded" : estimatedPointIds.has(point.id) ? "Gap endpoint" : "Excluded"; const routeStatusStyle = routeStatus === "Recorded" ? "bg-emerald-50 text-emerald-800" : routeStatus === "Gap endpoint" ? "bg-blue-50 text-blue-800" : "bg-slate-100 text-slate-600"; return <tr key={point.id}><td>{time(point.capturedAt)}</td><td>{employeeById.get(point.employeeId)?.name ?? "Unknown"}</td><td><a className="font-extrabold text-blue-700 hover:text-blue-900" href={`https://www.openstreetmap.org/?mlat=${point.latitude}&mlon=${point.longitude}#map=18/${point.latitude}/${point.longitude}`} target="_blank">{point.latitude.toFixed(6)}, {point.longitude.toFixed(6)}</a></td><td>±{Math.round(point.accuracy)} m</td><td><span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wider ${routeStatusStyle}`}>{routeStatus}</span></td><td>{point.source.replaceAll("_", " ")}</td><td>{time(point.receivedAt)}</td></tr>; })}</tbody></table></div></details></>;
+  {auditLog}</>;
 }
 
 function RouteQualityStat({ label, value, detail }: { label: string; value: number; detail: string }) {

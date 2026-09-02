@@ -1,9 +1,11 @@
 "use client";
 
 import { pointInTerritory, type LngLat, type TerritoryBoundary } from "@fieldops/domain";
+import type { GeoJSONSource } from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
-import { toLeafletCoordinate, validMapCoordinate } from "../../lib/map-coordinates";
-import { useLeafletMap, type LeafletContext } from "../use-leaflet-map";
+import { validMapCoordinate } from "../../lib/map-coordinates";
+import { MapStatus } from "../map-status";
+import { useVectorMap, type VectorMapContext } from "../use-vector-map";
 import { ui } from "../ui";
 
 export type TerritoryMapOption = { id: string; name: string; code: string; boundary: TerritoryBoundary | null };
@@ -15,9 +17,10 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
   value: SelectedPoint | null;
   onChange: (point: SelectedPoint) => void;
 }) {
-  const { container, context, error, retry } = useLeafletMap();
+  const { container, context, error, retry } = useVectorMap();
   const [selectionError, setSelectionError] = useState("");
   const selectPoint = useRef<(point: SelectedPoint) => void>(() => undefined);
+  const lastFit = useRef("");
   selectPoint.current = (point) => {
     const territory = territories.find((item) => item.id === selectedTerritoryId);
     if (!territory) { setSelectionError("Choose a sales area before placing the outlet."); return; }
@@ -29,42 +32,46 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
 
   useEffect(() => {
     if (!context) return;
-    const click = (event: import("leaflet").LeafletMouseEvent) => selectPoint.current({ latitude: event.latlng.lat, longitude: event.latlng.lng });
+    lastFit.current = "";
+    const click = (event: import("maplibre-gl").MapMouseEvent) => selectPoint.current({ latitude: event.lngLat.lat, longitude: event.lngLat.lng });
     context.map.on("click", click);
     return () => { context.map.off("click", click); };
   }, [context]);
 
   useEffect(() => {
     if (!context) return;
-    const { map, leaflet } = context;
-    const group = leaflet.layerGroup().addTo(map);
-    for (const territory of territories) {
-      if (!territory.boundary) continue;
-      const selected = territory.id === selectedTerritoryId;
-      leaflet.geoJSON(territory.boundary, { interactive: false, style: { color: selected ? "#243d74" : "#8792a8", weight: selected ? 3 : 1.5, fillColor: "#243d74", fillOpacity: selected ? 0.2 : 0.06 } }).addTo(group);
+    const { map } = context;
+    const data = { type: "FeatureCollection" as const, features: territories.flatMap((territory) => territory.boundary ? [{ type: "Feature" as const, properties: { id: territory.id }, geometry: territory.boundary }] : []) };
+    const source = map.getSource("fieldops-territories") as GeoJSONSource | undefined;
+    if (source) source.setData(data);
+    else {
+      map.addSource("fieldops-territories", { type: "geojson", data });
+      map.addLayer({ id: "fieldops-territories-fill", type: "fill", source: "fieldops-territories", paint: { "fill-color": "#5269FF", "fill-opacity": 0.12 } });
+      map.addLayer({ id: "fieldops-territories-line", type: "line", source: "fieldops-territories", paint: { "line-color": "#5269FF", "line-width": 2 } });
     }
-    return () => { group.remove(); };
+    map.setPaintProperty("fieldops-territories-fill", "fill-opacity", ["case", ["==", ["get", "id"], selectedTerritoryId], 0.18, 0.04]);
+    map.setPaintProperty("fieldops-territories-line", "line-color", ["case", ["==", ["get", "id"], selectedTerritoryId], "#4056D8", "#A8B4C9"]);
+    const selected = territories.find((territory) => territory.id === selectedTerritoryId);
+    const fitKey = JSON.stringify([selectedTerritoryId, selected?.boundary]);
+    if (fitKey !== lastFit.current) {
+      if (selected?.boundary) fitBoundary(context, selected.boundary);
+      lastFit.current = fitKey;
+      setSelectionError("");
+    }
   }, [context, territories, selectedTerritoryId]);
 
   useEffect(() => {
-    if (!context) return;
-    const selected = territories.find((territory) => territory.id === selectedTerritoryId);
-    if (selected?.boundary) fitBoundary(context, selected.boundary);
-    setSelectionError("");
-  }, [context, selectedTerritoryId, territories]);
-
-  useEffect(() => {
     if (!context || !value || !validMapCoordinate([value.longitude, value.latitude])) return;
-    const { map, leaflet } = context;
-    const icon = leaflet.divIcon({ className: "fieldops-map-marker fieldops-map-marker--live", html: '<span aria-hidden="true"></span>', iconSize: [24, 24], iconAnchor: [12, 12] });
-    const marker = leaflet.marker([value.latitude, value.longitude], { icon, title: "Selected outlet location", alt: "Selected outlet location" }).addTo(map);
+    const { map, lib } = context;
+    const marker = new lib.Marker({ color: "#D8A629" }).setLngLat([value.longitude, value.latitude]).addTo(map);
+    marker.getElement().setAttribute("aria-label", "Selected outlet location");
     return () => { marker.remove(); };
   }, [context, value]);
 
   return <div className="grid gap-3">
     <div className="relative isolate overflow-hidden rounded-2xl border border-slate-300">
-      <div className="h-[300px] w-full bg-slate-100 sm:h-[360px]" ref={container} role="region" aria-label="Outlet map picker. Click the map or use the center button to select a visit point." />
-      {!context && <MapLoading error={error} retry={retry} />}
+      <div className="h-[300px] w-full bg-[#F5F7FB] sm:h-[360px]" ref={container} role="region" aria-label="Outlet map picker. Click the map or use the center button to select a visit point." />
+      <MapStatus ready={Boolean(context)} error={error} retry={retry} />
     </div>
     <div className="flex flex-wrap items-center gap-3">
       <button type="button" className={ui.quietButton} disabled={!context} onClick={() => { const center = context?.map.getCenter(); if (center) selectPoint.current({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
@@ -78,7 +85,7 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
   initialBoundary?: TerritoryBoundary | null;
   onChange: (boundary: TerritoryBoundary | null) => void;
 }) {
-  const { container, context, error, retry } = useLeafletMap({ drawing: true });
+  const { container, context, error, retry } = useVectorMap({ drawing: true });
   const [points, setPoints] = useState<LngLat[]>(() => initialBoundary?.coordinates[0]?.slice(0, -1) ?? []);
   const pointsRef = useRef(points);
   const onChangeRef = useRef(onChange);
@@ -93,7 +100,7 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
 
   useEffect(() => {
     if (!context) return;
-    const click = (event: import("leaflet").LeafletMouseEvent) => update([...pointsRef.current, [event.latlng.lng, event.latlng.lat]]);
+    const click = (event: import("maplibre-gl").MapMouseEvent) => update([...pointsRef.current, [event.lngLat.lng, event.lngLat.lat]]);
     context.map.on("click", click);
     if (initialBoundaryRef.current) fitBoundary(context, initialBoundaryRef.current);
     return () => { context.map.off("click", click); };
@@ -101,19 +108,27 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
 
   useEffect(() => {
     if (!context) return;
-    const { map, leaflet } = context;
-    const group = leaflet.layerGroup().addTo(map);
-    const coordinates = points.filter(validMapCoordinate).map(toLeafletCoordinate);
-    if (coordinates.length >= 3) leaflet.polygon(coordinates, { color: "#267057", weight: 3, fillOpacity: 0.2, interactive: false, className: "fieldops-boundary" }).addTo(group);
-    else if (coordinates.length === 2) leaflet.polyline(coordinates, { color: "#267057", weight: 3, interactive: false }).addTo(group);
-    for (const coordinate of coordinates) leaflet.circleMarker(coordinate, { radius: 6, color: "#17233b", weight: 2, fillColor: "#d8a629", fillOpacity: 1, interactive: false }).addTo(group);
-    return () => { group.remove(); };
+    const { map } = context;
+    const coordinates = points.filter(validMapCoordinate);
+    const geometry = coordinates.length >= 3 ? toBoundary(coordinates)! : { type: "LineString" as const, coordinates: coordinates.length === 2 ? coordinates : [] };
+    const data = { type: "FeatureCollection" as const, features: [
+      ...(coordinates.length >= 2 ? [{ type: "Feature" as const, properties: {}, geometry }] : []),
+      ...coordinates.map((point) => ({ type: "Feature" as const, properties: {}, geometry: { type: "Point" as const, coordinates: point } })),
+    ] };
+    const source = map.getSource("fieldops-boundary") as GeoJSONSource | undefined;
+    if (source) source.setData(data);
+    else {
+      map.addSource("fieldops-boundary", { type: "geojson", data });
+      map.addLayer({ id: "fieldops-boundary-fill", type: "fill", source: "fieldops-boundary", filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": "#21B985", "fill-opacity": 0.18 } });
+      map.addLayer({ id: "fieldops-boundary-line", type: "line", source: "fieldops-boundary", filter: ["!=", ["geometry-type"], "Point"], paint: { "line-color": "#267057", "line-width": 3 } });
+      map.addLayer({ id: "fieldops-boundary-points", type: "circle", source: "fieldops-boundary", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 6, "circle-color": "#FFC938", "circle-stroke-color": "#102A58", "circle-stroke-width": 2 } });
+    }
   }, [context, points]);
 
   return <div className="grid gap-3">
     <div className="relative isolate overflow-hidden rounded-2xl border border-slate-300">
-      <div className="h-[300px] w-full bg-slate-100 sm:h-[360px]" ref={container} role="region" aria-label="Sales area boundary editor. Click to add boundary points. At least three points are required." />
-      {!context && <MapLoading error={error} retry={retry} />}
+      <div className="h-[300px] w-full bg-[#F5F7FB] sm:h-[360px]" ref={container} role="region" aria-label="Sales area boundary editor. Click to add boundary points. At least three points are required." />
+      <MapStatus ready={Boolean(context)} error={error} retry={retry} />
     </div>
     <div className="flex flex-wrap items-center gap-3">
       <button type="button" className={ui.quietButton} disabled={points.length === 0} onClick={() => update(points.slice(0, -1))}>Undo point</button>
@@ -124,16 +139,14 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
   </div>;
 }
 
-function MapLoading({ error, retry }: { error: boolean; retry: () => void }) {
-  return <div className="absolute inset-0 z-[1000] grid place-content-center bg-slate-50/95 p-6 text-center" role="status"><p className="font-bold">{error ? "The map could not load. Please retry." : "Loading street map…"}</p>{error && <button type="button" className={ui.quietButton} onClick={retry}>Retry map</button>}</div>;
-}
-
 function toBoundary(points: LngLat[]): TerritoryBoundary | null {
   if (points.length < 3) return null;
   return { type: "Polygon", coordinates: [[...points, points[0]!]] };
 }
 
-function fitBoundary({ map, leaflet }: LeafletContext, boundary: TerritoryBoundary) {
-  const coordinates = boundary.coordinates[0]?.filter(validMapCoordinate).map(toLeafletCoordinate) ?? [];
-  if (coordinates.length) map.fitBounds(leaflet.latLngBounds(coordinates), { padding: [48, 48], maxZoom: 15, animate: false });
+function fitBoundary({ map, lib }: VectorMapContext, boundary: TerritoryBoundary) {
+  const coordinates = boundary.coordinates[0]?.filter(validMapCoordinate) ?? [];
+  const bounds = new lib.LngLatBounds();
+  for (const point of coordinates) bounds.extend(point);
+  if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 48, maxZoom: 15, duration: 0 });
 }

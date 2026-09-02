@@ -86,10 +86,11 @@ details > summary::marker {
     inset-inline: 0;
   }
 }
-/* Maps use raster tiles and SVG paths, including browsers without WebGL. */
-.leaflet-container { font-family: inherit; color: #102A58; }
-.leaflet-container .leaflet-tile { max-width: none !important; max-height: none !important; }
-.fieldops-map-marker { background: transparent; border: 0; }
+/* One GPU canvas; DOM markers remain small, accessible and independently updated. */
+.maplibregl-map { font-family: inherit; color: #102A58; }
+.maplibregl-popup-content { border-radius: 12px; padding: 14px 20px 14px 14px; box-shadow: 0 8px 26px #102a5826; }
+.maplibregl-ctrl-group { border-radius: 10px; overflow: hidden; }
+.fieldops-map-marker { width: 24px; height: 24px; padding: 0; background: transparent; border: 0; cursor: pointer; }
 .fieldops-map-marker span { display: block; width: 24px; height: 24px; border: 3px solid #fff; border-radius: 50%; background: #243d74; box-shadow: 0 2px 8px #102a5855; }
 .fieldops-map-marker--visit span { background: #267057; }
 .fieldops-map-marker--live span { background: #d8a629; box-shadow: 0 0 0 5px #ffc93844, 0 2px 8px #102a5855; }

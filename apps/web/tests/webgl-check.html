@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Independent WebGL check</title>
+<style>body{font:16px system-ui;max-width:960px;margin:40px auto;padding:20px;color:#102a58;background:#f5f7fb}button{padding:12px 18px}pre{white-space:pre-wrap;overflow-wrap:anywhere}canvas{margin:16px;border:1px solid #ccd5e5}</style>
+<h1>Independent WebGL check</h1>
+<p>No React, MapLibre, or map tiles. Only a minimal canvas test runs.</p>
+<button id="run">Test WebGL rendering</button>
+<div id="canvases"></div><pre id="result" aria-live="polite">Not run.</pre>
+<script>
+document.getElementById('run').addEventListener('click', () => {
+  document.getElementById('canvases').replaceChildren();
+  const results = [];
+  for (const type of ['webgl2', 'webgl']) {
+    for (const powerPreference of ['default', 'high-performance', 'low-power']) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 64;
+      const result = { type, powerPreference, created: false };
+      canvas.addEventListener('webglcontextcreationerror', event => { result.error = event.statusMessage; });
+      document.getElementById('canvases').append(canvas);
+      const gl = canvas.getContext(type, { powerPreference, failIfMajorPerformanceCaveat: false });
+      if (gl) {
+        result.created = true;
+        result.version = gl.getParameter(gl.VERSION);
+        gl.clearColor(0.125, 0.725, 0.52, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        const pixel = new Uint8Array(4);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        result.pixel = Array.from(pixel);
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+      }
+      results.push(result);
+    }
+  }
+  document.getElementById('result').textContent = JSON.stringify(results, null, 2);
+});
+</script>
+</html>
