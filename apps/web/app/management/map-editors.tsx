@@ -26,6 +26,7 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
   const selectedTerritoryRef = useRef(selectedTerritoryId);
   const selectPointRef = useRef<(point: SelectedPoint) => void>(() => undefined);
   const [ready, setReady] = useState(false);
+  const [mapUnavailable, setMapUnavailable] = useState(false);
   const [selectionError, setSelectionError] = useState("");
   changeRef.current = onChange;
   territoriesRef.current = territories;
@@ -50,7 +51,13 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
 
   useEffect(() => {
     if (!container.current) return;
-    const map = new maplibregl.Map({ container: container.current, style: styleUrl, center: karachiCenter, zoom: 11.8 });
+    let map: maplibregl.Map;
+    try {
+      map = new maplibregl.Map({ container: container.current, style: styleUrl, center: karachiCenter, zoom: 11.8 });
+    } catch {
+      setMapUnavailable(true);
+      return;
+    }
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.on("click", (event) => selectPointRef.current({ latitude: event.lngLat.lat, longitude: event.lngLat.lng }));
@@ -102,9 +109,11 @@ export function PointMapPicker({ territories, selectedTerritoryId, value, onChan
   }, [ready, value]);
 
   return <div className="grid gap-3">
-    <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Outlet map picker. Click the map or move it and use the center button to select a visit point." />
+    {mapUnavailable
+      ? <MapEditorUnavailable title="Outlet map unavailable" detail="This browser could not start its graphics renderer. The saved outlet point is unchanged; enable hardware acceleration to choose a different point." />
+      : <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Outlet map picker. Click the map or move it and use the center button to select a visit point." />}
     <div className="flex flex-wrap items-center gap-3">
-      <button type="button" className={ui.quietButton} onClick={() => { const center = mapRef.current?.getCenter(); if (center) selectPointRef.current({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
+      <button type="button" className={ui.quietButton} disabled={mapUnavailable} onClick={() => { const center = mapRef.current?.getCenter(); if (center) selectPointRef.current({ latitude: center.lat, longitude: center.lng }); }}>Use map center</button>
       <span className="text-xs font-bold text-slate-500" aria-live="polite">{value ? `${value.latitude.toFixed(6)}, ${value.longitude.toFixed(6)} selected` : "No visit point selected"}</span>
     </div>
     {selectionError && <p className={ui.messageError} role="alert">{selectionError}</p>}
@@ -120,6 +129,7 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
   const pointsRef = useRef<LngLat[]>(initialBoundary?.coordinates[0]?.slice(0, -1) ?? []);
   const [points, setPoints] = useState<LngLat[]>(pointsRef.current);
   const [ready, setReady] = useState(false);
+  const [mapUnavailable, setMapUnavailable] = useState(false);
 
   function update(next: LngLat[]) {
     pointsRef.current = next;
@@ -129,7 +139,13 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
 
   useEffect(() => {
     if (!container.current) return;
-    const map = new maplibregl.Map({ container: container.current, style: styleUrl, center: karachiCenter, zoom: 11.5 });
+    let map: maplibregl.Map;
+    try {
+      map = new maplibregl.Map({ container: container.current, style: styleUrl, center: karachiCenter, zoom: 11.5 });
+    } catch {
+      setMapUnavailable(true);
+      return;
+    }
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.on("click", (event) => update([...pointsRef.current, [event.lngLat.lng, event.lngLat.lat]]));
@@ -151,13 +167,22 @@ export function TerritoryBoundaryEditor({ initialBoundary = null, onChange }: {
   }, [points, ready]);
 
   return <div className="grid gap-3">
-    <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Sales area boundary editor. Click to add boundary points. At least three points are required." />
+    {mapUnavailable
+      ? <MapEditorUnavailable title="Sales-area map unavailable" detail="This browser could not start its graphics renderer. The saved boundary is unchanged; enable hardware acceleration before drawing or revising it." />
+      : <div className="h-[300px] w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-200 focus-within:ring-3 focus-within:ring-blue-200 sm:h-[360px]" ref={container} role="application" aria-label="Sales area boundary editor. Click to add boundary points. At least three points are required." />}
     <div className="flex flex-wrap items-center gap-3">
-      <button type="button" className={ui.quietButton} disabled={points.length === 0} onClick={() => update(points.slice(0, -1))}>Undo point</button>
-      <button type="button" className={ui.dangerButton} disabled={points.length === 0} onClick={() => update([])}>Clear</button>
-      <button type="button" className={ui.quietButton} onClick={() => { const center = mapRef.current?.getCenter(); if (center) update([...points, [center.lng, center.lat]]); }}>Add map center</button>
+      <button type="button" className={ui.quietButton} disabled={mapUnavailable || points.length === 0} onClick={() => update(points.slice(0, -1))}>Undo point</button>
+      <button type="button" className={ui.dangerButton} disabled={mapUnavailable || points.length === 0} onClick={() => update([])}>Clear</button>
+      <button type="button" className={ui.quietButton} disabled={mapUnavailable} onClick={() => { const center = mapRef.current?.getCenter(); if (center) update([...points, [center.lng, center.lat]]); }}>Add map center</button>
       <span className="text-xs font-bold text-slate-500" aria-live="polite">{points.length < 3 ? `${points.length}/3 points · add ${3 - points.length} more` : `${points.length} points · boundary ready`}</span>
     </div>
+  </div>;
+}
+
+function MapEditorUnavailable({ title, detail }: { title: string; detail: string }) {
+  return <div className="relative grid min-h-[300px] place-content-center overflow-hidden rounded-2xl border border-[#C9D6EE] bg-[#F5F9FF] p-6 text-center sm:min-h-[360px]" role="status">
+    <svg className="pointer-events-none absolute inset-x-0 bottom-0 h-32 w-full opacity-25" viewBox="0 0 700 150" preserveAspectRatio="none" aria-hidden="true"><path d="M-20 118 C110 24 198 140 322 65 S520 28 720 92" fill="none" stroke="#5269FF" strokeWidth="4" strokeDasharray="9 10" /><circle cx="120" cy="66" r="7" fill="#1FC7FF" /><circle cx="323" cy="64" r="7" fill="#FFC938" /><circle cx="548" cy="43" r="7" fill="#21B985" /></svg>
+    <div className="relative z-10 mx-auto max-w-lg"><span className="font-utility inline-flex rounded-full bg-[#102A58] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-white">Saved geography protected</span><h3 className="font-display mt-4 text-xl font-black text-[#102A58]">{title}</h3><p className="mt-2 text-sm leading-6 text-[#53647F]">{detail}</p></div>
   </div>;
 }
 
